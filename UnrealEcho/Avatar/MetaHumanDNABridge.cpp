@@ -613,7 +613,44 @@ void UMetaHumanDNABridge::MapNeurochemicalToBlendShapes(const FNeurochemicalStat
     OutWeights.Add(TEXT("EyeOpen_L"), AlertnessIntensity);
     OutWeights.Add(TEXT("EyeOpen_R"), AlertnessIntensity);
 
-    // TODO: Add more sophisticated mappings based on DNA version
+    // Add version-specific mappings based on DNA format
+    if (DNAVersion == EDNAVersion::DHI)
+    {
+        // DHI-specific neurochemical mappings
+        // Map GABA to jaw relaxation
+        float RelaxationIntensity = State.GABA * 0.4f;
+        OutWeights.Add(TEXT("JawRelax"), RelaxationIntensity);
+
+        // Map adrenaline to nostril flare and eye tension
+        float AdrenalineIntensity = State.Adrenaline * 0.6f;
+        OutWeights.Add(TEXT("NostrilFlare_L"), AdrenalineIntensity);
+        OutWeights.Add(TEXT("NostrilFlare_R"), AdrenalineIntensity);
+        OutWeights.Add(TEXT("EyeSquint_L"), AdrenalineIntensity * 0.3f);
+        OutWeights.Add(TEXT("EyeSquint_R"), AdrenalineIntensity * 0.3f);
+
+        // Map endorphins to subtle lip curl
+        float EndorphinIntensity = State.Endorphins * 0.5f;
+        OutWeights.Add(TEXT("LipCornerPull_L"), EndorphinIntensity);
+        OutWeights.Add(TEXT("LipCornerPull_R"), EndorphinIntensity);
+    }
+    else if (DNAVersion == EDNAVersion::MH4)
+    {
+        // MH.4-specific neurochemical mappings
+        // Map GABA to overall facial relaxation
+        float RelaxationIntensity = State.GABA * 0.4f;
+        OutWeights.Add(TEXT("FaceRelax"), RelaxationIntensity);
+
+        // Map adrenaline to heightened expression
+        float AdrenalineIntensity = State.Adrenaline * 0.6f;
+        OutWeights.Add(TEXT("NoseWrinkle"), AdrenalineIntensity * 0.4f);
+        OutWeights.Add(TEXT("EyeTension_L"), AdrenalineIntensity * 0.5f);
+        OutWeights.Add(TEXT("EyeTension_R"), AdrenalineIntensity * 0.5f);
+
+        // Map endorphins to contentment expression
+        float EndorphinIntensity = State.Endorphins * 0.5f;
+        OutWeights.Add(TEXT("CheekRaise_L"), EndorphinIntensity * 0.4f);
+        OutWeights.Add(TEXT("CheekRaise_R"), EndorphinIntensity * 0.4f);
+    }
 }
 
 void UMetaHumanDNABridge::MapEmotionalStateToBlendShapes(const FEmotionalState& Emotion, TMap<FString, float>& OutWeights)
@@ -641,33 +678,248 @@ void UMetaHumanDNABridge::MapEmotionalStateToBlendShapes(const FEmotionalState& 
     OutWeights.Add(TEXT("BrowRaise_L"), Emotion.Arousal * 0.3f);
     OutWeights.Add(TEXT("BrowRaise_R"), Emotion.Arousal * 0.3f);
 
-    // TODO: Add more sophisticated mappings based on DNA version and emotional categories
+    // Map dominance to confident/submissive expressions
+    if (Emotion.Dominance > 0.0f)
+    {
+        // Confident expressions: chin up, steady gaze
+        OutWeights.Add(TEXT("ChinRaise"), Emotion.Dominance * 0.4f);
+        OutWeights.Add(TEXT("EyeSquint_L"), Emotion.Dominance * 0.2f);
+        OutWeights.Add(TEXT("EyeSquint_R"), Emotion.Dominance * 0.2f);
+    }
+    else
+    {
+        // Submissive expressions: brow lower, averted gaze
+        OutWeights.Add(TEXT("BrowLower_L"), -Emotion.Dominance * 0.3f);
+        OutWeights.Add(TEXT("BrowLower_R"), -Emotion.Dominance * 0.3f);
+        OutWeights.Add(TEXT("EyeLookDown_L"), -Emotion.Dominance * 0.2f);
+        OutWeights.Add(TEXT("EyeLookDown_R"), -Emotion.Dominance * 0.2f);
+    }
+
+    // Add version-specific emotional mappings
+    if (DNAVersion == EDNAVersion::DHI)
+    {
+        // DHI supports more nuanced emotional expressions
+        // Map surprise component
+        if (Emotion.Arousal > 0.7f && Emotion.Valence > 0.0f)
+        {
+            float SurpriseIntensity = (Emotion.Arousal - 0.7f) * 3.0f * Emotion.Intensity;
+            OutWeights.Add(TEXT("BrowInnerUp_L"), SurpriseIntensity * 0.8f);
+            OutWeights.Add(TEXT("BrowInnerUp_R"), SurpriseIntensity * 0.8f);
+            OutWeights.Add(TEXT("JawDrop"), SurpriseIntensity * 0.4f);
+        }
+
+        // Map fear component
+        if (Emotion.Arousal > 0.5f && Emotion.Valence < -0.3f && Emotion.Dominance < 0.0f)
+        {
+            float FearIntensity = Emotion.Arousal * (-Emotion.Valence) * Emotion.Intensity;
+            OutWeights.Add(TEXT("EyeWide_L"), FearIntensity * 0.6f);
+            OutWeights.Add(TEXT("EyeWide_R"), FearIntensity * 0.6f);
+            OutWeights.Add(TEXT("BrowInnerUp_L"), FearIntensity * 0.5f);
+            OutWeights.Add(TEXT("BrowInnerUp_R"), FearIntensity * 0.5f);
+            OutWeights.Add(TEXT("LipStretch_L"), FearIntensity * 0.3f);
+            OutWeights.Add(TEXT("LipStretch_R"), FearIntensity * 0.3f);
+        }
+
+        // Map anger component
+        if (Emotion.Arousal > 0.4f && Emotion.Valence < -0.2f && Emotion.Dominance > 0.0f)
+        {
+            float AngerIntensity = Emotion.Arousal * (-Emotion.Valence) * Emotion.Dominance * Emotion.Intensity;
+            OutWeights.Add(TEXT("BrowLower_L"), AngerIntensity * 0.7f);
+            OutWeights.Add(TEXT("BrowLower_R"), AngerIntensity * 0.7f);
+            OutWeights.Add(TEXT("NoseWrinkle"), AngerIntensity * 0.5f);
+            OutWeights.Add(TEXT("LipTighten_L"), AngerIntensity * 0.4f);
+            OutWeights.Add(TEXT("LipTighten_R"), AngerIntensity * 0.4f);
+        }
+
+        // Map disgust component
+        if (Emotion.Valence < -0.5f && Emotion.Arousal < 0.5f)
+        {
+            float DisgustIntensity = (-Emotion.Valence - 0.5f) * 2.0f * Emotion.Intensity;
+            OutWeights.Add(TEXT("NoseWrinkle"), DisgustIntensity * 0.8f);
+            OutWeights.Add(TEXT("UpperLipRaise_L"), DisgustIntensity * 0.6f);
+            OutWeights.Add(TEXT("UpperLipRaise_R"), DisgustIntensity * 0.6f);
+            OutWeights.Add(TEXT("CheekSquint_L"), DisgustIntensity * 0.3f);
+            OutWeights.Add(TEXT("CheekSquint_R"), DisgustIntensity * 0.3f);
+        }
+    }
+    else if (DNAVersion == EDNAVersion::MH4)
+    {
+        // MH.4 emotional expressions with different control scheme
+        // Map composite emotions using MH.4 blend shape names
+        if (Emotion.Arousal > 0.6f)
+        {
+            float ExcitementIntensity = (Emotion.Arousal - 0.6f) * 2.5f * Emotion.Intensity;
+            OutWeights.Add(TEXT("BrowRaiseInner_L"), ExcitementIntensity * 0.6f);
+            OutWeights.Add(TEXT("BrowRaiseInner_R"), ExcitementIntensity * 0.6f);
+        }
+
+        // Map negative valence expressions
+        if (Emotion.Valence < -0.3f)
+        {
+            float DistressIntensity = (-Emotion.Valence - 0.3f) * 1.5f * Emotion.Intensity;
+            OutWeights.Add(TEXT("BrowFurrow_L"), DistressIntensity * 0.5f);
+            OutWeights.Add(TEXT("BrowFurrow_R"), DistressIntensity * 0.5f);
+            OutWeights.Add(TEXT("LipCornerDepress_L"), DistressIntensity * 0.4f);
+            OutWeights.Add(TEXT("LipCornerDepress_R"), DistressIntensity * 0.4f);
+        }
+    }
 }
 
 TMap<FString, FString> UMetaHumanDNABridge::GetDHIBlendShapeNames() const
 {
-    // DHI blend shape name mappings
+    // DHI blend shape name mappings (Digital Human Interface standard)
     TMap<FString, FString> Mappings;
-    
-    // TODO: Add comprehensive DHI blend shape mappings
+
+    // Mouth controls
     Mappings.Add(TEXT("Smile_L"), TEXT("CTRL_L_mouth_smile"));
     Mappings.Add(TEXT("Smile_R"), TEXT("CTRL_R_mouth_smile"));
     Mappings.Add(TEXT("Frown_L"), TEXT("CTRL_L_mouth_frown"));
     Mappings.Add(TEXT("Frown_R"), TEXT("CTRL_R_mouth_frown"));
-    
+    Mappings.Add(TEXT("LipCornerPull_L"), TEXT("CTRL_L_mouth_cornerPull"));
+    Mappings.Add(TEXT("LipCornerPull_R"), TEXT("CTRL_R_mouth_cornerPull"));
+    Mappings.Add(TEXT("LipCornerDepress_L"), TEXT("CTRL_L_mouth_cornerDepress"));
+    Mappings.Add(TEXT("LipCornerDepress_R"), TEXT("CTRL_R_mouth_cornerDepress"));
+    Mappings.Add(TEXT("LipStretch_L"), TEXT("CTRL_L_mouth_stretch"));
+    Mappings.Add(TEXT("LipStretch_R"), TEXT("CTRL_R_mouth_stretch"));
+    Mappings.Add(TEXT("LipTighten_L"), TEXT("CTRL_L_mouth_tighten"));
+    Mappings.Add(TEXT("LipTighten_R"), TEXT("CTRL_R_mouth_tighten"));
+    Mappings.Add(TEXT("UpperLipRaise_L"), TEXT("CTRL_L_mouth_upperLipRaise"));
+    Mappings.Add(TEXT("UpperLipRaise_R"), TEXT("CTRL_R_mouth_upperLipRaise"));
+    Mappings.Add(TEXT("LowerLipDepress_L"), TEXT("CTRL_L_mouth_lowerLipDepress"));
+    Mappings.Add(TEXT("LowerLipDepress_R"), TEXT("CTRL_R_mouth_lowerLipDepress"));
+    Mappings.Add(TEXT("JawOpen"), TEXT("CTRL_C_jaw_open"));
+    Mappings.Add(TEXT("JawDrop"), TEXT("CTRL_C_jaw_drop"));
+    Mappings.Add(TEXT("JawRelax"), TEXT("CTRL_C_jaw_relax"));
+
+    // Eye controls
+    Mappings.Add(TEXT("EyeOpen_L"), TEXT("CTRL_L_eye_open"));
+    Mappings.Add(TEXT("EyeOpen_R"), TEXT("CTRL_R_eye_open"));
+    Mappings.Add(TEXT("EyeBlink_L"), TEXT("CTRL_L_eye_blink"));
+    Mappings.Add(TEXT("EyeBlink_R"), TEXT("CTRL_R_eye_blink"));
+    Mappings.Add(TEXT("EyeWide_L"), TEXT("CTRL_L_eye_wide"));
+    Mappings.Add(TEXT("EyeWide_R"), TEXT("CTRL_R_eye_wide"));
+    Mappings.Add(TEXT("EyeSquint_L"), TEXT("CTRL_L_eye_squint"));
+    Mappings.Add(TEXT("EyeSquint_R"), TEXT("CTRL_R_eye_squint"));
+    Mappings.Add(TEXT("EyeWarmth_L"), TEXT("CTRL_L_eye_warmth"));
+    Mappings.Add(TEXT("EyeWarmth_R"), TEXT("CTRL_R_eye_warmth"));
+    Mappings.Add(TEXT("EyeLookDown_L"), TEXT("CTRL_L_eye_lookDown"));
+    Mappings.Add(TEXT("EyeLookDown_R"), TEXT("CTRL_R_eye_lookDown"));
+    Mappings.Add(TEXT("EyeLookUp_L"), TEXT("CTRL_L_eye_lookUp"));
+    Mappings.Add(TEXT("EyeLookUp_R"), TEXT("CTRL_R_eye_lookUp"));
+    Mappings.Add(TEXT("EyeLookIn_L"), TEXT("CTRL_L_eye_lookIn"));
+    Mappings.Add(TEXT("EyeLookIn_R"), TEXT("CTRL_R_eye_lookIn"));
+    Mappings.Add(TEXT("EyeLookOut_L"), TEXT("CTRL_L_eye_lookOut"));
+    Mappings.Add(TEXT("EyeLookOut_R"), TEXT("CTRL_R_eye_lookOut"));
+
+    // Brow controls
+    Mappings.Add(TEXT("BrowRaise_L"), TEXT("CTRL_L_brow_raise"));
+    Mappings.Add(TEXT("BrowRaise_R"), TEXT("CTRL_R_brow_raise"));
+    Mappings.Add(TEXT("BrowLower_L"), TEXT("CTRL_L_brow_lower"));
+    Mappings.Add(TEXT("BrowLower_R"), TEXT("CTRL_R_brow_lower"));
+    Mappings.Add(TEXT("BrowInnerUp_L"), TEXT("CTRL_L_brow_innerUp"));
+    Mappings.Add(TEXT("BrowInnerUp_R"), TEXT("CTRL_R_brow_innerUp"));
+    Mappings.Add(TEXT("BrowOuterUp_L"), TEXT("CTRL_L_brow_outerUp"));
+    Mappings.Add(TEXT("BrowOuterUp_R"), TEXT("CTRL_R_brow_outerUp"));
+    Mappings.Add(TEXT("BrowTension_L"), TEXT("CTRL_L_brow_tension"));
+    Mappings.Add(TEXT("BrowTension_R"), TEXT("CTRL_R_brow_tension"));
+
+    // Cheek and nose controls
+    Mappings.Add(TEXT("CheekRaise_L"), TEXT("CTRL_L_cheek_raise"));
+    Mappings.Add(TEXT("CheekRaise_R"), TEXT("CTRL_R_cheek_raise"));
+    Mappings.Add(TEXT("CheekSquint_L"), TEXT("CTRL_L_cheek_squint"));
+    Mappings.Add(TEXT("CheekSquint_R"), TEXT("CTRL_R_cheek_squint"));
+    Mappings.Add(TEXT("CheekPuff_L"), TEXT("CTRL_L_cheek_puff"));
+    Mappings.Add(TEXT("CheekPuff_R"), TEXT("CTRL_R_cheek_puff"));
+    Mappings.Add(TEXT("NoseWrinkle"), TEXT("CTRL_C_nose_wrinkle"));
+    Mappings.Add(TEXT("NostrilFlare_L"), TEXT("CTRL_L_nose_flare"));
+    Mappings.Add(TEXT("NostrilFlare_R"), TEXT("CTRL_R_nose_flare"));
+
+    // Chin and neck controls
+    Mappings.Add(TEXT("ChinRaise"), TEXT("CTRL_C_chin_raise"));
+    Mappings.Add(TEXT("ChinLower"), TEXT("CTRL_C_chin_lower"));
+    Mappings.Add(TEXT("NeckTense"), TEXT("CTRL_C_neck_tense"));
+
     return Mappings;
 }
 
 TMap<FString, FString> UMetaHumanDNABridge::GetMH4BlendShapeNames() const
 {
-    // MH.4 blend shape name mappings
+    // MH.4 blend shape name mappings (MetaHuman Creator 2023+ format)
     TMap<FString, FString> Mappings;
-    
-    // TODO: Add comprehensive MH.4 blend shape mappings
+
+    // Mouth controls - MH.4 uses slightly different naming convention
     Mappings.Add(TEXT("Smile_L"), TEXT("CTRL_L_mouth_smile"));
     Mappings.Add(TEXT("Smile_R"), TEXT("CTRL_R_mouth_smile"));
     Mappings.Add(TEXT("Frown_L"), TEXT("CTRL_L_mouth_frown"));
     Mappings.Add(TEXT("Frown_R"), TEXT("CTRL_R_mouth_frown"));
-    
+    Mappings.Add(TEXT("LipCornerPull_L"), TEXT("CTRL_L_mouth_lipCornerPull"));
+    Mappings.Add(TEXT("LipCornerPull_R"), TEXT("CTRL_R_mouth_lipCornerPull"));
+    Mappings.Add(TEXT("LipCornerDepress_L"), TEXT("CTRL_L_mouth_lipCornerDepress"));
+    Mappings.Add(TEXT("LipCornerDepress_R"), TEXT("CTRL_R_mouth_lipCornerDepress"));
+    Mappings.Add(TEXT("LipStretch_L"), TEXT("CTRL_L_mouth_lipStretch"));
+    Mappings.Add(TEXT("LipStretch_R"), TEXT("CTRL_R_mouth_lipStretch"));
+    Mappings.Add(TEXT("LipTighten_L"), TEXT("CTRL_L_mouth_lipTighten"));
+    Mappings.Add(TEXT("LipTighten_R"), TEXT("CTRL_R_mouth_lipTighten"));
+    Mappings.Add(TEXT("UpperLipRaise_L"), TEXT("CTRL_L_mouth_upperLipRaise"));
+    Mappings.Add(TEXT("UpperLipRaise_R"), TEXT("CTRL_R_mouth_upperLipRaise"));
+    Mappings.Add(TEXT("LowerLipDepress_L"), TEXT("CTRL_L_mouth_lowerLipDepress"));
+    Mappings.Add(TEXT("LowerLipDepress_R"), TEXT("CTRL_R_mouth_lowerLipDepress"));
+    Mappings.Add(TEXT("LipPucker"), TEXT("CTRL_C_mouth_lipPucker"));
+    Mappings.Add(TEXT("LipFunnel"), TEXT("CTRL_C_mouth_lipFunnel"));
+    Mappings.Add(TEXT("JawOpen"), TEXT("CTRL_C_jaw_open"));
+    Mappings.Add(TEXT("JawDrop"), TEXT("CTRL_C_jaw_drop"));
+    Mappings.Add(TEXT("FaceRelax"), TEXT("CTRL_C_face_relax"));
+
+    // Eye controls - MH.4 specific
+    Mappings.Add(TEXT("EyeOpen_L"), TEXT("CTRL_L_eye_eyelidOpen"));
+    Mappings.Add(TEXT("EyeOpen_R"), TEXT("CTRL_R_eye_eyelidOpen"));
+    Mappings.Add(TEXT("EyeBlink_L"), TEXT("CTRL_L_eye_blink"));
+    Mappings.Add(TEXT("EyeBlink_R"), TEXT("CTRL_R_eye_blink"));
+    Mappings.Add(TEXT("EyeWide_L"), TEXT("CTRL_L_eye_eyelidWide"));
+    Mappings.Add(TEXT("EyeWide_R"), TEXT("CTRL_R_eye_eyelidWide"));
+    Mappings.Add(TEXT("EyeSquint_L"), TEXT("CTRL_L_eye_squint"));
+    Mappings.Add(TEXT("EyeSquint_R"), TEXT("CTRL_R_eye_squint"));
+    Mappings.Add(TEXT("EyeTension_L"), TEXT("CTRL_L_eye_tension"));
+    Mappings.Add(TEXT("EyeTension_R"), TEXT("CTRL_R_eye_tension"));
+    Mappings.Add(TEXT("EyeLookDown_L"), TEXT("CTRL_L_eye_lookDown"));
+    Mappings.Add(TEXT("EyeLookDown_R"), TEXT("CTRL_R_eye_lookDown"));
+    Mappings.Add(TEXT("EyeLookUp_L"), TEXT("CTRL_L_eye_lookUp"));
+    Mappings.Add(TEXT("EyeLookUp_R"), TEXT("CTRL_R_eye_lookUp"));
+    Mappings.Add(TEXT("EyeLookIn_L"), TEXT("CTRL_L_eye_lookIn"));
+    Mappings.Add(TEXT("EyeLookIn_R"), TEXT("CTRL_R_eye_lookIn"));
+    Mappings.Add(TEXT("EyeLookOut_L"), TEXT("CTRL_L_eye_lookOut"));
+    Mappings.Add(TEXT("EyeLookOut_R"), TEXT("CTRL_R_eye_lookOut"));
+
+    // Brow controls - MH.4 specific naming
+    Mappings.Add(TEXT("BrowRaise_L"), TEXT("CTRL_L_brow_up"));
+    Mappings.Add(TEXT("BrowRaise_R"), TEXT("CTRL_R_brow_up"));
+    Mappings.Add(TEXT("BrowLower_L"), TEXT("CTRL_L_brow_down"));
+    Mappings.Add(TEXT("BrowLower_R"), TEXT("CTRL_R_brow_down"));
+    Mappings.Add(TEXT("BrowRaiseInner_L"), TEXT("CTRL_L_brow_innerUp"));
+    Mappings.Add(TEXT("BrowRaiseInner_R"), TEXT("CTRL_R_brow_innerUp"));
+    Mappings.Add(TEXT("BrowRaiseOuter_L"), TEXT("CTRL_L_brow_outerUp"));
+    Mappings.Add(TEXT("BrowRaiseOuter_R"), TEXT("CTRL_R_brow_outerUp"));
+    Mappings.Add(TEXT("BrowFurrow_L"), TEXT("CTRL_L_brow_furrow"));
+    Mappings.Add(TEXT("BrowFurrow_R"), TEXT("CTRL_R_brow_furrow"));
+    Mappings.Add(TEXT("BrowTension_L"), TEXT("CTRL_L_brow_tension"));
+    Mappings.Add(TEXT("BrowTension_R"), TEXT("CTRL_R_brow_tension"));
+
+    // Cheek and nose controls - MH.4 specific
+    Mappings.Add(TEXT("CheekRaise_L"), TEXT("CTRL_L_cheek_cheekRaise"));
+    Mappings.Add(TEXT("CheekRaise_R"), TEXT("CTRL_R_cheek_cheekRaise"));
+    Mappings.Add(TEXT("CheekSquint_L"), TEXT("CTRL_L_cheek_squint"));
+    Mappings.Add(TEXT("CheekSquint_R"), TEXT("CTRL_R_cheek_squint"));
+    Mappings.Add(TEXT("CheekPuff_L"), TEXT("CTRL_L_cheek_puff"));
+    Mappings.Add(TEXT("CheekPuff_R"), TEXT("CTRL_R_cheek_puff"));
+    Mappings.Add(TEXT("NoseWrinkle"), TEXT("CTRL_C_nose_wrinkle"));
+    Mappings.Add(TEXT("NostrilFlare_L"), TEXT("CTRL_L_nose_nostrilFlare"));
+    Mappings.Add(TEXT("NostrilFlare_R"), TEXT("CTRL_R_nose_nostrilFlare"));
+
+    // Chin and additional controls
+    Mappings.Add(TEXT("ChinRaise"), TEXT("CTRL_C_chin_chinUp"));
+    Mappings.Add(TEXT("ChinLower"), TEXT("CTRL_C_chin_chinDown"));
+    Mappings.Add(TEXT("DimpleL"), TEXT("CTRL_L_mouth_dimple"));
+    Mappings.Add(TEXT("DimpleR"), TEXT("CTRL_R_mouth_dimple"));
+
     return Mappings;
 }
