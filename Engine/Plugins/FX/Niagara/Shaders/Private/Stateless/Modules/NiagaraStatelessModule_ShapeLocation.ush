@@ -1,0 +1,85 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+uint4	ShapeLocation_Mode;
+float4	ShapeLocation_Parameters0;
+float4	ShapeLocation_Parameters1;
+
+float3 ShapeLocation_GetLocation()
+{
+	// ENSM_ShapePrimitive::Box | ENSM_ShapePrimitive::Plane
+	BRANCH
+	if ( ShapeLocation_Mode.x == 0 )
+	{
+		const float3 BoxSize = ShapeLocation_Parameters0.xyz;
+		const bool bOnSurface = ShapeLocation_Mode.y == 1;
+
+		const float3 P0 = RandomFloat3(0) - 0.5f;
+		if (bOnSurface)
+		{
+			const float3 FaceDirA[] = { float3(0.0f, 1.0f, 0.0f), float3( 0.0f, 1.0f, 0.0f), float3(0.0f, 0.0f, 1.0f), float3(0.0f, 0.0f, 1.0f), float3(1.0f, 0.0f, 0.0f), float3(1.0f, 0.0f, 0.0f) };
+			const float3 FaceDirB[] = { float3(0.0f, 0.0f, 1.0f), float3( 0.0f, 0.0f, 1.0f), float3(1.0f, 0.0f, 0.0f), float3(1.0f, 0.0f, 0.0f), float3(0.0f, 1.0f, 0.0f), float3(0.0f, 1.0f, 0.0f) };
+			const float3 FaceDirC[] = { float3(1.0f, 0.0f, 0.0f), float3(-1.0f, 0.0f, 0.0f), float3(0.0f, 1.0f, 0.0f), float3(0.0f,-1.0f, 0.0f), float3(0.0f, 0.0f, 1.0f), float3(0.0f, 0.0f,-1.0f) };
+			const uint NumFaces = ShapeLocation_Mode.z;
+
+			const float3 Thickness = ShapeLocation_Parameters1.xyz;
+			const float3 LocalBoxSize = BoxSize + (Thickness * P0.z);
+				
+			const uint iAxis = RandomUInt(1) % NumFaces;
+			float3 Location;
+			Location  = LocalBoxSize * FaceDirA[iAxis] * P0.x;
+			Location += LocalBoxSize * FaceDirB[iAxis] * P0.y;
+			Location += LocalBoxSize * FaceDirC[iAxis] * 0.5f;
+				
+			return Location;
+		}
+		return P0 * BoxSize;
+	}
+
+	// ENSM_ShapePrimitive::Cylinder:
+	BRANCH
+	if ( ShapeLocation_Mode.x == 1 )
+	{
+		const float4 Random = RandomFloat4(0);
+		const float HeightScale = ShapeLocation_Parameters0.x;
+		const float HeightBias = ShapeLocation_Parameters0.y;
+		const float Radius = ShapeLocation_Parameters0.z;
+
+		return float3(
+			SafeNormalize(Random.xy - 0.5f) * Radius * Random.z,
+			Random.w * HeightScale + HeightBias
+		);
+	}
+
+	// ENSM_ShapePrimitive::Ring:
+	BRANCH
+	if ( ShapeLocation_Mode.x == 2 )
+	{
+		const float RadiusScale = ShapeLocation_Parameters0.x;
+		const float RadiusBias = ShapeLocation_Parameters0.y;
+		const float UDistributionScale = ShapeLocation_Parameters0.z;
+		const float UDistributionBias = ShapeLocation_Parameters0.w;
+
+		const float Radius = RandomScaleBiasFloat(0, RadiusScale, RadiusBias);
+		const float U = RandomScaleBiasFloat(1, UDistributionScale, UDistributionBias);
+
+		return float3(cos(U) * Radius, sin(U) * Radius, 0.0f);
+	}
+
+	// ENSM_ShapePrimitive::Sphere:
+	{
+		const float SphereScale	= ShapeLocation_Parameters0.x;
+		const float SphereBias	= ShapeLocation_Parameters0.y;
+
+		const float3 Vector = RandomUnitFloat3(0);
+		return Vector * RandomScaleBiasFloat(1, SphereScale, SphereBias);
+	}
+}
+
+void ShapeLocation_Simulate(inout FStatelessParticle Particle)
+{
+	float3 Location = ShapeLocation_GetLocation();
+	Particle.Position += Location;
+	Particle.PreviousPosition += Location;
+}
