@@ -242,6 +242,141 @@ void UCognitiveVisualizationComponent::SetVisualizationEnabled(bool bEnabled)
     UE_LOG(LogTemp, Log, TEXT("Cognitive visualization %s"), bEnabled ? TEXT("enabled") : TEXT("disabled"));
 }
 
+void UCognitiveVisualizationComponent::SetVisualizationIntensity(float Intensity)
+{
+    VisualizationIntensity = FMath::Clamp(Intensity, 0.0f, 2.0f);
+
+    // Scale all current neural activations
+    for (FNeuralNode& Node : NeuralNodes)
+    {
+        Node.Activation *= VisualizationIntensity;
+        Node.Size = 5.0f + Node.Activation * 5.0f * VisualizationIntensity;
+    }
+
+    // Update activity based on intensity
+    if (VisualizationIntensity > 0.5f && CurrentActivity == ECognitiveActivityType::Idle)
+    {
+        SetCognitiveActivity(ECognitiveActivityType::Thinking, VisualizationIntensity);
+    }
+}
+
+void UCognitiveVisualizationComponent::TriggerResonanceEffect(float Intensity, float Duration)
+{
+    bResonanceActive = true;
+    ResonanceIntensity = FMath::Clamp(Intensity, 0.0f, 2.0f);
+    ResonanceDuration = Duration;
+    ResonanceTimer = 0.0f;
+
+    // Create resonance pulse through the neural network
+    // Activate all layers simultaneously for the echo effect
+    for (int32 i = 0; i < NeuralNodes.Num(); i++)
+    {
+        float Distance = FMath::Sin(i * 0.5f) * 0.5f + 0.5f;
+        NeuralNodes[i].Activation = ResonanceIntensity * Distance;
+
+        // Set resonance color (ethereal cyan-purple)
+        NeuralNodes[i].Color = FLinearColor::LerpUsingHSV(
+            FLinearColor(0.3f, 0.7f, 1.0f, 1.0f),  // Cyan
+            FLinearColor(0.7f, 0.3f, 1.0f, 1.0f),  // Purple
+            Distance
+        );
+    }
+
+    // Activate all connections
+    for (FNeuralConnection& Connection : NeuralConnections)
+    {
+        Connection.ActivityLevel = ResonanceIntensity * 0.8f;
+    }
+
+    // Generate thought particles in a burst pattern
+    AActor* Owner = GetOwner();
+    if (Owner)
+    {
+        FVector Center = Owner->GetActorLocation() + FVector(0.0f, 0.0f, 200.0f);
+
+        // Create radial burst of particles
+        int32 BurstParticles = FMath::RoundToInt(50 * ResonanceIntensity);
+        for (int32 i = 0; i < BurstParticles; i++)
+        {
+            FThoughtParticle Particle;
+
+            float Angle = FMath::FRandRange(0.0f, 2.0f * PI);
+            float Elevation = FMath::FRandRange(-PI / 4.0f, PI / 4.0f);
+            float Speed = FMath::FRandRange(50.0f, 150.0f) * ResonanceIntensity;
+
+            Particle.Position = Center;
+            Particle.Velocity = FVector(
+                FMath::Cos(Angle) * FMath::Cos(Elevation),
+                FMath::Sin(Angle) * FMath::Cos(Elevation),
+                FMath::Sin(Elevation)
+            ) * Speed;
+
+            Particle.Color = FLinearColor(0.5f, 0.8f, 1.0f, 1.0f);
+            Particle.Lifetime = Duration + FMath::FRandRange(0.0f, 0.5f);
+            Particle.Size = FMath::FRandRange(3.0f, 8.0f);
+
+            ThoughtParticles.Add(Particle);
+        }
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("Resonance effect triggered: intensity %.2f, duration %.2f"), Intensity, Duration);
+}
+
+void UCognitiveVisualizationComponent::VisualizeMemoryConstellation(const TArray<FVector>& MemoryNodes)
+{
+    MemoryConstellationNodes = MemoryNodes;
+
+    // Create particles at each memory node location
+    FLinearColor MemoryColor(0.8f, 0.9f, 1.0f, 1.0f);
+
+    for (const FVector& NodePosition : MemoryNodes)
+    {
+        // Create a small burst at each memory node
+        for (int32 i = 0; i < 5; i++)
+        {
+            FThoughtParticle Particle;
+            Particle.Position = NodePosition + FVector(
+                FMath::FRandRange(-5.0f, 5.0f),
+                FMath::FRandRange(-5.0f, 5.0f),
+                FMath::FRandRange(-5.0f, 5.0f)
+            );
+
+            Particle.Velocity = FVector(
+                FMath::FRandRange(-20.0f, 20.0f),
+                FMath::FRandRange(-20.0f, 20.0f),
+                FMath::FRandRange(-10.0f, 10.0f)
+            );
+
+            Particle.Color = MemoryColor;
+            Particle.Lifetime = FMath::FRandRange(2.0f, 4.0f);
+            Particle.Size = FMath::FRandRange(4.0f, 8.0f);
+
+            ThoughtParticles.Add(Particle);
+        }
+    }
+
+    // Create connecting lines between nearby memory nodes
+    for (int32 i = 0; i < MemoryNodes.Num(); i++)
+    {
+        for (int32 j = i + 1; j < MemoryNodes.Num(); j++)
+        {
+            float Distance = FVector::Dist(MemoryNodes[i], MemoryNodes[j]);
+
+            // Connect nodes that are within a certain distance
+            if (Distance < 200.0f)
+            {
+                GenerateThoughtParticleStream(
+                    MemoryNodes[i],
+                    MemoryNodes[j],
+                    FLinearColor(0.6f, 0.8f, 1.0f, 0.5f)
+                );
+            }
+        }
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("Memory constellation visualized with %d nodes"), MemoryNodes.Num());
+}
+
 void UCognitiveVisualizationComponent::UpdateNeuralActivity(float DeltaTime)
 {
     NeuralActivityTime += DeltaTime;
