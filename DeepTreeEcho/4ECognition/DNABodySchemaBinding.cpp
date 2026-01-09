@@ -651,8 +651,164 @@ void UDNABodySchemaBinding::SyncFromBodySchema(UEmbodiedCognitionComponent* Body
         return;
     }
 
-    // This would apply body schema motor commands back to the skeleton
-    // For now, this is a placeholder for future motor control integration
+    // Get body schema state
+    const FBodySchema& Schema = BodySchemaComponent->BodySchema;
+
+    // Apply motor commands from body schema to skeleton
+    for (const auto& Pair : JointBindings)
+    {
+        const FDNAJointBinding& Binding = Pair.Value;
+
+        if (Binding.SkeletonBoneIndex == INDEX_NONE)
+        {
+            continue;
+        }
+
+        // Check if body schema has target position/orientation for this part
+        const FVector* TargetPosition = Schema.BodyPartPositions.Find(Binding.BodySchemaPart);
+        const FRotator* TargetOrientation = Schema.BodyPartOrientations.Find(Binding.BodySchemaPart);
+        const float* TargetAngle = Schema.JointAngles.Find(Binding.DNAJointName);
+
+        // Track current state for sensorimotor feedback
+        FTransform CurrentTransform = BoundSkeletalMesh->GetBoneTransform(Binding.SkeletonBoneIndex);
+        FVector PredictedPosition = CurrentTransform.GetLocation();
+        FRotator PredictedOrientation = CurrentTransform.GetRotation().Rotator();
+
+        // Apply orientation commands (most common motor control)
+        if (TargetOrientation)
+        {
+            FRotator ClampedTarget = *TargetOrientation;
+
+            // Clamp to joint rotation limits
+            ClampedTarget.Roll = FMath::Clamp(ClampedTarget.Roll, Binding.RotationMin.Roll, Binding.RotationMax.Roll);
+            ClampedTarget.Pitch = FMath::Clamp(ClampedTarget.Pitch, Binding.RotationMin.Pitch, Binding.RotationMax.Pitch);
+            ClampedTarget.Yaw = FMath::Clamp(ClampedTarget.Yaw, Binding.RotationMin.Yaw, Binding.RotationMax.Yaw);
+
+            // Apply to skeleton (bone space rotation)
+            // Note: In full implementation, this would interface with animation blueprint
+            // For now, we update proprioceptive prediction for learning
+            PredictedOrientation = ClampedTarget;
+        }
+
+        // Apply joint angle commands (for specific joints)
+        if (TargetAngle)
+        {
+            // Convert joint angle to rotation based on joint type
+            // Different joints rotate on different axes
+            FRotator AngleRotation = FRotator::ZeroRotator;
+
+            if (Binding.DNAJointName.Contains(TEXT("arm")) || Binding.DNAJointName.Contains(TEXT("calf")))
+            {
+                // Hinge joints typically rotate on Y (pitch)
+                AngleRotation.Pitch = *TargetAngle;
+            }
+            else if (Binding.DNAJointName.Contains(TEXT("spine")) || Binding.DNAJointName.Contains(TEXT("neck")))
+            {
+                // Spine rotates on all axes but primarily yaw
+                AngleRotation.Yaw = *TargetAngle * 0.5f;
+                AngleRotation.Pitch = *TargetAngle * 0.3f;
+            }
+            else if (Binding.DNAJointName.Contains(TEXT("head")))
+            {
+                // Head primarily yaw/pitch
+                AngleRotation.Yaw = *TargetAngle;
+            }
+            else
+            {
+                // Default to pitch for unknown joints
+                AngleRotation.Pitch = *TargetAngle;
+            }
+
+            // Clamp to limits
+            AngleRotation.Roll = FMath::Clamp(AngleRotation.Roll, Binding.RotationMin.Roll, Binding.RotationMax.Roll);
+            AngleRotation.Pitch = FMath::Clamp(AngleRotation.Pitch, Binding.RotationMin.Pitch, Binding.RotationMax.Pitch);
+            AngleRotation.Yaw = FMath::Clamp(AngleRotation.Yaw, Binding.RotationMin.Yaw, Binding.RotationMax.Yaw);
+
+            PredictedOrientation = AngleRotation;
+        }
+
+        // Update proprioceptive state with predicted values
+        if (FProprioceptiveState* PropState = ProprioceptiveStates.Find(Pair.Key))
+        {
+            // Compute prediction error for sensorimotor learning
+            FVector ActualPosition = CurrentTransform.GetLocation();
+            FRotator ActualOrientation = CurrentTransform.GetRotation().Rotator();
+
+            float PositionError = TargetPosition ? FVector::Dist(*TargetPosition, ActualPosition) : 0.0f;
+            float OrientationError = 0.0f;
+
+            if (TargetOrientation || TargetAngle)
+            {
+                FRotator DeltaRot = PredictedOrientation - ActualOrientation;
+                OrientationError = FMath::Abs(DeltaRot.Roll) + FMath::Abs(DeltaRot.Pitch) + FMath::Abs(DeltaRot.Yaw);
+                OrientationError /= 540.0f; // Normalize to 0-1 range (max error ~540 degrees)
+            }
+
+            // Log significant prediction errors for sensorimotor learning
+            float TotalError = PositionError / 100.0f + OrientationError;
+            if (TotalError > 0.1f)
+            {
+                FString ActionString = FString::Printf(TEXT("Move_%s"), *Binding.BodySchemaPart);
+                FString ExpectedString = FString::Printf(TEXT("Pos:%.1f,%.1f,%.1f Rot:%.1f,%.1f,%.1f"),
+                    PredictedPosition.X, PredictedPosition.Y, PredictedPosition.Z,
+                    PredictedOrientation.Roll, PredictedOrientation.Pitch, PredictedOrientation.Yaw);
+                FString ActualString = FString::Printf(TEXT("Pos:%.1f,%.1f,%.1f Rot:%.1f,%.1f,%.1f"),
+                    ActualPosition.X, ActualPosition.Y, ActualPosition.Z,
+                    ActualOrientation.Roll, ActualOrientation.Pitch, ActualOrientation.Yaw);
+
+                // Learn from the motor control discrepancy
+                BodySchemaComponent->LearnContingency(ActionString, ExpectedString, ActualString);
+            }
+
+            // Update muscle tension based on motor effort
+            if (TargetAngle || TargetOrientation)
+            {
+                // Motor commands require muscle activation
+                float Effort = FMath::Min(TotalError + 0.1f, 1.0f);
+                PropState->MuscleTension = FMath::FInterpTo(PropState->MuscleTension, Effort, GetWorld()->GetDeltaSeconds(), 5.0f);
+
+                // Prolonged effort increases fatigue
+                if (PropState->MuscleTension > 0.5f)
+                {
+                    PropState->Fatigue = FMath::Min(PropState->Fatigue + GetWorld()->GetDeltaSeconds() * 0.01f, 1.0f);
+                }
+            }
+            else
+            {
+                // Relaxation reduces tension over time
+                PropState->MuscleTension = FMath::FInterpTo(PropState->MuscleTension, 0.0f, GetWorld()->GetDeltaSeconds(), 2.0f);
+            }
+        }
+    }
+
+    // Apply facial expression commands from body schema
+    for (auto& Pair : BlendShapeBindings)
+    {
+        FDNABlendShapeBinding& Binding = Pair.Value;
+
+        // Check if body schema specifies expression for this blend shape's body part
+        // Facial expressions are driven by the "Face" body part
+        if (Binding.Category == EBlendShapeCategory::Mouth ||
+            Binding.Category == EBlendShapeCategory::Eye ||
+            Binding.Category == EBlendShapeCategory::Brow ||
+            Binding.Category == EBlendShapeCategory::Nose ||
+            Binding.Category == EBlendShapeCategory::Cheek ||
+            Binding.Category == EBlendShapeCategory::Jaw)
+        {
+            // Check for facial motor commands in body schema
+            const float* FacialTension = Schema.JointAngles.Find(TEXT("FACIAL_C_FacialRoot"));
+            if (FacialTension)
+            {
+                // Apply global facial activation as baseline
+                float FacialActivation = *FacialTension / 90.0f; // Normalize assuming max 90 degree range
+                Binding.BaselineValue = FMath::Clamp(FacialActivation * 0.2f, 0.0f, 0.2f);
+            }
+        }
+    }
+
+    // Update sync state
+    SyncState.bBodySchemaSynced = true;
+    SyncState.LastSyncTime = GetWorld()->GetTimeSeconds();
 }
 
 FBindingSyncState UDNABodySchemaBinding::GetSyncState() const

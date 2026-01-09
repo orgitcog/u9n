@@ -173,6 +173,59 @@ public:
      */
     bool RemoveLOD(int32 LODIndex);
 
+    /**
+     * Rename blend shape channel in DNA
+     * @param OldName - Current blend shape name
+     * @param NewName - New blend shape name
+     * @return True if successfully renamed
+     */
+    bool RenameBlendShape(const FString& OldName, const FString& NewName);
+
+    /**
+     * Remove blend shape channel from DNA
+     * @param BlendShapeName - Name of blend shape to remove
+     * @return True if successfully removed
+     */
+    bool RemoveBlendShape(const FString& BlendShapeName);
+
+    /**
+     * Modify blend shape deltas for a channel
+     * @param BlendShapeName - Name of blend shape to modify
+     * @param MeshName - Target mesh name
+     * @param Deltas - Array of vertex position deltas
+     * @return True if successfully modified
+     */
+    bool ModifyBlendShapeDeltas(const FString& BlendShapeName, const FString& MeshName, const TArray<FVector>& Deltas);
+
+    /**
+     * Get joint transform in neutral pose
+     * @param JointName - Name of joint
+     * @param OutTransform - Output transform
+     * @return True if joint found
+     */
+    bool GetJointNeutralTransform(const FString& JointName, FTransform& OutTransform);
+
+    /**
+     * Get joint parent index
+     * @param JointName - Name of joint
+     * @return Parent joint index (-1 if root or not found)
+     */
+    int32 GetJointParentIndex(const FString& JointName);
+
+    /**
+     * Get blend shape target mesh name
+     * @param BlendShapeName - Name of blend shape
+     * @return Target mesh name
+     */
+    FString GetBlendShapeTargetMesh(const FString& BlendShapeName);
+
+    /**
+     * Get blend shape vertex count
+     * @param BlendShapeName - Name of blend shape
+     * @return Number of affected vertices
+     */
+    int32 GetBlendShapeVertexCount(const FString& BlendShapeName);
+
     // ========================================
     // Advanced Operations
     // ========================================

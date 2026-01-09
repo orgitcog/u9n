@@ -270,10 +270,32 @@ bool UMetaHumanDNABridge::RenameBlendShape(const FString& OldName, const FString
         return false;
     }
 
-    // Rename in Python wrapper (implementation needed in wrapper)
-    // For now, log warning
-    UE_LOG(LogMetaHumanDNA, Warning, TEXT("RenameBlendShape not yet implemented in Python wrapper"));
-    return false;
+    // Validate blend shape exists
+    if (!BlendShapeNameToIndexMap.Contains(OldName))
+    {
+        UE_LOG(LogMetaHumanDNA, Error, TEXT("Blend shape not found: %s"), *OldName);
+        return false;
+    }
+
+    // Check new name doesn't conflict
+    if (BlendShapeNameToIndexMap.Contains(NewName))
+    {
+        UE_LOG(LogMetaHumanDNA, Error, TEXT("Blend shape already exists with name: %s"), *NewName);
+        return false;
+    }
+
+    if (!PythonWrapper->RenameBlendShape(OldName, NewName))
+    {
+        UE_LOG(LogMetaHumanDNA, Error, TEXT("Failed to rename blend shape: %s -> %s"), *OldName, *NewName);
+        return false;
+    }
+
+    // Update cache
+    LoadDNAData();
+    BuildCacheMaps();
+
+    UE_LOG(LogMetaHumanDNA, Log, TEXT("Successfully renamed blend shape: %s -> %s"), *OldName, *NewName);
+    return true;
 }
 
 bool UMetaHumanDNABridge::RemoveBlendShape(const FString& BlendShapeName)
@@ -284,10 +306,25 @@ bool UMetaHumanDNABridge::RemoveBlendShape(const FString& BlendShapeName)
         return false;
     }
 
-    // Remove in Python wrapper (implementation needed in wrapper)
-    // For now, log warning
-    UE_LOG(LogMetaHumanDNA, Warning, TEXT("RemoveBlendShape not yet implemented in Python wrapper"));
-    return false;
+    // Validate blend shape exists
+    if (!BlendShapeNameToIndexMap.Contains(BlendShapeName))
+    {
+        UE_LOG(LogMetaHumanDNA, Error, TEXT("Blend shape not found: %s"), *BlendShapeName);
+        return false;
+    }
+
+    if (!PythonWrapper->RemoveBlendShape(BlendShapeName))
+    {
+        UE_LOG(LogMetaHumanDNA, Error, TEXT("Failed to remove blend shape: %s"), *BlendShapeName);
+        return false;
+    }
+
+    // Update cache
+    LoadDNAData();
+    BuildCacheMaps();
+
+    UE_LOG(LogMetaHumanDNA, Log, TEXT("Successfully removed blend shape: %s"), *BlendShapeName);
+    return true;
 }
 
 bool UMetaHumanDNABridge::ModifyBlendShapeDeltas(const FString& BlendShapeName, const TArray<FVector>& Deltas)
@@ -298,10 +335,39 @@ bool UMetaHumanDNABridge::ModifyBlendShapeDeltas(const FString& BlendShapeName, 
         return false;
     }
 
-    // Modify in Python wrapper (implementation needed in wrapper)
-    // For now, log warning
-    UE_LOG(LogMetaHumanDNA, Warning, TEXT("ModifyBlendShapeDeltas not yet implemented in Python wrapper"));
-    return false;
+    // Validate blend shape exists
+    FDNABlendShapeInfo BlendShapeInfo;
+    if (!GetBlendShapeInfo(BlendShapeName, BlendShapeInfo))
+    {
+        UE_LOG(LogMetaHumanDNA, Error, TEXT("Blend shape not found: %s"), *BlendShapeName);
+        return false;
+    }
+
+    // Get target mesh name
+    FString TargetMeshName = PythonWrapper->GetBlendShapeTargetMesh(BlendShapeName);
+    if (TargetMeshName.IsEmpty())
+    {
+        TargetMeshName = TEXT("head_lod0"); // Default to head mesh
+    }
+
+    if (!PythonWrapper->ModifyBlendShapeDeltas(BlendShapeName, TargetMeshName, Deltas))
+    {
+        UE_LOG(LogMetaHumanDNA, Error, TEXT("Failed to modify blend shape deltas: %s"), *BlendShapeName);
+        return false;
+    }
+
+    // Update blend shape info cache with new vertex count
+    if (int32* IndexPtr = BlendShapeNameToIndexMap.Find(BlendShapeName))
+    {
+        if (BlendShapeInfoCache.IsValidIndex(*IndexPtr))
+        {
+            BlendShapeInfoCache[*IndexPtr].VertexCount = Deltas.Num();
+        }
+    }
+
+    UE_LOG(LogMetaHumanDNA, Log, TEXT("Successfully modified blend shape deltas: %s (%d vertices)"),
+           *BlendShapeName, Deltas.Num());
+    return true;
 }
 
 bool UMetaHumanDNABridge::ClearAllBlendShapes()
@@ -312,10 +378,19 @@ bool UMetaHumanDNABridge::ClearAllBlendShapes()
         return false;
     }
 
-    // Clear in Python wrapper (implementation needed in wrapper)
-    // For now, log warning
-    UE_LOG(LogMetaHumanDNA, Warning, TEXT("ClearAllBlendShapes not yet implemented in Python wrapper"));
-    return false;
+    if (!PythonWrapper->ClearBlendShapes())
+    {
+        UE_LOG(LogMetaHumanDNA, Error, TEXT("Failed to clear blend shapes"));
+        return false;
+    }
+
+    // Clear blend shape cache and weights
+    BlendShapeInfoCache.Empty();
+    BlendShapeNameToIndexMap.Empty();
+    CurrentBlendShapeWeights.Empty();
+
+    UE_LOG(LogMetaHumanDNA, Log, TEXT("Successfully cleared all blend shapes"));
+    return true;
 }
 
 bool UMetaHumanDNABridge::RemoveLOD(int32 LODIndex)
@@ -326,10 +401,37 @@ bool UMetaHumanDNABridge::RemoveLOD(int32 LODIndex)
         return false;
     }
 
-    // Remove LOD in Python wrapper (implementation needed in wrapper)
-    // For now, log warning
-    UE_LOG(LogMetaHumanDNA, Warning, TEXT("RemoveLOD not yet implemented in Python wrapper"));
-    return false;
+    if (LODIndex < 0 || LODIndex > 7)
+    {
+        UE_LOG(LogMetaHumanDNA, Error, TEXT("Invalid LOD index: %d (must be 0-7)"), LODIndex);
+        return false;
+    }
+
+    if (!PythonWrapper->RemoveLOD(LODIndex))
+    {
+        UE_LOG(LogMetaHumanDNA, Error, TEXT("Failed to remove LOD: %d"), LODIndex);
+        return false;
+    }
+
+    // Update mesh cache (remove LOD-specific meshes)
+    for (int32 i = MeshInfoCache.Num() - 1; i >= 0; i--)
+    {
+        FString LODSuffix = FString::Printf(TEXT("_lod%d"), LODIndex);
+        if (MeshInfoCache[i].MeshName.EndsWith(LODSuffix))
+        {
+            MeshNameToIndexMap.Remove(MeshInfoCache[i].MeshName);
+            MeshInfoCache.RemoveAt(i);
+        }
+    }
+
+    // Rebuild mesh index map
+    for (int32 i = 0; i < MeshInfoCache.Num(); i++)
+    {
+        MeshNameToIndexMap.Add(MeshInfoCache[i].MeshName, i);
+    }
+
+    UE_LOG(LogMetaHumanDNA, Log, TEXT("Successfully removed LOD: %d"), LODIndex);
+    return true;
 }
 
 // ========================================
@@ -529,35 +631,77 @@ bool UMetaHumanDNABridge::LoadDNAData()
 
     ClearCache();
 
-    // Load joint data
+    // Load joint data with full transform and hierarchy information
     TArray<FString> JointNames = PythonWrapper->GetJointNames();
     for (int32 i = 0; i < JointNames.Num(); ++i)
     {
         FDNAJointInfo JointInfo;
         JointInfo.JointName = JointNames[i];
         JointInfo.JointIndex = i;
-        // TODO: Get neutral transform from Python wrapper
-        JointInfo.NeutralTransform = FTransform::Identity;
-        JointInfo.ParentIndex = -1; // TODO: Get parent index from Python wrapper
-        
+
+        // Get neutral transform from Python wrapper
+        FTransform NeutralTransform;
+        if (PythonWrapper->GetJointNeutralTransform(JointNames[i], NeutralTransform))
+        {
+            JointInfo.NeutralTransform = NeutralTransform;
+        }
+        else
+        {
+            JointInfo.NeutralTransform = FTransform::Identity;
+        }
+
+        // Get parent index from Python wrapper
+        JointInfo.ParentIndex = PythonWrapper->GetJointParentIndex(JointNames[i]);
+
         JointInfoCache.Add(JointInfo);
     }
 
-    // Load blend shape data
+    // Load blend shape data with target mesh and vertex count
     TArray<FString> BlendShapeNames = PythonWrapper->GetBlendShapeNames();
     for (int32 i = 0; i < BlendShapeNames.Num(); ++i)
     {
         FDNABlendShapeInfo BlendShapeInfo;
         BlendShapeInfo.BlendShapeName = BlendShapeNames[i];
         BlendShapeInfo.BlendShapeIndex = i;
-        // TODO: Get target mesh and vertex count from Python wrapper
-        BlendShapeInfo.TargetMeshName = TEXT("");
-        BlendShapeInfo.VertexCount = 0;
-        
+
+        // Get target mesh from Python wrapper
+        BlendShapeInfo.TargetMeshName = PythonWrapper->GetBlendShapeTargetMesh(BlendShapeNames[i]);
+        if (BlendShapeInfo.TargetMeshName.IsEmpty())
+        {
+            BlendShapeInfo.TargetMeshName = TEXT("head_lod0");
+        }
+
+        // Get vertex count from Python wrapper
+        BlendShapeInfo.VertexCount = PythonWrapper->GetBlendShapeVertexCount(BlendShapeNames[i]);
+
         BlendShapeInfoCache.Add(BlendShapeInfo);
     }
 
-    // TODO: Load mesh data from Python wrapper
+    // Load mesh data from Python wrapper
+    TArray<FString> MeshNames = PythonWrapper->GetMeshNames();
+    for (int32 i = 0; i < MeshNames.Num(); ++i)
+    {
+        FDNAMeshInfo MeshInfo;
+        MeshInfo.MeshName = MeshNames[i];
+        MeshInfo.MeshIndex = i;
+
+        // Determine LOD level from mesh name
+        MeshInfo.LODIndex = 0;
+        for (int32 LOD = 0; LOD < 8; ++LOD)
+        {
+            FString LODSuffix = FString::Printf(TEXT("_lod%d"), LOD);
+            if (MeshNames[i].EndsWith(LODSuffix))
+            {
+                MeshInfo.LODIndex = LOD;
+                break;
+            }
+        }
+
+        MeshInfoCache.Add(MeshInfo);
+    }
+
+    UE_LOG(LogMetaHumanDNA, Log, TEXT("Loaded DNA data: %d joints, %d blend shapes, %d meshes"),
+           JointInfoCache.Num(), BlendShapeInfoCache.Num(), MeshInfoCache.Num());
 
     return true;
 }
@@ -569,9 +713,26 @@ bool UMetaHumanDNABridge::ParseDNAVersion()
         return false;
     }
 
-    // TODO: Get DNA version from Python wrapper
-    // For now, assume DHI
-    DNAVersion = EDNAVersion::DHI;
+    // Get DNA version from Python wrapper database name
+    FString DBName = PythonWrapper->GetDNADatabaseName();
+
+    if (DBName == TEXT("MH.4") || DBName.Contains(TEXT("MH4")))
+    {
+        DNAVersion = EDNAVersion::MH4;
+        UE_LOG(LogMetaHumanDNA, Log, TEXT("Detected DNA version: MH.4"));
+    }
+    else if (DBName == TEXT("DHI") || DBName.Contains(TEXT("DHI")))
+    {
+        DNAVersion = EDNAVersion::DHI;
+        UE_LOG(LogMetaHumanDNA, Log, TEXT("Detected DNA version: DHI"));
+    }
+    else
+    {
+        // Default to DHI for unknown versions
+        DNAVersion = EDNAVersion::DHI;
+        UE_LOG(LogMetaHumanDNA, Warning, TEXT("Unknown DNA database: %s, assuming DHI"), *DBName);
+    }
+
     return true;
 }
 
