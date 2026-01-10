@@ -718,6 +718,7 @@ private:
         headBinding.RotationMin = FRotator(-45, -80, -45);
         headBinding.RotationMax = FRotator(45, 80, 35);
         JointBindings["head"] = headBinding;
+        ProprioceptiveStates["head"] = FProprioceptiveState();  // Initialize state
 
         // Neck binding
         FJointBinding neckBinding;
@@ -727,6 +728,7 @@ private:
         neckBinding.RotationMin = FRotator(-30, -45, -20);
         neckBinding.RotationMax = FRotator(30, 45, 20);
         JointBindings["neck_01"] = neckBinding;
+        ProprioceptiveStates["neck_01"] = FProprioceptiveState();  // Initialize state
 
         // Spine binding
         FJointBinding spineBinding;
@@ -736,6 +738,7 @@ private:
         spineBinding.RotationMin = FRotator(-20, -30, -15);
         spineBinding.RotationMax = FRotator(20, 30, 15);
         JointBindings["spine_01"] = spineBinding;
+        ProprioceptiveStates["spine_01"] = FProprioceptiveState();  // Initialize state
 
         // Arm bindings
         FJointBinding armBinding;
@@ -745,6 +748,7 @@ private:
         armBinding.RotationMin = FRotator(-90, -180, -90);
         armBinding.RotationMax = FRotator(90, 60, 90);
         JointBindings["upperarm_l"] = armBinding;
+        ProprioceptiveStates["upperarm_l"] = FProprioceptiveState();  // Initialize state
     }
 
     bool bInitialized = false;
@@ -1095,8 +1099,10 @@ TEST_F(MetaHumanDNABridgeTest, DNAVersionDetectionDHI) {
 TEST_F(MetaHumanDNABridgeTest, DNAVersionDetectionMH4) {
     MockMetaHumanDNABridge bridge;
     bridge.Initialize("/path/to/dnacalib");
+    // Set database name BEFORE loading DNA so ParseDNAVersion picks it up
     bridge.SetDatabaseNameForTesting("MH.4");
     bridge.LoadDNA("/path/to/test.dna");
+    // After LoadDNA, ParseDNAVersion should have detected MH.4
     EXPECT_EQ(bridge.GetDNAVersion(), EDNAVersion::MH4);
 }
 

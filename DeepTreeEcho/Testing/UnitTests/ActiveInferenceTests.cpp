@@ -381,11 +381,34 @@ public:
         State.Desires.resize(desireDim, 0.0);
         State.Intentions.resize(intentionDim, 0.0);
         
-        // Initialize active inference engine
+        // Initialize active inference engine with properly sized model
         FGenerativeModel model;
         model.NumStates = beliefDim;
         model.NumObservations = beliefDim;
         model.NumActions = intentionDim;
+        
+        // Resize model matrices to match dimensions
+        model.A.resize(beliefDim, Vector(beliefDim, 0.0));
+        model.B.resize(beliefDim, Vector(beliefDim * intentionDim, 0.0));
+        model.C.resize(beliefDim, 0.0);  // Preferences must match observation dim
+        model.D.resize(beliefDim, 1.0 / beliefDim);  // Uniform prior
+        
+        // Set up observation model (identity-ish)
+        for (int i = 0; i < beliefDim; i++) {
+            for (int j = 0; j < beliefDim; j++) {
+                model.A[i][j] = (i == j) ? 0.7 : 0.1 / (beliefDim - 1);
+            }
+        }
+        
+        // Normalize columns
+        for (int j = 0; j < beliefDim; j++) {
+            double sum = 0.0;
+            for (int i = 0; i < beliefDim; i++) sum += model.A[i][j];
+            if (sum > 1e-10) {
+                for (int i = 0; i < beliefDim; i++) model.A[i][j] /= sum;
+            }
+        }
+        
         InferenceEngine.Initialize(model);
         
         bInitialized = true;
@@ -400,7 +423,10 @@ public:
     
     void SetDesires(const Vector& desires) {
         State.Desires = desires;
-        InferenceEngine.SetPreferences(desires);
+        // Ensure preferences match model observation dimension
+        Vector prefs = desires;
+        prefs.resize(BeliefDim, 0.0);  // Pad or truncate to match observation dim
+        InferenceEngine.SetPreferences(prefs);
     }
     
     int FormIntention() {
