@@ -382,21 +382,30 @@ public:
         State.Intentions.resize(intentionDim, 0.0);
         
         // Initialize active inference engine with properly sized model
+        // Create model with explicit dimensions - don't use default constructor
         FGenerativeModel model;
+        
+        // CRITICAL: Set dimension members BEFORE resizing matrices
+        // These are used by MockActiveInferenceEngine for iteration bounds
         model.NumStates = beliefDim;
         model.NumObservations = beliefDim;
         model.NumActions = intentionDim;
         
-        // Resize model matrices to match dimensions
+        // Resize model matrices to match the new dimensions
+        model.A.clear();
         model.A.resize(beliefDim, Vector(beliefDim, 0.0));
+        model.B.clear();
         model.B.resize(beliefDim, Vector(beliefDim * intentionDim, 0.0));
+        model.C.clear();
         model.C.resize(beliefDim, 0.0);  // Preferences must match observation dim
+        model.D.clear();
         model.D.resize(beliefDim, 1.0 / beliefDim);  // Uniform prior
         
         // Set up observation model (identity-ish)
         for (int i = 0; i < beliefDim; i++) {
             for (int j = 0; j < beliefDim; j++) {
-                model.A[i][j] = (i == j) ? 0.7 : 0.1 / (beliefDim - 1);
+                double offDiag = (beliefDim > 1) ? 0.1 / (beliefDim - 1) : 0.0;
+                model.A[i][j] = (i == j) ? 0.7 : offDiag;
             }
         }
         

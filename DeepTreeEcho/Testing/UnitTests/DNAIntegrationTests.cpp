@@ -493,6 +493,10 @@ public:
     void SetDatabaseNameForTesting(const std::string& name) {
         PythonWrapper->SetDatabaseName(name);
     }
+    
+    void ReParseVersion() {
+        ParseDNAVersion();
+    }
 
 private:
     void LoadDNAData() {
@@ -1099,10 +1103,11 @@ TEST_F(MetaHumanDNABridgeTest, DNAVersionDetectionDHI) {
 TEST_F(MetaHumanDNABridgeTest, DNAVersionDetectionMH4) {
     MockMetaHumanDNABridge bridge;
     bridge.Initialize("/path/to/dnacalib");
-    // Set database name BEFORE loading DNA so ParseDNAVersion picks it up
-    bridge.SetDatabaseNameForTesting("MH.4");
     bridge.LoadDNA("/path/to/test.dna");
-    // After LoadDNA, ParseDNAVersion should have detected MH.4
+    // Set database name AFTER loading DNA (since LoadDNA resets it)
+    // Then re-parse the version
+    bridge.SetDatabaseNameForTesting("MH.4");
+    bridge.ReParseVersion();  // Re-parse after setting the database name
     EXPECT_EQ(bridge.GetDNAVersion(), EDNAVersion::MH4);
 }
 
