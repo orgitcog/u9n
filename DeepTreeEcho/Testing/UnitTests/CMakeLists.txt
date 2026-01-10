@@ -16,8 +16,23 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-# Find GTest
-find_package(GTest REQUIRED)
+# Find or fetch GTest
+find_package(GTest QUIET)
+if(NOT GTest_FOUND)
+    message(STATUS "GTest not found, fetching from GitHub...")
+    include(FetchContent)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.14.0
+    )
+    # Prevent overriding the parent project's compiler/linker settings on Windows
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+    set(GTEST_LIBS gtest gtest_main gmock pthread)
+else()
+    set(GTEST_LIBS GTest::gtest GTest::gtest_main GTest::gmock pthread)
+endif()
 include(GoogleTest)
 
 # Compiler flags
@@ -37,12 +52,7 @@ add_executable(CoreTests
     CoreTests.cpp
 )
 
-target_link_libraries(CoreTests
-    GTest::gtest
-    GTest::gtest_main
-    GTest::gmock
-    pthread
-)
+target_link_libraries(CoreTests ${GTEST_LIBS})
 
 target_include_directories(CoreTests PRIVATE
     ${CMAKE_SOURCE_DIR}/../../
@@ -63,12 +73,7 @@ add_executable(MemoryTests
     MemoryTests.cpp
 )
 
-target_link_libraries(MemoryTests
-    GTest::gtest
-    GTest::gtest_main
-    GTest::gmock
-    pthread
-)
+target_link_libraries(MemoryTests ${GTEST_LIBS})
 
 target_include_directories(MemoryTests PRIVATE
     ${CMAKE_SOURCE_DIR}/../../
@@ -89,12 +94,7 @@ add_executable(AvatarCognitionTests
     AvatarCognitionTests.cpp
 )
 
-target_link_libraries(AvatarCognitionTests
-    GTest::gtest
-    GTest::gtest_main
-    GTest::gmock
-    pthread
-)
+target_link_libraries(AvatarCognitionTests ${GTEST_LIBS})
 
 target_include_directories(AvatarCognitionTests PRIVATE
     ${CMAKE_SOURCE_DIR}/../../
@@ -115,17 +115,13 @@ add_executable(ReservoirIntegrationTests
     ReservoirIntegrationTests.cpp
 )
 
-target_link_libraries(ReservoirIntegrationTests
-    GTest::gtest
-    GTest::gtest_main
-    GTest::gmock
-    pthread
-)
+target_link_libraries(ReservoirIntegrationTests ${GTEST_LIBS})
 
 target_include_directories(ReservoirIntegrationTests PRIVATE
     ${CMAKE_SOURCE_DIR}/../../
     ${CMAKE_SOURCE_DIR}/../../../
     ${CMAKE_SOURCE_DIR}/../../../ReservoirEcho/reservoircpp_cpp/include
+    ${CMAKE_SOURCE_DIR}/../../../ReservoirEcho/external/taskflow-3.8.0/3rd-party/eigen-3.3.7
 )
 
 gtest_discover_tests(ReservoirIntegrationTests
@@ -142,12 +138,7 @@ add_executable(ActiveInferenceTests
     ActiveInferenceTests.cpp
 )
 
-target_link_libraries(ActiveInferenceTests
-    GTest::gtest
-    GTest::gtest_main
-    GTest::gmock
-    pthread
-)
+target_link_libraries(ActiveInferenceTests ${GTEST_LIBS})
 
 target_include_directories(ActiveInferenceTests PRIVATE
     ${CMAKE_SOURCE_DIR}/../../
@@ -168,12 +159,7 @@ add_executable(DNAIntegrationTests
     DNAIntegrationTests.cpp
 )
 
-target_link_libraries(DNAIntegrationTests
-    GTest::gtest
-    GTest::gtest_main
-    GTest::gmock
-    pthread
-)
+target_link_libraries(DNAIntegrationTests ${GTEST_LIBS})
 
 target_include_directories(DNAIntegrationTests PRIVATE
     ${CMAKE_SOURCE_DIR}/../../
@@ -189,11 +175,95 @@ gtest_discover_tests(DNAIntegrationTests
 )
 
 # ============================================================================
+# Cognitive Loop Tests (12-Step Cycle)
+# ============================================================================
+add_executable(CognitiveLoopTests
+    CognitiveLoopTests.cpp
+)
+
+target_link_libraries(CognitiveLoopTests ${GTEST_LIBS})
+
+target_include_directories(CognitiveLoopTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(CognitiveLoopTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;cognitive-loop;12-step"
+        TIMEOUT 120
+)
+
+# ============================================================================
+# Wisdom & Entelechy Tests
+# ============================================================================
+add_executable(WisdomEntelechyTests
+    WisdomEntelechyTests.cpp
+)
+
+target_link_libraries(WisdomEntelechyTests ${GTEST_LIBS})
+
+target_include_directories(WisdomEntelechyTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(WisdomEntelechyTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;wisdom;entelechy;relevance"
+        TIMEOUT 120
+)
+
+# ============================================================================
+# Sys6 Operad Tests
+# ============================================================================
+add_executable(Sys6OperadTests
+    Sys6OperadTests.cpp
+)
+
+target_link_libraries(Sys6OperadTests ${GTEST_LIBS})
+
+target_include_directories(Sys6OperadTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(Sys6OperadTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;sys6;operad;clock30"
+        TIMEOUT 120
+)
+
+# ============================================================================
+# Behavioral Framework Tests
+# ============================================================================
+add_executable(BehavioralFrameworkTests
+    BehavioralFrameworkTests.cpp
+)
+
+target_link_libraries(BehavioralFrameworkTests ${GTEST_LIBS})
+
+target_include_directories(BehavioralFrameworkTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(BehavioralFrameworkTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;behavioral;personality;emotion"
+        TIMEOUT 120
+)
+
+# ============================================================================
 # All Tests Target
 # ============================================================================
 add_custom_target(run_all_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 4
-    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests ActiveInferenceTests DNAIntegrationTests
+    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests ActiveInferenceTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running all DeepTreeEcho unit tests"
 )
@@ -223,10 +293,10 @@ endif()
 # ============================================================================
 # Installation
 # ============================================================================
-install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests ActiveInferenceTests DNAIntegrationTests
+install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests ActiveInferenceTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests
     RUNTIME DESTINATION bin/tests
 )
 
 message(STATUS "DeepTreeEcho Tests configured")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "  Tests: CoreTests, MemoryTests, AvatarCognitionTests, ReservoirIntegrationTests, ActiveInferenceTests, DNAIntegrationTests")
+message(STATUS "  Tests: CoreTests, MemoryTests, AvatarCognitionTests, ReservoirIntegrationTests, ActiveInferenceTests, DNAIntegrationTests, CognitiveLoopTests, WisdomEntelechyTests, Sys6OperadTests, BehavioralFrameworkTests")

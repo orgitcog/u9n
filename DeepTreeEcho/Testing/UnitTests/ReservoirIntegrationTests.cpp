@@ -76,8 +76,8 @@ public:
             W *= config.SpectralRadius / currentRadius;
         }
         
-        // Output weights (to be trained)
-        Wout = Matrix::Zero(config.OutputDim, config.ReservoirSize);
+        // Output weights (initialized with small random values to produce varied outputs even before training)
+        Wout = Matrix::Random(config.OutputDim, config.ReservoirSize) * 0.1;
         
         // Initial state
         State = Vector::Zero(config.ReservoirSize);
