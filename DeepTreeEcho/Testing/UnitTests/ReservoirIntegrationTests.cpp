@@ -826,12 +826,3 @@ TEST(ReservoirIntegrationTest, FullCognitivePipeline) {
     Vector recalled = memory.Recall(cue);
     EXPECT_EQ(recalled.size(), 48);
 }
-
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

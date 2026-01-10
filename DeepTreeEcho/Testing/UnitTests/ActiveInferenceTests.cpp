@@ -936,12 +936,3 @@ TEST(ActiveInferencePerformanceTest, ActionSelectionPerformance) {
     
     EXPECT_LT(duration.count(), 200);  // 5000 selections in under 200ms
 }
-
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
