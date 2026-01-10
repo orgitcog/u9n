@@ -1510,12 +1510,3 @@ TEST(IntegrationTest, FullVisualizationPipeline) {
     EXPECT_EQ(viz.GetMemoryConstellationNodeCount(), 2);
     EXPECT_GT(viz.GetParticleCount(), 0);
 }
-
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

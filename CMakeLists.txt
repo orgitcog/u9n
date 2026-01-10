@@ -84,6 +84,12 @@ endif()
 add_subdirectory(ReservoirEcho/reservoircpp_cpp)
 
 # ============================================================================
+# Dependencies for Testing
+# ============================================================================
+# Find Threads package for test targets
+find_package(Threads REQUIRED)
+
+# ============================================================================
 # Testing Infrastructure
 # ============================================================================
 if(BUILD_TESTING OR BUILD_E2E_TESTS)
