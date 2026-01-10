@@ -93,7 +93,15 @@ find_package(Threads REQUIRED)
 # Testing Infrastructure
 # ============================================================================
 if(BUILD_TESTING OR BUILD_E2E_TESTS)
+    # Try to find system GTest with GMock support
     find_package(GTest QUIET)
+    
+    # Check if GMock target exists (system GTest may not include it)
+    if(GTest_FOUND AND NOT TARGET GTest::gmock)
+        message(STATUS "System GTest found but GMock not available, fetching GoogleTest")
+        set(GTest_FOUND FALSE)
+    endif()
+    
     if(NOT GTest_FOUND)
         include(FetchContent)
         FetchContent_Declare(
@@ -103,7 +111,11 @@ if(BUILD_TESTING OR BUILD_E2E_TESTS)
         )
         set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
         FetchContent_MakeAvailable(googletest)
+        message(STATUS "Using fetched GoogleTest with GMock support")
+    else()
+        message(STATUS "Using system GoogleTest with GMock support")
     endif()
+    
     include(GoogleTest)
     enable_testing()
 endif()
