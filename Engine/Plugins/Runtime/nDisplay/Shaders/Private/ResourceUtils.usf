@@ -1,0 +1,141 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "DisplayClusterColorCorrection.ush"
+
+// Input texture and sampler
+Texture2D InputTexture;
+SamplerState InputTextureSampler;
+
+// Definition for the color encoding and alpha overrides
+// Encodings.X = Input Encoding
+// Encodings.Y = Output Encoding
+// Encodings.Z = Override Alpha
+
+#define ESourceEncoding_Linear  0
+#define ESourceEncoding_Gamma   1
+#define ESourceEncoding_sRGB    2
+#define ESourceEncoding_MediaPQ 3
+
+#define EOverrideAlpha_None   0
+#define EOverrideAlpha_Invert 1
+#define EOverrideAlpha_One    2
+#define EOverrideAlpha_Zero   3
+
+// Color encoding parameters:
+uint3 Encodings;
+float3 DisplayGamma;
+
+// Definition for the ColorPremultiply
+// ColorPremultiply.X = Input texture Color premultiply
+// ColorPremultiply.Y = Output texture Color premultiply
+
+#define EColorPremultiply_None          0
+#define EColorPremultiply_Alpha         1
+#define EColorPremultiply_InvertedAlpha 2
+
+// Color modifier
+uint3 ColorPremultiply;
+
+/** Implements color encoding. */
+float4 DisplayClusterEncodeColorAndAlpha(float4 InColorArg)
+{
+	float4 OutColor = InColorArg;
+
+#if COLOR_PREMULTIPLY	
+	// Unpremultiply color
+	BRANCH
+    if(ColorPremultiply.x == EColorPremultiply_Alpha) // Unpremultiply
+    {
+        OutColor = Unpremultiply(OutColor);
+	}
+	else if(ColorPremultiply.x == EColorPremultiply_InvertedAlpha) // Unpremultiply inverted alpha
+	{
+        OutColor = InvertedUnpremultiply(OutColor);
+	}
+#endif
+	
+#if OVERRIDE_ALPHA
+	// Override alpha
+	BRANCH
+    if(Encodings.z == EOverrideAlpha_Invert)
+    {
+        OutColor.a = 1.0f - OutColor.a;
+    }
+    else if(Encodings.z == EOverrideAlpha_One)
+    {
+        OutColor.a = 1.0f;
+    }
+    else if(Encodings.z == EOverrideAlpha_Zero)
+    {
+        OutColor.a = 0.0f;
+    }
+#endif
+
+#if ENCODE_INPUT || ENCODE_OUTPUT
+
+#if ENCODE_INPUT
+	// Convert Input color to linear
+	BRANCH
+    if(Encodings.x == ESourceEncoding_Gamma) // Gamma -> Linear
+    {
+        OutColor.rgb = DisplayGammaCorrection(OutColor.rgb, DisplayGamma.x);
+    }
+    else if(Encodings.x == ESourceEncoding_sRGB) // sRGB -> Linear
+    {
+        OutColor.rgb = sRGBToLinear(OutColor.rgb);
+	}
+	else if(Encodings.x == ESourceEncoding_MediaPQ) // MediaPQ -> Linear
+    {
+		// Pixel shader for Linear-PQ conversion
+		float3 colorPQ = LinearToST2084(OutColor.rgb);
+        OutColor.rgb = saturate(colorPQ);
+	}
+
+#endif // ENCODE_INPUT
+
+#if ENCODE_OUTPUT
+	// Convert the output color to a output color space
+	BRANCH
+    if(Encodings.y == ESourceEncoding_Gamma) // Linear -> Gamma
+    {
+        OutColor.rgb = DisplayGammaCorrection(OutColor.rgb, DisplayGamma.y);
+    }
+    else if(Encodings.y == ESourceEncoding_sRGB) // Linear -> sRGB
+    {
+        OutColor.rgb = LinearToSrgb(OutColor.rgb);
+    }
+	else if(Encodings.y == ESourceEncoding_MediaPQ) // Linear -> MediaPQ
+    {
+		// Pixel shader for PQ-Linear conversion
+		OutColor.rgb = ST2084ToLinear(OutColor.rgb);
+    }
+#endif // ENCODE_OUTPUT
+
+#endif // ENCODE_INPUT || ENCODE_OUTPUT
+
+#if COLOR_PREMULTIPLY
+	// Premultiply color
+	BRANCH
+    if(ColorPremultiply.y == EColorPremultiply_Alpha) // Premultiply
+    {
+        OutColor = Premultiply(OutColor);
+	}
+	else if(ColorPremultiply.y == EColorPremultiply_InvertedAlpha) // Premultiply inverted alpha
+	{
+        OutColor = InvertedPremultiply(OutColor);
+	}
+#endif
+
+	return OutColor;
+}
+
+void Main(
+	FScreenVertexOutput Input,
+	out float4 OutColor : SV_Target0
+	)
+{
+	float4 InColor = Texture2DSample(InputTexture, InputTextureSampler, Input.UV);
+
+	OutColor = DisplayClusterEncodeColorAndAlpha(InColor);
+}

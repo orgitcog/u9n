@@ -1,0 +1,23 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Plugin/ComputeFramework/Private/ComputeKernelCommon.ush"
+
+uint {DataInterfaceName}_NumBones; 
+
+Buffer<float4> {DataInterfaceName}_BoneTransformMatrices;
+
+// Interface functions
+
+uint ReadNumBones_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumBones;
+}
+
+float3x4 ReadBoneTransformMatrix_{DataInterfaceName}(uint BoneIndex)
+{
+	return (BoneIndex < {DataInterfaceName}_NumBones) ?
+		float3x4({DataInterfaceName}_BoneTransformMatrices[3*BoneIndex], {DataInterfaceName}_BoneTransformMatrices[3*BoneIndex+1], {DataInterfaceName}_BoneTransformMatrices[3*BoneIndex+2]) : float3x4(1.0f,0.0f,0.0f,0.0f,0.0f,1.0f,0.0f,0.0f,0.0f,0.0f,1.0f,0.0f);
+}
+
+
+
