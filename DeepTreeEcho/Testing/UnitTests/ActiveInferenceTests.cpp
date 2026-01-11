@@ -88,30 +88,41 @@ struct FGenerativeModel {
     Matrix B;  // Transition model P(s'|s,a)
     Vector C;  // Preferred observations (log preferences)
     Vector D;  // Prior over initial states
-    
+
     int NumStates = 4;
     int NumObservations = 4;
     int NumActions = 3;
-    
+
     FGenerativeModel() {
-        // Initialize with default dimensions
+        InitializeArrays();
+    }
+
+    FGenerativeModel(int numStates, int numObservations, int numActions)
+        : NumStates(numStates), NumObservations(numObservations), NumActions(numActions) {
+        InitializeArrays();
+    }
+
+    void InitializeArrays() {
+        // Initialize with current dimensions
         A.resize(NumObservations, Vector(NumStates, 0.25));
         B.resize(NumStates, Vector(NumStates * NumActions, 0.0));
         C.resize(NumObservations, 0.0);
-        D.resize(NumStates, 0.25);
-        
+        D.resize(NumStates, 1.0 / NumStates);
+
         // Set up simple observation model (identity-ish)
         for (int i = 0; i < NumObservations; i++) {
             for (int j = 0; j < NumStates; j++) {
                 A[i][j] = (i == j) ? 0.7 : 0.1;
             }
         }
-        
+
         // Normalize columns
         for (int j = 0; j < NumStates; j++) {
             double sum = 0.0;
             for (int i = 0; i < NumObservations; i++) sum += A[i][j];
-            for (int i = 0; i < NumObservations; i++) A[i][j] /= sum;
+            if (sum > 1e-10) {
+                for (int i = 0; i < NumObservations; i++) A[i][j] /= sum;
+            }
         }
     }
 };
@@ -376,10 +387,13 @@ public:
         BeliefDim = beliefDim;
         DesireDim = desireDim;
         IntentionDim = intentionDim;
-        
+
         State.Beliefs.resize(beliefDim, 0.0);
         State.Desires.resize(desireDim, 0.0);
         State.Intentions.resize(intentionDim, 0.0);
+
+        // Initialize active inference engine with properly-sized model
+        FGenerativeModel model(beliefDim, beliefDim, intentionDim);
         
         // Initialize active inference engine with properly sized model
         // Create model with explicit dimensions - don't use default constructor
@@ -419,7 +433,7 @@ public:
         }
         
         InferenceEngine.Initialize(model);
-        
+
         bInitialized = true;
     }
     

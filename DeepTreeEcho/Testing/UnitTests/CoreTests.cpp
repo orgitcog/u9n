@@ -17,6 +17,7 @@
 #include <chrono>
 #include <thread>
 #include <random>
+#include <thread>
 
 // Mock Unreal Engine types for standalone testing
 #ifndef WITH_UNREAL_ENGINE

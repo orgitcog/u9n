@@ -327,7 +327,10 @@ private:
         BlendShapeVertexCounts["mouth_smile_L"] = 720;
         BlendShapeVertexCounts["jaw_open"] = 1500;
 
-        DatabaseName = "DHI";
+        // Only set DatabaseName if not already set by SetDatabaseName()
+        if (DatabaseName.empty()) {
+            DatabaseName = "DHI";
+        }
     }
 
     bool bInitialized;
