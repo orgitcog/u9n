@@ -1,0 +1,142 @@
+name: "✨ Feature"
+description: "Create a new Feature within a Phase"
+title: "[FEATURE] "
+labels: ["feature", "roadmap"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Feature Definition
+        A Feature is a specific, implementable unit of work within a Phase.
+
+  - type: input
+    id: feature_id
+    attributes:
+      label: Feature ID
+      description: "Unique identifier (e.g., F1.1.1, F2.3.4)"
+      placeholder: "F1.1.1"
+    validations:
+      required: true
+
+  - type: input
+    id: parent_phase
+    attributes:
+      label: Parent Phase
+      description: "Reference to parent phase issue"
+      placeholder: "#124"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Critical
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: dropdown
+    id: effort
+    attributes:
+      label: Effort Points
+      description: "Fibonacci scale estimation"
+      options:
+        - "1 (Trivial)"
+        - "2 (Small)"
+        - "3 (Medium)"
+        - "5 (Large)"
+        - "8 (Very Large)"
+        - "13 (Epic-sized)"
+        - "21 (Needs breakdown)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Feature Description
+      description: "Detailed description of the feature"
+      placeholder: "Describe the feature..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: user_story
+    attributes:
+      label: User Story
+      description: "As a [role], I want [feature] so that [benefit]"
+      placeholder: "As a Deep Tree Echo agent, I want..."
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: "Specific criteria for feature completion"
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+        - [ ] Criterion 3
+    validations:
+      required: true
+
+  - type: textarea
+    id: technical_notes
+    attributes:
+      label: Technical Notes
+      description: "Implementation details, architecture notes, or constraints"
+      placeholder: |
+        ### Architecture
+        - Component A interfaces with Component B
+
+        ### Dependencies
+        - Requires library X
+
+  - type: dropdown
+    id: component_type
+    attributes:
+      label: Component Type
+      description: "Which system does this feature primarily affect?"
+      options:
+        - Neural Core (Reservoir Computing)
+        - Symbolic Engine (Unreal Integration)
+        - Sensorimotor (Body Schema)
+        - Cognitive (Reasoning/Planning)
+        - Endocrine (Emotional Regulation)
+        - Gaming (Skills/Strategy)
+        - Meta-Cognitive (Self-Awareness)
+        - Infrastructure (Build/Test/Deploy)
+    validations:
+      required: true
+
+  - type: textarea
+    id: related_features
+    attributes:
+      label: Related Features
+      description: "Features that are related or dependent"
+      placeholder: |
+        - Blocks: #125, #126
+        - Blocked by: #120
+        - Related: #130
+
+  - type: input
+    id: target_repo
+    attributes:
+      label: Target Repository
+      description: "Which repository will this be implemented in?"
+      placeholder: "orgitcog/u9n"
+
+  - type: textarea
+    id: test_plan
+    attributes:
+      label: Test Plan
+      description: "How will this feature be tested?"
+      placeholder: |
+        ### Unit Tests
+        - Test case 1
+
+        ### Integration Tests
+        - Test case 2
