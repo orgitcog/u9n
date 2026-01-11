@@ -15,6 +15,7 @@
 #include <memory>
 #include <vector>
 #include <chrono>
+#include <thread>
 #include <random>
 #include <thread>
 
@@ -673,13 +674,4 @@ TEST(PerformanceTest, CycleProcessingPerformance) {
     
     EXPECT_LT(duration.count(), 100);  // 100 cycles in under 100ms
     EXPECT_EQ(manager.GetCycleCount(), 100);
-}
-
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

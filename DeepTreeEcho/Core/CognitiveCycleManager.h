@@ -1,6 +1,26 @@
 // CognitiveCycleManager.h
 // Central orchestration of the 12-step cognitive cycle with 3 concurrent streams
 // Implements the echobeats architecture with sys6 triality integration
+//
+// MERGED VERSION: Contains all functionality from both Core and Cognitive versions
+//
+// Cognitive Architecture:
+// - 3 concurrent consciousness streams (perception, action, simulation)
+// - 12-step cycle with streams phased 120° apart (4 steps)
+// - 7 expressive mode steps + 5 reflective mode steps
+// - Triads occurring every 4 steps: {1,5,9}, {2,6,10}, {3,7,11}, {4,8,12}
+//
+// OEIS A000081 Nested Shells:
+// - 1 nest → 1 term (1 step apart)
+// - 2 nests → 2 terms (2 steps apart)
+// - 3 nests → 4 terms (3 steps apart)
+// - 4 nests → 9 terms (4 steps apart)
+//
+// Step Composition:
+// - 1 pivotal relevance realization step (orienting present commitment)
+// - 5 actual affordance interaction steps (conditioning past performance)
+// - 1 pivotal relevance realization step (orienting present commitment)
+// - 5 virtual salience simulation steps (anticipating future potential)
 
 #pragma once
 
@@ -13,6 +33,10 @@ class UDeepTreeEchoReservoir;
 class UWisdomCultivation;
 class UEmbodied4ECognition;
 
+// ========================================
+// ENUMERATIONS
+// ========================================
+
 /**
  * Cognitive mode enumeration
  */
@@ -24,7 +48,20 @@ enum class ECognitiveModeType : uint8
 };
 
 /**
- * Cognitive step type enumeration
+ * Legacy cognitive mode (for backward compatibility)
+ */
+UENUM(BlueprintType)
+enum class ECognitiveMode : uint8
+{
+    /** Expressive mode - outward-directed processing */
+    Expressive UMETA(DisplayName = "Expressive"),
+    
+    /** Reflective mode - inward-directed processing */
+    Reflective UMETA(DisplayName = "Reflective")
+};
+
+/**
+ * Cognitive step type enumeration (detailed)
  */
 UENUM(BlueprintType)
 enum class ECognitiveStepType : uint8
@@ -40,7 +77,11 @@ enum class ECognitiveStepType : uint8
     Learn           UMETA(DisplayName = "Learn"),
     Consolidate     UMETA(DisplayName = "Consolidate"),
     Anticipate      UMETA(DisplayName = "Anticipate"),
-    Transcend       UMETA(DisplayName = "Transcend")
+    Transcend       UMETA(DisplayName = "Transcend"),
+    // Legacy step types
+    RelevanceRealization UMETA(DisplayName = "Relevance Realization"),
+    AffordanceInteraction UMETA(DisplayName = "Affordance Interaction"),
+    SalienceSimulation UMETA(DisplayName = "Salience Simulation")
 };
 
 /**
@@ -53,6 +94,45 @@ enum class EStreamRole : uint8
     Acting          UMETA(DisplayName = "Acting"),
     Reflecting      UMETA(DisplayName = "Reflecting")
 };
+
+/**
+ * Consciousness Stream Type (legacy)
+ */
+UENUM(BlueprintType)
+enum class EConsciousnessStream : uint8
+{
+    /** Stream 1: Perception - sensing and interpreting */
+    Perception UMETA(DisplayName = "Perception"),
+    
+    /** Stream 2: Action - executing and expressing */
+    Action UMETA(DisplayName = "Action"),
+    
+    /** Stream 3: Simulation - predicting and imagining */
+    Simulation UMETA(DisplayName = "Simulation")
+};
+
+/**
+ * Triad Group (steps grouped by 4)
+ */
+UENUM(BlueprintType)
+enum class ETriadGroup : uint8
+{
+    /** Triad 1: Steps {1, 5, 9} */
+    Triad1 UMETA(DisplayName = "Triad 1 (1,5,9)"),
+    
+    /** Triad 2: Steps {2, 6, 10} */
+    Triad2 UMETA(DisplayName = "Triad 2 (2,6,10)"),
+    
+    /** Triad 3: Steps {3, 7, 11} */
+    Triad3 UMETA(DisplayName = "Triad 3 (3,7,11)"),
+    
+    /** Triad 4: Steps {4, 8, 12} */
+    Triad4 UMETA(DisplayName = "Triad 4 (4,8,12)")
+};
+
+// ========================================
+// STRUCTURES
+// ========================================
 
 /**
  * Configuration for a single cognitive step
@@ -101,8 +181,16 @@ struct FStreamState
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     EStreamRole Role = EStreamRole::Perceiving;
 
+    /** Stream type (legacy) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    EConsciousnessStream StreamType = EConsciousnessStream::Perception;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     int32 CurrentPhase = 1;
+
+    /** Current step within 12-step cycle (1-12) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    int32 CurrentStep = 1;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     int32 PhaseOffset = 0;
@@ -113,11 +201,31 @@ struct FStreamState
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     float Coherence = 1.0f;
 
+    /** Stream coherence with other streams (0-1) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    float InterStreamCoherence = 1.0f;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     TArray<float> ReservoirState;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString CurrentFocus;
+
+    /** Current cognitive mode */
+    UPROPERTY(BlueprintReadWrite)
+    ECognitiveMode Mode = ECognitiveMode::Expressive;
+
+    /** Current step type */
+    UPROPERTY(BlueprintReadWrite)
+    ECognitiveStepType StepType = ECognitiveStepType::RelevanceRealization;
+
+    /** Salience value for current processing */
+    UPROPERTY(BlueprintReadWrite)
+    float SalienceValue = 0.5f;
+
+    /** Affordance value for current processing */
+    UPROPERTY(BlueprintReadWrite)
+    float AffordanceValue = 0.5f;
 };
 
 /**
@@ -142,6 +250,60 @@ struct FTriadicSyncState
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     TArray<float> CoherenceMatrix; // 3x3 matrix flattened
+};
+
+/**
+ * Nested Shell State - OEIS A000081 structure
+ */
+USTRUCT(BlueprintType)
+struct FNestedShellState
+{
+    GENERATED_BODY()
+
+    /** Nesting level (1-4) */
+    UPROPERTY(BlueprintReadWrite)
+    int32 NestingLevel = 1;
+
+    /** Number of terms at this level */
+    UPROPERTY(BlueprintReadWrite)
+    int32 TermCount = 1;
+
+    /** Steps apart for this nesting */
+    UPROPERTY(BlueprintReadWrite)
+    int32 StepsApart = 1;
+
+    /** Current term values */
+    UPROPERTY(BlueprintReadWrite)
+    TArray<float> TermValues;
+
+    /** Shell coherence */
+    UPROPERTY(BlueprintReadWrite)
+    float Coherence = 1.0f;
+};
+
+/**
+ * Triad State - State of a triad group
+ */
+USTRUCT(BlueprintType)
+struct FTriadState
+{
+    GENERATED_BODY()
+
+    /** Triad group */
+    UPROPERTY(BlueprintReadWrite)
+    ETriadGroup Group = ETriadGroup::Triad1;
+
+    /** Steps in this triad */
+    UPROPERTY(BlueprintReadWrite)
+    TArray<int32> Steps;
+
+    /** Triad activation */
+    UPROPERTY(BlueprintReadWrite)
+    float Activation = 0.0f;
+
+    /** Triad coherence */
+    UPROPERTY(BlueprintReadWrite)
+    float Coherence = 1.0f;
 };
 
 /**
@@ -185,11 +347,27 @@ struct FCognitiveCycleState
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     int32 CurrentStep = 1;
 
+    /** Global step counter (1-12, wraps) - alias for CurrentStep */
+    UPROPERTY(BlueprintReadWrite)
+    int32 GlobalStep = 1;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     ECognitiveModeType CurrentMode = ECognitiveModeType::Expressive;
 
+    /** Current step type */
+    UPROPERTY(BlueprintReadWrite)
+    ECognitiveStepType CurrentStepType = ECognitiveStepType::RelevanceRealization;
+
+    /** Current triad group */
+    UPROPERTY(BlueprintReadWrite)
+    ETriadGroup CurrentTriad = ETriadGroup::Triad1;
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     int32 CycleCount = 0;
+
+    /** Total cycles completed */
+    UPROPERTY(BlueprintReadWrite)
+    int32 CyclesCompleted = 0;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     float CycleProgress = 0.0f;
@@ -208,6 +386,14 @@ struct FCognitiveCycleState
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     float RelevanceRealizationLevel = 0.0f;
+
+    /** Expressive steps remaining in current cycle */
+    UPROPERTY(BlueprintReadWrite)
+    int32 ExpressiveStepsRemaining = 7;
+
+    /** Reflective steps remaining in current cycle */
+    UPROPERTY(BlueprintReadWrite)
+    int32 ReflectiveStepsRemaining = 5;
 };
 
 /**
@@ -222,6 +408,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCycleCompleted, int32, CycleCount
 /**
  * Central manager for the 12-step cognitive cycle
  * Orchestrates 3 concurrent consciousness streams with triadic synchronization
+ * 
+ * MERGED VERSION: Contains all functionality from both Core and Cognitive implementations
  */
 UCLASS(ClassGroup=(DeepTreeEcho), meta=(BlueprintSpawnableComponent))
 class UNREALECHO_API UCognitiveCycleManager : public UActorComponent
@@ -246,6 +434,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cycle Configuration")
     float CycleDuration = 12.0f;
 
+    /** Step duration in seconds (legacy) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CognitiveCycle|Config", meta = (ClampMin = "0.01", ClampMax = "10.0"))
+    float StepDuration = 0.1f;
+
     /** Enable automatic cycle progression */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cycle Configuration")
     bool bEnableAutoCycle = true;
@@ -258,9 +450,29 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cycle Configuration")
     bool bEnableSys6Triality = true;
 
+    /** Enable inter-stream awareness */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "CognitiveCycle|Config")
+    bool bEnableInterStreamAwareness = true;
+
     /** Strength of inter-stream coupling at sync points */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cycle Configuration", meta = (ClampMin = "0.0", ClampMax = "1.0"))
     float StreamCouplingStrength = 0.3f;
+
+    // ========================================
+    // STATE (Public for legacy compatibility)
+    // ========================================
+
+    /** Stream states (3 concurrent streams) - legacy access */
+    UPROPERTY(BlueprintReadOnly, Category = "CognitiveCycle|State")
+    TArray<FStreamState> StreamStates;
+
+    /** Nested shell states (4 levels) */
+    UPROPERTY(BlueprintReadOnly, Category = "CognitiveCycle|State")
+    TArray<FNestedShellState> NestedShells;
+
+    /** Triad states (4 triads) */
+    UPROPERTY(BlueprintReadOnly, Category = "CognitiveCycle|State")
+    TArray<FTriadState> TriadStates;
 
     // ========================================
     // EVENTS
@@ -292,6 +504,14 @@ public:
     /** Advance to the next step */
     UFUNCTION(BlueprintCallable, Category = "Cycle Control")
     void AdvanceStep();
+
+    /** Advance cycle by multiple steps */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Control")
+    void AdvanceSteps(int32 Steps);
+
+    /** Process current step for all streams */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Control")
+    void ProcessCurrentStep();
 
     /** Jump to a specific step */
     UFUNCTION(BlueprintCallable, Category = "Cycle Control")
@@ -349,9 +569,29 @@ public:
     // STREAM MANAGEMENT
     // ========================================
 
-    /** Get the state of a specific stream */
+    /** Get the state of a specific stream by ID */
     UFUNCTION(BlueprintPure, Category = "Streams")
     FStreamState GetStreamState(int32 StreamID) const;
+
+    /** Get stream state by type (legacy) */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Stream")
+    FStreamState GetStreamStateByType(EConsciousnessStream StreamType) const;
+
+    /** Get current step for stream */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Stream")
+    int32 GetStreamStep(EConsciousnessStream StreamType) const;
+
+    /** Get stream activation level */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Stream")
+    float GetStreamActivation(EConsciousnessStream StreamType) const;
+
+    /** Set stream salience value */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Stream")
+    void SetStreamSalience(EConsciousnessStream StreamType, float Salience);
+
+    /** Set stream affordance value */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Stream")
+    void SetStreamAffordance(EConsciousnessStream StreamType, float Affordance);
 
     /** Get the active stream for the current step */
     UFUNCTION(BlueprintPure, Category = "Streams")
@@ -368,6 +608,66 @@ public:
     /** Force synchronization of all streams */
     UFUNCTION(BlueprintCallable, Category = "Streams")
     void ForceSynchronize();
+
+    // ========================================
+    // TRIAD ACCESS
+    // ========================================
+
+    /** Get current triad group */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Triad")
+    ETriadGroup GetCurrentTriad() const;
+
+    /** Get triad state */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Triad")
+    FTriadState GetTriadState(ETriadGroup Group) const;
+
+    /** Check if step is in triad */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Triad")
+    bool IsStepInTriad(int32 Step, ETriadGroup Group) const;
+
+    // ========================================
+    // NESTED SHELLS (OEIS A000081)
+    // ========================================
+
+    /** Get nested shell state by level */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Shells")
+    FNestedShellState GetNestedShellState(int32 Level) const;
+
+    /** Get total terms across all shells */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Shells")
+    int32 GetTotalNestedTerms() const;
+
+    // ========================================
+    // INTER-STREAM AWARENESS
+    // ========================================
+
+    /** Get what stream 1 perceives of stream 2's action */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Awareness")
+    float GetPerceptionOfAction() const;
+
+    /** Get what stream 3 simulates of stream 2's action */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Awareness")
+    float GetSimulationOfAction() const;
+
+    /** Calculate inter-stream coherence */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|Awareness")
+    float CalculateInterStreamCoherence() const;
+
+    // ========================================
+    // STEP TYPE QUERIES
+    // ========================================
+
+    /** Get step type for given step number */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|StepType")
+    ECognitiveStepType GetStepType(int32 Step) const;
+
+    /** Get cognitive mode for given step number */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|StepType")
+    ECognitiveMode GetStepMode(int32 Step) const;
+
+    /** Check if step is relevance realization step */
+    UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|StepType")
+    bool IsRelevanceRealizationStep(int32 Step) const;
 
     // ========================================
     // SYS6 TRIALITY
@@ -418,9 +718,10 @@ protected:
 
     float StepTimer = 0.0f;
     float Sys6Timer = 0.0f;
+    float AccumulatedTime = 0.0f;
     bool bIsPaused = false;
 
-    // Internal methods
+    // Internal methods - Core version
     void InitializeStepConfigs();
     void InitializeStreams();
     void InitializeSys6State();
@@ -445,4 +746,18 @@ protected:
     float ComputeRelevanceRealization() const;
 
     void FindComponentReferences();
+
+    // Internal methods - Legacy version
+    void InitializeNestedShells();
+    void InitializeTriads();
+
+    void UpdateStream(FStreamState& Stream);
+    void UpdateNestedShells();
+    void UpdateTriadActivations();
+
+    ECognitiveStepType CalculateStepType(int32 Step) const;
+    ECognitiveMode CalculateStepMode(int32 Step) const;
+    ETriadGroup CalculateTriadGroup(int32 Step) const;
+
+    void ApplyInterStreamFeedback();
 };

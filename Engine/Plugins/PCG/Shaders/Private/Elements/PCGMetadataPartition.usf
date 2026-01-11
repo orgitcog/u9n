@@ -1,0 +1,44 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+// Kernel for GPU implementation of Metadata Partition node.
+
+[numthreads(64, 1, 1)]
+void PCGMetadataPartitionCS(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_GroupIndex)
+{
+	// Mark the kernel as having executed. Must run before we early out via thread index, because the kernel is still 'executed' even if the number of
+	// threads to iterate on is zero. Even if GetNumThreads() returns 0, the kernel will still have been dispatched on a single thread to set this flag.
+	if (all(GroupId == 0) && GroupIndex == 0)
+	{
+		Out_SetAsExecutedInternal();
+	}
+
+	const uint ThreadIndex = GetUnWrappedDispatchThreadId(GroupId, GroupIndex, 64);
+
+	uint In_DataIndex, In_ElementIndex;
+	if (!In_GetThreadData(ThreadIndex, In_DataIndex, In_ElementIndex))
+	{
+		return;
+	}
+
+	if (In_IsPointRemoved(In_DataIndex, In_ElementIndex))
+	{
+		return;
+	}
+
+	const int PartitionAttributeId = MetadataPartition_GetPartitionAttributeId();
+	const int NumPartitions = MetadataPartition_GetNumPartitions();
+	
+	const int PartitionValueKey = In_GetStringKey(In_DataIndex, In_ElementIndex, PartitionAttributeId);
+
+	const int PartitionIndex = MetadataPartition_GetPartitionIndex(PartitionValueKey);
+
+	const uint Out_DataIndex = In_DataIndex * NumPartitions + PartitionIndex;
+	const int Out_ElementIndex = Out_AddToElementCounterInternal(Out_DataIndex, 1);
+	if (Out_ElementIndex == -1)
+	{
+		return;
+	}
+
+	// Write output point.
+	PCG_COPY_ALL_ATTRIBUTES_TO_OUTPUT(Out, In, Out_DataIndex, Out_ElementIndex, In_DataIndex, In_ElementIndex);
+}

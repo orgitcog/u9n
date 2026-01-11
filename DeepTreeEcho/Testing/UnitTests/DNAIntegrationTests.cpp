@@ -496,6 +496,10 @@ public:
     void SetDatabaseNameForTesting(const std::string& name) {
         PythonWrapper->SetDatabaseName(name);
     }
+    
+    void ReParseVersion() {
+        ParseDNAVersion();
+    }
 
 private:
     void LoadDNAData() {
@@ -721,6 +725,7 @@ private:
         headBinding.RotationMin = FRotator(-45, -80, -45);
         headBinding.RotationMax = FRotator(45, 80, 35);
         JointBindings["head"] = headBinding;
+        ProprioceptiveStates["head"] = FProprioceptiveState();  // Initialize state
 
         // Neck binding
         FJointBinding neckBinding;
@@ -730,6 +735,7 @@ private:
         neckBinding.RotationMin = FRotator(-30, -45, -20);
         neckBinding.RotationMax = FRotator(30, 45, 20);
         JointBindings["neck_01"] = neckBinding;
+        ProprioceptiveStates["neck_01"] = FProprioceptiveState();  // Initialize state
 
         // Spine binding
         FJointBinding spineBinding;
@@ -739,6 +745,7 @@ private:
         spineBinding.RotationMin = FRotator(-20, -30, -15);
         spineBinding.RotationMax = FRotator(20, 30, 15);
         JointBindings["spine_01"] = spineBinding;
+        ProprioceptiveStates["spine_01"] = FProprioceptiveState();  // Initialize state
 
         // Arm bindings
         FJointBinding armBinding;
@@ -748,6 +755,7 @@ private:
         armBinding.RotationMin = FRotator(-90, -180, -90);
         armBinding.RotationMax = FRotator(90, 60, 90);
         JointBindings["upperarm_l"] = armBinding;
+        ProprioceptiveStates["upperarm_l"] = FProprioceptiveState();  // Initialize state
     }
 
     bool bInitialized = false;
@@ -1098,8 +1106,11 @@ TEST_F(MetaHumanDNABridgeTest, DNAVersionDetectionDHI) {
 TEST_F(MetaHumanDNABridgeTest, DNAVersionDetectionMH4) {
     MockMetaHumanDNABridge bridge;
     bridge.Initialize("/path/to/dnacalib");
-    bridge.SetDatabaseNameForTesting("MH.4");
     bridge.LoadDNA("/path/to/test.dna");
+    // Set database name AFTER loading DNA (since LoadDNA resets it)
+    // Then re-parse the version
+    bridge.SetDatabaseNameForTesting("MH.4");
+    bridge.ReParseVersion();  // Re-parse after setting the database name
     EXPECT_EQ(bridge.GetDNAVersion(), EDNAVersion::MH4);
 }
 
@@ -1512,13 +1523,4 @@ TEST(IntegrationTest, FullVisualizationPipeline) {
     EXPECT_TRUE(viz.IsResonanceActive());
     EXPECT_EQ(viz.GetMemoryConstellationNodeCount(), 2);
     EXPECT_GT(viz.GetParticleCount(), 0);
-}
-
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

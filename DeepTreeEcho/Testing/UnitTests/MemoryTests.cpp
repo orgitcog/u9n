@@ -828,12 +828,3 @@ TEST(MemoryPerformanceTest, EpisodicQueryPerformance) {
     
     EXPECT_LT(duration.count(), 500);  // 200 queries in under 500ms
 }
-
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
