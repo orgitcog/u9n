@@ -74,8 +74,10 @@ target_include_directories(deep_tree_echo PUBLIC
 target_link_libraries(deep_tree_echo PUBLIC reservoircpp_core)
 
 # Add tests
+# Support both BUILD_TESTS and BUILD_TESTING for compatibility
 option(BUILD_TESTS "Build the tests" OFF)
-if(BUILD_TESTS)
+option(BUILD_TESTING "Build the tests (CMake standard)" OFF)
+if(BUILD_TESTS OR BUILD_TESTING)
     enable_testing()
     add_subdirectory(test)
 endif()

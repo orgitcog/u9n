@@ -93,7 +93,8 @@ public:
      * Get the current state of the node
      * 
      * @return Current state matrix
-     */    Eigen::MatrixXd state() const;
+     */
+    Eigen::MatrixXd state() const;
     
     /**
      * Get the input dimension of the node
@@ -150,25 +151,6 @@ protected:
     int batch_size_;
     Eigen::MatrixXd state_;
     std::vector<std::shared_ptr<Node>> feedback_nodes_;
-    
-    /**
-     * Internal implementation of call operation
-     * 
-     * @param X Input data
-     * @return Output of the model
-     */
-    virtual Eigen::MatrixXd _call(const Eigen::MatrixXd& X);
-    
-    /**
-     * Internal implementation of fit operation
-     * 
-     * @param X Input training data
-     * @param Y Target output data
-     */
-    virtual void _fit(const Eigen::MatrixXd& X, const Eigen::MatrixXd& Y);
-    Eigen::MatrixXd state_;
-    int input_dim_;
-    int output_dim_;
     
     /**
      * Internal implementation of call operation

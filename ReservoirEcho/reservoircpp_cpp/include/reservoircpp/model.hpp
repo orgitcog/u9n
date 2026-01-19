@@ -99,10 +99,9 @@ protected:
     
     /**
      * Internal implementation of fit operation
-     *     * @param X Input training data
+     * 
+     * @param X Input training data
      * @param Y Target output data
-     */
-    void _fit(const Eigen::MatrixXd& X, const Eigen::MatrixXd& Y) override;
      */
     void _fit(const Eigen::MatrixXd& X, const Eigen::MatrixXd& Y) override;
 };
