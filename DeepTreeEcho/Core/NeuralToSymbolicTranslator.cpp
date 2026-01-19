@@ -258,19 +258,19 @@ TArray<FSymbolicAtom> UNeuralToSymbolicTranslator::BatchTranslateTensors(const T
             for (int32 i = BatchStart; i < BatchEnd; i++)
             {
                 FSymbolicAtom Atom = TranslateTensor(Tensors[i]);
-                if (!Atom.AtomID.IsEmpty())
+                if (IsValidAtom(Atom))
                 {
                     AllAtoms.Add(Atom);
                 }
             }
         }
         
-        // Calculate batch efficiency
+        // Calculate batch efficiency (>100% means faster than sequential)
         double EndTime = FPlatformTime::Seconds();
         float TotalTime = (float)((EndTime - StartTime) * 1000.0);
         float SingleLatency = Metrics.AverageLatency;
         float ExpectedTime = SingleLatency * Tensors.Num();
-        Metrics.BatchEfficiency = (ExpectedTime > 0.0f) ? (TotalTime / ExpectedTime) * 100.0f : 100.0f;
+        Metrics.BatchEfficiency = (ExpectedTime > 0.0f) ? (ExpectedTime / TotalTime) * 100.0f : 100.0f;
     }
     else
     {
@@ -278,7 +278,7 @@ TArray<FSymbolicAtom> UNeuralToSymbolicTranslator::BatchTranslateTensors(const T
         for (const TArray<float>& Tensor : Tensors)
         {
             FSymbolicAtom Atom = TranslateTensor(Tensor);
-            if (!Atom.AtomID.IsEmpty())
+            if (IsValidAtom(Atom))
             {
                 AllAtoms.Add(Atom);
             }
@@ -337,7 +337,7 @@ TArray<FSymbolicAtom> UNeuralToSymbolicTranslator::CreateAtomsFromActivationVect
     for (int32 FeatureIdx : DominantFeatures)
     {
         FSymbolicAtom Atom = CreateAtomFromActivation(Activations[FeatureIdx], FeatureIdx, AtomType);
-        if (!Atom.AtomID.IsEmpty())
+        if (IsValidAtom(Atom))
         {
             Atoms.Add(Atom);
         }
@@ -476,12 +476,17 @@ TArray<FString> UNeuralToSymbolicTranslator::GenerateDiagnosticReport() const
 
 FString UNeuralToSymbolicTranslator::GenerateAtomID()
 {
-    return FString::Printf(TEXT("Atom_%d_%d"), AtomIDCounter++, FMath::Rand() % 10000);
+    return FString::Printf(TEXT("Atom_%d_%d"), AtomIDCounter++, FMath::Rand() % MaxIDRandomRange);
 }
 
 FString UNeuralToSymbolicTranslator::GeneratePredicateID()
 {
-    return FString::Printf(TEXT("Pred_%d_%d"), PredicateIDCounter++, FMath::Rand() % 10000);
+    return FString::Printf(TEXT("Pred_%d_%d"), PredicateIDCounter++, FMath::Rand() % MaxIDRandomRange);
+}
+
+bool UNeuralToSymbolicTranslator::IsValidAtom(const FSymbolicAtom& Atom) const
+{
+    return !Atom.AtomID.IsEmpty();
 }
 
 void UNeuralToSymbolicTranslator::RecordLatency(float LatencyMs)
@@ -533,7 +538,7 @@ TArray<FPredicate> UNeuralToSymbolicTranslator::InferPredicatesFromAtoms(const T
             float ActivationDiff = FMath::Abs(Atoms[i].ActivationValue - Atoms[j].ActivationValue);
             
             // If activations are similar, create co-activation predicate
-            if (ActivationDiff < 0.2f)
+            if (ActivationDiff < Config.CoActivationThreshold)
             {
                 FPredicate Pred = CreatePredicateFromAtoms(Atoms[i], Atoms[j], TEXT("CoActivated"));
                 Predicates.Add(Pred);

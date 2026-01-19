@@ -8,7 +8,6 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Types/CognitiveTypes.h"
-#include <vector>
 #include "NeuralToSymbolicTranslator.generated.h"
 
 // Forward declarations
@@ -210,6 +209,10 @@ struct FTranslationConfig
     /** Discretization bins for activation values */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Translation", meta = (ClampMin = "2", ClampMax = "256"))
     int32 DiscretizationBins = 10;
+
+    /** Co-activation threshold for predicate inference (0-1) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Translation", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float CoActivationThreshold = 0.2f;
 };
 
 /**
@@ -327,7 +330,7 @@ public:
     // ========================================
 
     /**
-     * Translate a tensor (Eigen vector) to a symbolic atom
+     * Translate a tensor (activation vector) to a symbolic atom
      * Target latency: <0.5ms
      */
     UFUNCTION(BlueprintCallable, Category = "Translator|API")
@@ -464,6 +467,9 @@ protected:
     /** Maximum latency samples to keep */
     static constexpr int32 MaxLatencySamples = 1000;
 
+    /** Maximum random range for ID generation */
+    static constexpr int32 MaxIDRandomRange = 10000;
+
     // ========================================
     // INTERNAL METHODS
     // ========================================
@@ -473,6 +479,9 @@ protected:
 
     /** Generate unique predicate ID */
     FString GeneratePredicateID();
+
+    /** Check if atom is valid (has non-empty ID) */
+    bool IsValidAtom(const FSymbolicAtom& Atom) const;
 
     /** Record translation latency */
     void RecordLatency(float LatencyMs);
