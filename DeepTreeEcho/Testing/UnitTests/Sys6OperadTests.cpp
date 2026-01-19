@@ -113,9 +113,9 @@ using FOnCycleCompleted = std::function<void(int)>;
 /**
  * @brief Mock Sys6 Operad Engine
  */
-class MockSys6OperadEngine {
+class MockSys6ClockEngine {
 public:
-    MockSys6OperadEngine() {
+    MockSys6ClockEngine() {
         InitializeStageConfigs();
     }
 
@@ -421,7 +421,7 @@ private:
 class Sys6OperadEngineTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        Engine = std::make_unique<MockSys6OperadEngine>();
+        Engine = std::make_unique<MockSys6ClockEngine>();
         Engine->InitializeEngine();
     }
 
@@ -429,7 +429,7 @@ protected:
         Engine.reset();
     }
 
-    std::unique_ptr<MockSys6OperadEngine> Engine;
+    std::unique_ptr<MockSys6ClockEngine> Engine;
 };
 
 // ============================================================================
@@ -886,7 +886,7 @@ TEST_F(Sys6OperadEngineTest, CycleCompletedCallback) {
 // ============================================================================
 
 TEST(Sys6PerformanceTest, CycleProcessingPerformance) {
-    MockSys6OperadEngine engine;
+    MockSys6ClockEngine engine;
     engine.InitializeEngine();
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -902,7 +902,7 @@ TEST(Sys6PerformanceTest, CycleProcessingPerformance) {
 }
 
 TEST(Sys6PerformanceTest, CompositeOperationPerformance) {
-    MockSys6OperadEngine engine;
+    MockSys6ClockEngine engine;
     engine.InitializeEngine();
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -918,7 +918,7 @@ TEST(Sys6PerformanceTest, CompositeOperationPerformance) {
 }
 
 TEST(Sys6PerformanceTest, ConcurrencyProcessingPerformance) {
-    MockSys6OperadEngine engine;
+    MockSys6ClockEngine engine;
     engine.InitializeEngine();
     engine.ApplyDeltaDyadic();
     engine.ApplyDeltaTriadic();
@@ -943,7 +943,7 @@ TEST(Sys6PerformanceTest, ConcurrencyProcessingPerformance) {
 // ============================================================================
 
 TEST(Sys6EdgeCaseTest, EmptyInput) {
-    MockSys6OperadEngine engine;
+    MockSys6ClockEngine engine;
     engine.InitializeEngine();
 
     std::vector<float> empty;
@@ -955,7 +955,7 @@ TEST(Sys6EdgeCaseTest, EmptyInput) {
 }
 
 TEST(Sys6EdgeCaseTest, DisabledConcurrency) {
-    MockSys6OperadEngine engine;
+    MockSys6ClockEngine engine;
     engine.bEnableCubicConcurrency = false;
     engine.bEnableTriadicConvolution = false;
     engine.InitializeEngine();
@@ -974,7 +974,7 @@ TEST(Sys6EdgeCaseTest, DisabledConcurrency) {
 // ============================================================================
 
 TEST(Sys6IntegrationTest, FullCycleWithAllOperations) {
-    MockSys6OperadEngine engine;
+    MockSys6ClockEngine engine;
     engine.InitializeEngine();
 
     std::vector<float> input(32, 0.5f);
