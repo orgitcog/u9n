@@ -214,10 +214,19 @@ public:
         // G = E_Q[log Q(s') - log P(o',s'|a)]
         // G ≈ -E_Q[log P(o'|s')] + KL[Q(s')||P(s')]  (simplified)
         
-        // Predict next state distribution under action
+        // Predict next state distribution under action using transition model B
         Vector predictedState(Model.NumStates, 0.0);
-        for (int s = 0; s < Model.NumStates; s++) {
-            predictedState[s] = CurrentBelief.StateBelief[s];  // Simplified
+        for (int s_next = 0; s_next < Model.NumStates; s_next++) {
+            for (int s = 0; s < Model.NumStates; s++) {
+                // B matrix encodes P(s'|s,a) - use action to index correct transition
+                int bIndex = s * Model.NumActions + action;
+                if (bIndex < static_cast<int>(Model.B[s_next].size())) {
+                    predictedState[s_next] += Model.B[s_next][bIndex] * CurrentBelief.StateBelief[s];
+                } else {
+                    // Fallback to identity-like transition if index out of bounds
+                    predictedState[s_next] += (s == s_next ? 0.9 : 0.1 / (Model.NumStates - 1)) * CurrentBelief.StateBelief[s];
+                }
+            }
         }
         
         // Expected observation
@@ -392,12 +401,9 @@ public:
         State.Desires.resize(desireDim, 0.0);
         State.Intentions.resize(intentionDim, 0.0);
 
-        // Initialize active inference engine with properly-sized model
-        FGenerativeModel model(beliefDim, beliefDim, intentionDim);
-        
         // Initialize active inference engine with properly sized model
-        // Create model with explicit dimensions - don't use default constructor
-        FGenerativeModel model;
+        // Create model with explicit dimensions for belief, observation, and action spaces
+        FGenerativeModel model(beliefDim, beliefDim, intentionDim);
         
         // CRITICAL: Set dimension members BEFORE resizing matrices
         // These are used by MockActiveInferenceEngine for iteration bounds
