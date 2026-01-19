@@ -270,7 +270,15 @@ TArray<FSymbolicAtom> UNeuralToSymbolicTranslator::BatchTranslateTensors(const T
         float TotalTime = (float)((EndTime - StartTime) * 1000.0);
         float SingleLatency = Metrics.AverageLatency;
         float ExpectedTime = SingleLatency * Tensors.Num();
-        Metrics.BatchEfficiency = (ExpectedTime > 0.0f) ? (ExpectedTime / TotalTime) * 100.0f : 100.0f;
+        
+        if (TotalTime > 0.0f && ExpectedTime > 0.0f)
+        {
+            Metrics.BatchEfficiency = (ExpectedTime / TotalTime) * 100.0f;
+        }
+        else
+        {
+            Metrics.BatchEfficiency = 100.0f; // Default to 100% if times are invalid
+        }
     }
     else
     {
@@ -414,15 +422,16 @@ float UNeuralToSymbolicTranslator::CalculatePredicateUncertainty(const TArray<FS
         return 0.0f;
     }
     
-    // Geometric mean of atom confidences
-    float Product = 1.0f;
+    // Geometric mean using logarithmic calculation for numerical stability
+    float LogSum = 0.0f;
     for (const FSymbolicAtom& Atom : InputAtoms)
     {
-        Product *= Atom.Confidence;
+        float Confidence = FMath::Max(Atom.Confidence, SMALL_NUMBER); // Prevent log(0)
+        LogSum += FMath::Loge(Confidence);
     }
     
-    float GeometricMean = FMath::Pow(Product, 1.0f / InputAtoms.Num());
-    return GeometricMean;
+    float GeometricMean = FMath::Exp(LogSum / InputAtoms.Num());
+    return FMath::Clamp(GeometricMean, 0.0f, 1.0f);
 }
 
 // ========================================
@@ -498,10 +507,12 @@ void UNeuralToSymbolicTranslator::RecordLatency(float LatencyMs)
     
     LatencySamples.Add(LatencyMs);
     
-    // Keep only recent samples
+    // Keep only recent samples using efficient removal
     if (LatencySamples.Num() > MaxLatencySamples)
     {
-        LatencySamples.RemoveAt(0);
+        // Remove oldest 10% to reduce frequent removals
+        int32 ToRemove = MaxLatencySamples / 10;
+        LatencySamples.RemoveAt(0, ToRemove);
     }
     
     // Update peak latency
