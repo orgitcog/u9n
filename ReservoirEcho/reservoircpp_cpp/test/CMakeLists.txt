@@ -6,10 +6,12 @@ include(GoogleTest)
 
 # Node test
 add_executable(node_test node_test.cpp)
-target_link_libraries(node_test PRIVATE reservoircpp GTest::GTest GTest::Main)
+target_link_libraries(node_test PRIVATE reservoircpp_core GTest::GTest GTest::Main)
+target_include_directories(node_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 gtest_discover_tests(node_test)
 
 # Model test
 add_executable(model_test model_test.cpp)
-target_link_libraries(model_test PRIVATE reservoircpp GTest::GTest GTest::Main)
+target_link_libraries(model_test PRIVATE reservoircpp_core GTest::GTest GTest::Main)
+target_include_directories(model_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 gtest_discover_tests(model_test)

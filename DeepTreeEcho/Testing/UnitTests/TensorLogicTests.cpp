@@ -1334,11 +1334,4 @@ TEST_F(TensorLogicEngineTest, ZeroTensor) {
     EXPECT_FLOAT_EQ(activated.Sum(), 0.0f);
 }
 
-// ============================================================================
-// Main
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// Note: main() is provided by GTest::gtest_main in CMakeLists.txt

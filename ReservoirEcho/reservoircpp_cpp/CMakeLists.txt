@@ -77,7 +77,7 @@ target_link_libraries(deep_tree_echo PUBLIC reservoircpp_core)
 option(BUILD_TESTS "Build the tests" OFF)
 if(BUILD_TESTS)
     enable_testing()
-    # add_subdirectory(test)
+    add_subdirectory(test)
 endif()
 
 # Add examples

@@ -788,11 +788,4 @@ TEST(CognitiveLoopEdgeCaseTest, ConcurrentAccess) {
     EXPECT_EQ(completedThreads.load(), 4);
 }
 
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// Note: main() is provided by GTest::gtest_main in CMakeLists.txt

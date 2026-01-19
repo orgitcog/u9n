@@ -994,11 +994,4 @@ TEST(Sys6IntegrationTest, FullCycleWithAllOperations) {
     EXPECT_EQ(engine.GetFullState().CycleCount, 3);
 }
 
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// Note: main() is provided by GTest::gtest_main in CMakeLists.txt

@@ -329,7 +329,7 @@ protected:
     std::unique_ptr<MockCognitiveMemoryManager> MemoryManager;
 };
 
-class Sys6OperadEngineTest : public ::testing::Test {
+class Sys6OperadEngineCoreTest : public ::testing::Test {
 protected:
     void SetUp() override {
         OperadEngine = std::make_unique<MockSys6OperadEngine>();
@@ -508,12 +508,12 @@ TEST_F(CognitiveMemoryManagerTest, BulkStorage) {
 // Sys6OperadEngine Tests
 // ============================================================================
 
-TEST_F(Sys6OperadEngineTest, Initialization) {
+TEST_F(Sys6OperadEngineCoreTest, Initialization) {
     EXPECT_TRUE(OperadEngine->IsInitialized());
     EXPECT_EQ(OperadEngine->GetOperadCount(), 0);
 }
 
-TEST_F(Sys6OperadEngineTest, RegisterOperadNode) {
+TEST_F(Sys6OperadEngineCoreTest, RegisterOperadNode) {
     MockSys6OperadEngine::FOperadNode node;
     node.Inputs = {"input1", "input2"};
     node.Output = "output";
@@ -531,7 +531,7 @@ TEST_F(Sys6OperadEngineTest, RegisterOperadNode) {
     EXPECT_EQ(OperadEngine->GetOperadCount(), 1);
 }
 
-TEST_F(Sys6OperadEngineTest, ExecuteOperadChain) {
+TEST_F(Sys6OperadEngineCoreTest, ExecuteOperadChain) {
     // Register a simple doubling operad
     MockSys6OperadEngine::FOperadNode doubleNode;
     doubleNode.Operation = [](const std::vector<std::vector<float>>& inputs) {
@@ -554,7 +554,7 @@ TEST_F(Sys6OperadEngineTest, ExecuteOperadChain) {
     EXPECT_FLOAT_EQ(result[2], 6.0f);
 }
 
-TEST_F(Sys6OperadEngineTest, ChainedOperations) {
+TEST_F(Sys6OperadEngineCoreTest, ChainedOperations) {
     // Register multiple operads
     MockSys6OperadEngine::FOperadNode addOne;
     addOne.Operation = [](const std::vector<std::vector<float>>& inputs) {

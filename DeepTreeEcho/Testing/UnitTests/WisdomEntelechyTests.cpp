@@ -1303,11 +1303,4 @@ TEST(RelevancePerformanceTest, ActivationPerformance) {
     EXPECT_LT(duration.count(), 100);  // 30000 activations in under 100ms
 }
 
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// Note: main() is provided by GTest::gtest_main in CMakeLists.txt

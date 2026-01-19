@@ -76,7 +76,4 @@ TEST_F(NodeTest, Feedback) {
     EXPECT_EQ(node->feedback_nodes()[0]->name(), "feedback_node");
 }
 
-int main(int argc, char **argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// Note: main() is provided by GTest::Main
