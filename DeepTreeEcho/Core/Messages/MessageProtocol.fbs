@@ -1,0 +1,175 @@
+// MessageProtocol.fbs
+// FlatBuffers schema for Deep Tree Echo Bidirectional Message Protocol
+// Feature F1.1.3: Zero-copy shared memory communication
+// Copyright (c) 2025 Deep Tree Echo Project
+
+namespace DeepTreeEcho.Messages;
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+/// Message type discriminator
+enum MessageType : byte {
+    Command = 0,
+    Query = 1,
+    Event = 2,
+    StateUpdate = 3,
+    Response = 4
+}
+
+/// Message priority levels
+enum MessagePriority : byte {
+    Critical = 0,  // System-critical, highest priority
+    High = 1,      // Important game events
+    Normal = 2,    // Regular game state updates
+    Low = 3        // Background processing
+}
+
+/// Command types for neural-symbolic operations
+enum CommandType : byte {
+    StartProcessing = 0,
+    StopProcessing = 1,
+    ResetState = 2,
+    UpdateConfiguration = 3,
+    FlushBuffer = 4
+}
+
+/// Query types for information retrieval
+enum QueryType : byte {
+    GetState = 0,
+    GetMetrics = 1,
+    GetConfiguration = 2,
+    GetHistory = 3
+}
+
+/// Event types for notifications
+enum EventType : byte {
+    StateChanged = 0,
+    ThresholdExceeded = 1,
+    ErrorOccurred = 2,
+    ProcessingComplete = 3,
+    ConfigurationUpdated = 4
+}
+
+// ============================================================================
+// DATA STRUCTURES
+// ============================================================================
+
+/// Tensor data for neural processing
+table TensorData {
+    dimensions: [uint32];
+    values: [float];
+    datatype: string;
+}
+
+/// Symbolic representation data
+table SymbolicData {
+    symbol_id: string;
+    symbol_type: string;
+    properties: [KeyValue];
+    confidence: float = 0.0;
+}
+
+/// Key-value pair for metadata
+table KeyValue {
+    key: string;
+    value: string;
+}
+
+/// Performance metrics
+table PerformanceMetrics {
+    latency_ms: float;
+    throughput: float;
+    queue_depth: uint32;
+    dropped_messages: uint32;
+    timestamp: uint64;
+}
+
+// ============================================================================
+// MESSAGE PAYLOADS
+// ============================================================================
+
+/// Command message payload
+table CommandPayload {
+    command_type: CommandType;
+    parameters: [KeyValue];
+    target_component: string;
+}
+
+/// Query message payload
+table QueryPayload {
+    query_type: QueryType;
+    query_id: string;
+    parameters: [KeyValue];
+}
+
+/// Event message payload
+table EventPayload {
+    event_type: EventType;
+    event_id: string;
+    data: [KeyValue];
+    severity: byte;
+}
+
+/// State update payload
+table StateUpdatePayload {
+    state_id: string;
+    tensor_data: TensorData;
+    symbolic_data: SymbolicData;
+    delta_only: bool = false;
+}
+
+/// Response message payload
+table ResponsePayload {
+    query_id: string;
+    success: bool;
+    result_data: [KeyValue];
+    error_message: string;
+}
+
+// ============================================================================
+// MAIN MESSAGE STRUCTURE
+// ============================================================================
+
+/// Universal message container for bidirectional communication
+table Message {
+    // Message metadata
+    message_id: string;
+    message_type: MessageType;
+    priority: MessagePriority;
+    timestamp: uint64;
+    sender_id: string;
+    recipient_id: string;
+    
+    // Routing information
+    topic: string;
+    correlation_id: string;  // For request-response correlation
+    
+    // Payload (one of the following)
+    command_payload: CommandPayload;
+    query_payload: QueryPayload;
+    event_payload: EventPayload;
+    state_update_payload: StateUpdatePayload;
+    response_payload: ResponsePayload;
+    
+    // Message flags
+    requires_ack: bool = false;
+    is_batched: bool = false;
+    batch_index: uint32 = 0;
+    batch_size: uint32 = 1;
+    
+    // Performance tracking
+    enqueue_time: uint64;
+    deadline: uint64 = 0;  // Optional deadline for time-critical messages
+}
+
+/// Batch of messages for efficient processing
+table MessageBatch {
+    batch_id: string;
+    messages: [Message];
+    total_messages: uint32;
+    creation_time: uint64;
+}
+
+root_type Message;
