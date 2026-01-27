@@ -308,7 +308,12 @@ float UEchoStateNetwork::TrainOutputWeights(
     }
     
     // Ridge regression: Wout = (X^T*X + λI)^-1 * X^T * Y
-    // Simplified implementation using normal equations
+    // Note: This is a simplified implementation suitable for small-scale problems
+    // For production use with large datasets, consider using:
+    // - Iterative solvers (Conjugate Gradient)
+    // - QR decomposition
+    // - SVD-based pseudoinverse
+    // - Online learning algorithms (FORCE, RLS)
     
     // Compute X^T * X
     TArray<float> XTX;
@@ -348,17 +353,27 @@ float UEchoStateNetwork::TrainOutputWeights(
         }
     }
     
-    // Solve (X^T*X + λI) * Wout = X^T * Y using simple Gaussian elimination
-    // For production, use a proper linear solver library
-    // This is a simplified implementation
-    
-    // For now, use pseudo-inverse approximation
-    // Wout = (X^T * Y) / (N + λ)
-    float normalization = NumSamples + Config.RegularizationLambda;
-    OutputWeights.SetNum(Config.OutputDim * Config.ReservoirSize);
-    for (int32 i = 0; i < XTY.Num(); ++i)
+    // Solve (X^T*X + λI) * Wout = X^T * Y using simple diagonal approximation
+    // For better results, use a proper linear solver (Cholesky, LU, or iterative methods)
+    // This approximation works reasonably well when λ is relatively large
+    OutputWeights.SetNum(Config.ReservoirSize * Config.OutputDim);
+    for (int32 i = 0; i < Config.ReservoirSize; ++i)
     {
-        OutputWeights[i] = XTY[i] / normalization;
+        float diagVal = XTX[i * Config.ReservoirSize + i];
+        if (FMath::Abs(diagVal) > 1e-10f)
+        {
+            for (int32 j = 0; j < Config.OutputDim; ++j)
+            {
+                OutputWeights[i * Config.OutputDim + j] = XTY[i * Config.OutputDim + j] / diagVal;
+            }
+        }
+        else
+        {
+            for (int32 j = 0; j < Config.OutputDim; ++j)
+            {
+                OutputWeights[i * Config.OutputDim + j] = 0.0f;
+            }
+        }
     }
     
     // Compute training error (NRMSE)
@@ -529,10 +544,11 @@ float UEchoStateNetwork::ComputeSpectralRadius(
     TArray<float> v;
     v.SetNum(N);
     
-    // Initialize with random vector
+    // Initialize with deterministic random vector using FRandomStream
+    FRandomStream RandomStream(GenerateSeed() + 999);
     for (float& x : v)
     {
-        x = FMath::FRandRange(-1.0f, 1.0f);
+        x = RandomStream.FRandRange(-1.0f, 1.0f);
     }
     
     // Normalize

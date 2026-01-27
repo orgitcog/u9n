@@ -528,4 +528,4 @@ void AMyActor::CompleteExample()
 - Feature F1.2.1 Agent Definition: `.github/agents/u9ci/F1.2.1.md`
 - API Reference: `DeepTreeEcho/Reservoir/EchoStateNetwork.h`
 - Unit Tests: `DeepTreeEcho/Testing/UnitTests/EchoStateNetworkTests.cpp`
-- Integration Guide: `RESERVOIRCPP_INTEGRATION_GUIDE.md`
+- Implementation Summary: `FEATURE_F1.2.1_IMPLEMENTATION_SUMMARY.md`
