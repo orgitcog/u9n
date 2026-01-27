@@ -172,6 +172,10 @@ public:
                 inv(i, j) = aug(i, n + j);
             }
         }
+        
+        // Note: In production code, check matrix condition number here
+        // to detect ill-conditioned matrices that may produce unstable results
+        
         return inv;
     }
 
@@ -325,8 +329,9 @@ public:
         }
 
         std::vector<float> k(inputDim);
+        // Compute k using standard RLS formula
         float lambda = forgettingFactor;
-        float denom = lambda * (lambda + rPr);
+        float denom = lambda + rPr;
         if (std::abs(denom) > 1e-10f) {
             for (int i = 0; i < inputDim; ++i) {
                 k[i] = Pr[i] / denom;

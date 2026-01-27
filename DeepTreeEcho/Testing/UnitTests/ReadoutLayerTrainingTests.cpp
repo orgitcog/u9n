@@ -7,6 +7,7 @@
 #include <gmock/gmock.h>
 #include "../Reservoir/ReadoutLayerTraining.h"
 #include <cmath>
+#include <random>
 
 using namespace testing;
 
@@ -57,18 +58,21 @@ protected:
     {
         GenerateTestData();
         
-        // Add Gaussian noise
-        float NoiseStdDev = 0.1f;
+        // Add Gaussian noise using proper distribution
+        std::random_device rd;
+        std::mt19937 gen(42);  // Fixed seed for reproducibility
+        std::normal_distribution<float> noise(0.0f, 0.1f);
+        
         for (int32 i = 0; i < NumSamples; ++i)
         {
-            float Noise = NoiseStdDev * (static_cast<float>(rand()) / RAND_MAX - 0.5f);
-            TargetOutputs[i][0] += Noise;
+            TargetOutputs[i][0] += noise(gen);
         }
     }
 
-    int32 NumSamples;
-    int32 ReservoirSize;
-    int32 OutputSize;
+    // Member variables initialized with defaults
+    int32 NumSamples = 0;
+    int32 ReservoirSize = 0;
+    int32 OutputSize = 0;
     TArray<TArray<float>> ReservoirStates;
     TArray<TArray<float>> TargetOutputs;
 };
@@ -79,6 +83,7 @@ protected:
 
 TEST_F(ReadoutLayerTrainingTest, RidgeRegressionBasic)
 {
+    // TODO: When integrating with Unreal Engine, use NewObject<UReadoutLayerTraining>()
     UReadoutLayerTraining Training;
     Training.TrainingMethod = EReadoutTrainingMethod::RidgeRegression;
     Training.RidgeConfig.RegularizationParameter = 1e-6f;

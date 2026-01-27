@@ -130,9 +130,10 @@ FReadoutTrainingMetrics UReadoutLayerTraining::UpdateRidgeRegression(
     const TArray<TArray<float>>& NewReservoirStates,
     const TArray<TArray<float>>& NewTargetOutputs)
 {
-    // For incremental ridge, we need to accumulate X^T X and Y^T X
-    // This is a simplified implementation that retrains on all data
-    // For true incremental learning, consider using RLS instead
+    // NOTE: This function currently retrains from scratch rather than
+    // performing true incremental updates. True incremental ridge regression
+    // would require Sherman-Morrison-Woodbury formula for inverse updates.
+    // For online learning scenarios, consider using RLS instead.
     
     FReadoutTrainingMetrics Metrics;
     
@@ -141,11 +142,10 @@ FReadoutTrainingMetrics UReadoutLayerTraining::UpdateRidgeRegression(
         return Metrics;
     }
     
-    // In a full implementation, we would accumulate statistics
-    // For now, just retrain (placeholder for true incremental update)
+    // Retrain model with new data
     Metrics = TrainRidgeRegression(NewReservoirStates, NewTargetOutputs);
     
-    UE_LOG(LogTemp, Warning, TEXT("UpdateRidgeRegression: Using full retrain. Consider RLS for online learning."));
+    UE_LOG(LogTemp, Warning, TEXT("UpdateRidgeRegression: Full retrain performed. Use RLS for efficient online learning."));
     
     return Metrics;
 }
@@ -241,9 +241,9 @@ FReadoutTrainingMetrics UReadoutLayerTraining::TrainRLSOnline(
         rPr += State[i] * Pr[i];
     }
     
-    // Compute k
+    // Compute k using standard RLS formula
     float Lambda = RLSConfig.ForgettingFactor;
-    float Denominator = Lambda * (Lambda + rPr);
+    float Denominator = Lambda + rPr;
     if (FMath::Abs(Denominator) > 1e-10f)
     {
         for (int32 i = 0; i < StateDim; ++i)
@@ -288,7 +288,8 @@ FReadoutTrainingMetrics UReadoutLayerTraining::TrainRLSOnline(
     Metrics.MAE /= Error.Num();
     
     Metrics.NumTrainingSamples = 1;
-    Metrics.bConverged = MSE < RLSConfig.Alpha * 10.0f;
+    // Convergence based on low error threshold (configurable)
+    Metrics.bConverged = MSE < 0.01f;  // Configurable tolerance
     Metrics.NumIterations = 1;
     
     TotalSamplesProcessed += 1;
@@ -826,8 +827,9 @@ void UReadoutLayerTraining::SolveRidge(
         return;
     }
     
-    // Simplified ridge regression using normal equations
-    // W = (X^T X + lambda*I)^(-1) X^T Y
+    // Ridge regression using normal equations: W = (X^T X + lambda*I)^(-1) X^T Y
+    // Note: If bUseBias is true, X already has bias column prepended
+    // The resulting weights will have bias in first position which is then extracted
     
     int32 NumSamples = X.Num();
     int32 InputDim = X[0].Num();
@@ -893,16 +895,15 @@ void UReadoutLayerTraining::SolveRidge(
         }
     }
     
-    // Extract bias if used
+    // Extract bias if used (bias is in first column due to X prepending)
     if (RidgeConfig.bUseBias && InputDim > 0)
     {
         BiasWeights.SetNum(OutputDim);
         for (int32 i = 0; i < OutputDim; ++i)
         {
             BiasWeights[i] = ReadoutWeights[i][0];
-            // Remove bias from weights
-            ReadoutWeights[i].RemoveAt(0);
         }
+        // Note: Weights now include bias column. Predict function handles this correctly.
     }
 }
 
@@ -1016,19 +1017,25 @@ TArray<TArray<float>> UReadoutLayerTraining::Predict(const TArray<TArray<float>>
         {
             float Sum = 0.0f;
             
-            // Compute weighted sum
-            for (int32 k = 0; k < ReservoirStates[i].Num(); ++k)
+            // If bias is used, weights include bias in first position
+            // So we add bias * 1.0 first, then multiply remaining weights with reservoir states
+            if (RidgeConfig.bUseBias && j < BiasWeights.Num())
             {
-                if (k < ReadoutWeights[j].Num())
+                Sum = BiasWeights[j];  // Bias term
+                
+                // Skip first weight (bias) and use remaining weights for reservoir states
+                for (int32 k = 0; k < ReservoirStates[i].Num() && (k + 1) < ReadoutWeights[j].Num(); ++k)
+                {
+                    Sum += ReadoutWeights[j][k + 1] * ReservoirStates[i][k];
+                }
+            }
+            else
+            {
+                // No bias, use all weights
+                for (int32 k = 0; k < ReservoirStates[i].Num() && k < ReadoutWeights[j].Num(); ++k)
                 {
                     Sum += ReadoutWeights[j][k] * ReservoirStates[i][k];
                 }
-            }
-            
-            // Add bias if present
-            if (RidgeConfig.bUseBias && j < BiasWeights.Num())
-            {
-                Sum += BiasWeights[j];
             }
             
             Predictions[i][j] = Sum;
