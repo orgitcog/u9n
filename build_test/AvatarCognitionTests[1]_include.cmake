@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/u9n/u9n/build_test/AvatarCognitionTests[1]_tests.cmake")
-  include("/home/runner/work/u9n/u9n/build_test/AvatarCognitionTests[1]_tests.cmake")
-else()
-  add_test(AvatarCognitionTests_NOT_BUILT AvatarCognitionTests_NOT_BUILT)
-endif()

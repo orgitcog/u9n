@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/u9n/u9n/build_test/DNAIntegrationTests[1]_tests.cmake")
-  include("/home/runner/work/u9n/u9n/build_test/DNAIntegrationTests[1]_tests.cmake")
-else()
-  add_test(DNAIntegrationTests_NOT_BUILT DNAIntegrationTests_NOT_BUILT)
-endif()

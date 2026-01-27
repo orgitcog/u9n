@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/u9n/u9n/build_test/ReservoirIntegrationTests[1]_tests.cmake")
-  include("/home/runner/work/u9n/u9n/build_test/ReservoirIntegrationTests[1]_tests.cmake")
-else()
-  add_test(ReservoirIntegrationTests_NOT_BUILT ReservoirIntegrationTests_NOT_BUILT)
-endif()

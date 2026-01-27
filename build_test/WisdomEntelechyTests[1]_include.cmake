@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/u9n/u9n/build_test/WisdomEntelechyTests[1]_tests.cmake")
-  include("/home/runner/work/u9n/u9n/build_test/WisdomEntelechyTests[1]_tests.cmake")
-else()
-  add_test(WisdomEntelechyTests_NOT_BUILT WisdomEntelechyTests_NOT_BUILT)
-endif()

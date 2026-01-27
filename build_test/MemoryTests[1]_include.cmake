@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/u9n/u9n/build_test/MemoryTests[1]_tests.cmake")
-  include("/home/runner/work/u9n/u9n/build_test/MemoryTests[1]_tests.cmake")
-else()
-  add_test(MemoryTests_NOT_BUILT MemoryTests_NOT_BUILT)
-endif()

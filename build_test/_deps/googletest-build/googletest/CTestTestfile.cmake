@@ -1,6 +1,0 @@
-# CMake generated Testfile for 
-# Source directory: /home/runner/work/u9n/u9n/build_test/_deps/googletest-src/googletest
-# Build directory: /home/runner/work/u9n/u9n/build_test/_deps/googletest-build/googletest
-# 
-# This file includes the relevant testing commands required for 
-# testing this directory and lists subdirectories to be tested as well.

@@ -1,5 +1,0 @@
-if(EXISTS "/home/runner/work/u9n/u9n/build_test/CoreTests[1]_tests.cmake")
-  include("/home/runner/work/u9n/u9n/build_test/CoreTests[1]_tests.cmake")
-else()
-  add_test(CoreTests_NOT_BUILT CoreTests_NOT_BUILT)
-endif()
