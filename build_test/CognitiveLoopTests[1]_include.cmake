@@ -1,0 +1,5 @@
+if(EXISTS "/home/runner/work/u9n/u9n/build_test/CognitiveLoopTests[1]_tests.cmake")
+  include("/home/runner/work/u9n/u9n/build_test/CognitiveLoopTests[1]_tests.cmake")
+else()
+  add_test(CognitiveLoopTests_NOT_BUILT CognitiveLoopTests_NOT_BUILT)
+endif()

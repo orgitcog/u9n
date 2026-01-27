@@ -1,0 +1,5 @@
+if(EXISTS "/home/runner/work/u9n/u9n/build_test/Sys6OperadTests[1]_tests.cmake")
+  include("/home/runner/work/u9n/u9n/build_test/Sys6OperadTests[1]_tests.cmake")
+else()
+  add_test(Sys6OperadTests_NOT_BUILT Sys6OperadTests_NOT_BUILT)
+endif()

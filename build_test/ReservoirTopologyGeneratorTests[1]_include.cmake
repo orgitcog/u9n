@@ -1,0 +1,5 @@
+if(EXISTS "/home/runner/work/u9n/u9n/build_test/ReservoirTopologyGeneratorTests[1]_tests.cmake")
+  include("/home/runner/work/u9n/u9n/build_test/ReservoirTopologyGeneratorTests[1]_tests.cmake")
+else()
+  add_test(ReservoirTopologyGeneratorTests_NOT_BUILT ReservoirTopologyGeneratorTests_NOT_BUILT)
+endif()

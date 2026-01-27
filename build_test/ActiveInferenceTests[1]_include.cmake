@@ -1,0 +1,5 @@
+if(EXISTS "/home/runner/work/u9n/u9n/build_test/ActiveInferenceTests[1]_tests.cmake")
+  include("/home/runner/work/u9n/u9n/build_test/ActiveInferenceTests[1]_tests.cmake")
+else()
+  add_test(ActiveInferenceTests_NOT_BUILT ActiveInferenceTests_NOT_BUILT)
+endif()

@@ -19,6 +19,7 @@
 #include <memory>
 #include <vector>
 #include <chrono>
+#include <random>
 #include <Eigen/Sparse>
 
 // Mock Unreal Engine types for standalone testing
@@ -62,21 +63,9 @@ struct FFileHelper
     }
 };
 
-// Mock topology types
-enum class EReservoirTopologyType : uint8
-{
-    RandomSparse,
-    SmallWorld,
-    ScaleFree,
-    Modular,
-    Ring,
-    FullyConnected
-};
-
 // Mock topology config
 struct FReservoirTopologyConfig
 {
-    EReservoirTopologyType TopologyType = EReservoirTopologyType::RandomSparse;
     int32 NumNodes = 100;
     float Connectivity = 0.1f;
     float SpectralRadius = 0.9f;
@@ -162,7 +151,6 @@ public:
                                                 float SpectralRadius, int32 Seed)
     {
         FReservoirTopologyConfig Config;
-        Config.TopologyType = EReservoirTopologyType::RandomSparse;
         Config.NumNodes = NumNodes;
         Config.Connectivity = Connectivity;
         Config.SpectralRadius = SpectralRadius;
@@ -174,7 +162,6 @@ public:
                                              float RewiringProb, float SpectralRadius, int32 Seed)
     {
         FReservoirTopologyConfig Config;
-        Config.TopologyType = EReservoirTopologyType::SmallWorld;
         Config.NumNodes = NumNodes;
         Config.MeanDegree = MeanDegree;
         Config.RewiringProbability = RewiringProb;
@@ -187,7 +174,6 @@ public:
                                             float SpectralRadius, int32 Seed)
     {
         FReservoirTopologyConfig Config;
-        Config.TopologyType = EReservoirTopologyType::ScaleFree;
         Config.NumNodes = NumNodes;
         Config.AttachmentEdges = AttachmentEdges;
         Config.SpectralRadius = SpectralRadius;
@@ -200,7 +186,6 @@ public:
                                           float SpectralRadius, int32 Seed)
     {
         FReservoirTopologyConfig Config;
-        Config.TopologyType = EReservoirTopologyType::Modular;
         Config.NumNodes = NumNodes;
         Config.NumModules = NumModules;
         Config.IntraModuleConnectivity = IntraConn;
