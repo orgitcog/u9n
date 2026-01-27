@@ -16,6 +16,7 @@
 #include <random>
 #include <cmath>
 #include <algorithm>
+#include <chrono>
 
 // Mock configuration struct
 struct MockESNConfig {
