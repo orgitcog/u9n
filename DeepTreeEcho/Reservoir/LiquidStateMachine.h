@@ -271,7 +271,7 @@ struct FLSMConfig
     GENERATED_BODY()
 
     /** Number of neurons in liquid */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = "10", ClampMax = "10000"))
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (ClampMin = "1", ClampMax = "10000"))
     int32 NumNeurons = 200;
 
     /** Input dimensionality */
