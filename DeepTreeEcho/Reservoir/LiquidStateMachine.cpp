@@ -159,7 +159,9 @@ FSpikeTrain ULiquidStateMachine::RateEncode(float Value, float Duration, int32 N
     while (CurrentTime < Duration)
     {
         // Poisson process - exponential inter-spike intervals
-        float ISI = -MeanISI * FMath::Loge(FMath::FRand());
+        // Prevent log(0) by clamping random value away from zero
+        float RandValue = FMath::Max(FMath::FRand(), SMALL_NUMBER);
+        float ISI = -MeanISI * FMath::Loge(RandValue);
         CurrentTime += ISI;
         
         if (CurrentTime < Duration)
@@ -261,6 +263,15 @@ TArray<float> ULiquidStateMachine::ProcessInput(const TArray<float>& Input, floa
     
     // Extract output spikes from designated output neurons
     TArray<FSpikeTrain> OutputSpikes;
+    
+    // Validate output dimension
+    if (Config.OutputDimension > State.Neurons.Num())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("LSM: OutputDimension (%d) exceeds neuron count (%d)"), 
+               Config.OutputDimension, State.Neurons.Num());
+        return TArray<float>();
+    }
+    
     int32 OutputStartID = State.Neurons.Num() - Config.OutputDimension;
     
     for (int32 i = 0; i < Config.OutputDimension; ++i)
@@ -295,7 +306,7 @@ void ULiquidStateMachine::StepSimulation(float DeltaTime)
     // Update time
     State.CurrentTime += DeltaTime;
     
-    // Process delayed spikes
+    // Process delayed spikes - using swap removal for efficiency
     for (int32 i = SpikeQueue.Num() - 1; i >= 0; --i)
     {
         if (SpikeQueue[i].Key <= State.CurrentTime)
@@ -303,9 +314,11 @@ void ULiquidStateMachine::StepSimulation(float DeltaTime)
             int32 NeuronID = SpikeQueue[i].Value;
             if (State.Neurons.IsValidIndex(NeuronID))
             {
-                InjectCurrent(NeuronID, 15.0f); // Inject spike current
+                // Use configurable spike current amplitude
+                InjectCurrent(NeuronID, Config.SpikeCurrentAmplitude);
             }
-            SpikeQueue.RemoveAt(i);
+            // Swap and pop for O(1) removal
+            SpikeQueue.RemoveAtSwap(i, 1, false);
         }
     }
     
@@ -449,11 +462,11 @@ float ULiquidStateMachine::ComputeSynapticInput(int32 NeuronID) const
                 const FLIFNeuronState& PreNeuron = State.Neurons[Synapse.PreNeuronID];
                 float TimeSinceSynapse = State.CurrentTime - PreNeuron.LastSpikeTime - Synapse.Delay;
                 
-                // Exponential decay kernel
-                if (TimeSinceSynapse > 0 && TimeSinceSynapse < 20.0f)
+                // Exponential decay kernel with configurable time constants
+                if (TimeSinceSynapse > 0 && TimeSinceSynapse < Config.SynapticTimeWindow)
                 {
                     float Amplitude = Synapse.bIsExcitatory ? 1.0f : -1.0f;
-                    float Input = Amplitude * Synapse.Weight * FMath::Exp(-TimeSinceSynapse / 5.0f);
+                    float Input = Amplitude * Synapse.Weight * FMath::Exp(-TimeSinceSynapse / Config.SynapticTimeConstant);
                     TotalInput += Input;
                 }
             }
@@ -771,7 +784,9 @@ bool ULiquidStateMachine::ShouldConnect(int32 PreID, int32 PostID) const
 
 float ULiquidStateMachine::GetNeuronDistance(int32 NeuronID1, int32 NeuronID2) const
 {
-    // Assume neurons arranged in 3D grid
+    // Neurons arranged in 3D grid for spatial locality
+    // NOTE: This assumes cubic spatial arrangement. For other topologies,
+    // override this method or use explicit position arrays.
     int32 GridSize = FMath::CeilToInt(FMath::Pow(Config.NumNeurons, 1.0f / 3.0f));
     
     int32 X1 = NeuronID1 % GridSize;

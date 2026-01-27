@@ -298,6 +298,18 @@ struct FLSMConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     float Timestep = 1.0f;
 
+    /** Spike current amplitude for spike injection (mV) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    float SpikeCurrentAmplitude = 15.0f;
+
+    /** Synaptic time window (ms) - effective range for PSCs */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    float SynapticTimeWindow = 20.0f;
+
+    /** Synaptic time constant (ms) - decay rate */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    float SynapticTimeConstant = 5.0f;
+
     /** STDP configuration */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FSTDPConfig STDPConfig;
