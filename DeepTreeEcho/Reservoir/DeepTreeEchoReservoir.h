@@ -3,12 +3,12 @@
 /**
  * Deep Tree Echo Reservoir Computing Integration
  * 
- * Integrates ReservoirCpp (Echo State Networks) with Deep Tree Echo cognitive architecture.
+ * Integrates Echo State Networks with Deep Tree Echo cognitive architecture.
  * Implements hierarchical reservoir computing for temporal pattern recognition,
  * memory consolidation, and echo propagation.
  * 
  * Based on:
- * - ReservoirPy/ReservoirCpp: Echo State Networks with Intrinsic Plasticity
+ * - Feature F1.2.1: Echo State Network Core Implementation
  * - Deep Tree Echo: Hierarchical membrane-based cognitive architecture
  * - 4E Cognition: Embodied, Embedded, Enacted, Extended
  * 
@@ -20,6 +20,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "EchoStateNetwork.h"
 #include "DeepTreeEchoReservoir.generated.h"
 
 // Forward declarations for ReservoirCpp integration
@@ -153,9 +154,13 @@ struct FCognitiveStreamState
     UPROPERTY(BlueprintReadWrite)
     int32 CurrentPhase = 1;
 
-    /** Reservoir state for this stream */
+    /** Reservoir state for this stream (legacy) */
     UPROPERTY(BlueprintReadWrite)
     FReservoirState ReservoirState;
+
+    /** ESN for this stream (new implementation) */
+    UPROPERTY()
+    UEchoStateNetwork* ESN = nullptr;
 
     /** Current attention focus */
     UPROPERTY(BlueprintReadWrite)
