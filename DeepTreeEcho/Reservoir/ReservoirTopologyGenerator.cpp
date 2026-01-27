@@ -395,6 +395,10 @@ Eigen::SparseMatrix<float> UReservoirTopologyGenerator::ArrayToEigenSparse(
 {
     Eigen::SparseMatrix<float> Matrix(NumNodes, NumNodes);
     
+    // Use triplet list for efficient sparse matrix construction
+    std::vector<Eigen::Triplet<float>> Triplets;
+    Triplets.reserve(Array.Num() / 10); // Estimate: ~10% non-zero
+    
     for (int32 i = 0; i < NumNodes; i++)
     {
         for (int32 j = 0; j < NumNodes; j++)
@@ -402,11 +406,12 @@ Eigen::SparseMatrix<float> UReservoirTopologyGenerator::ArrayToEigenSparse(
             int32 Index = i * NumNodes + j;
             if (Index < Array.Num() && Array[Index] != 0.0f)
             {
-                Matrix.insert(i, j) = Array[Index];
+                Triplets.push_back(Eigen::Triplet<float>(i, j, Array[Index]));
             }
         }
     }
 
+    Matrix.setFromTriplets(Triplets.begin(), Triplets.end());
     return Matrix;
 }
 
@@ -671,6 +676,10 @@ float UReservoirTopologyGenerator::ComputeAveragePathLength(const Eigen::SparseM
     float TotalPathLength = 0.0f;
     int32 PathCount = 0;
 
+    // Note: This uses BFS from each node, resulting in O(N × (N + E)) complexity
+    // For large networks (>1000 nodes), this can be slow
+    // Consider using sampling or approximation methods for very large networks
+
     // BFS from each node
     for (int32 Start = 0; Start < NumNodes; Start++)
     {
@@ -699,6 +708,8 @@ float UReservoirTopologyGenerator::ComputeAveragePathLength(const Eigen::SparseM
         }
     }
 
+    // Note: This only considers connected components
+    // Paths to unreachable nodes are not included in the average
     return PathCount > 0 ? TotalPathLength / PathCount : 0.0f;
 }
 
@@ -711,6 +722,21 @@ float UReservoirTopologyGenerator::ComputeModularity(
     int32 TotalEdges = Matrix.nonZeros();
     if (TotalEdges == 0) return 0.0f;
 
+    // Precompute degrees for all nodes to avoid O(N³) complexity
+    TArray<int32> OutDegrees;
+    OutDegrees.SetNumZeroed(NumNodes);
+    
+    for (int32 i = 0; i < NumNodes; i++)
+    {
+        for (int32 j = 0; j < NumNodes; j++)
+        {
+            if (Matrix.coeff(i, j) != 0.0f)
+            {
+                OutDegrees[i]++;
+            }
+        }
+    }
+
     float Modularity = 0.0f;
 
     for (int32 i = 0; i < NumNodes; i++)
@@ -721,13 +747,9 @@ float UReservoirTopologyGenerator::ComputeModularity(
             {
                 float Aij = Matrix.coeff(i, j);
                 
-                // Compute expected edges
-                int32 ki = 0, kj = 0;
-                for (int32 k = 0; k < NumNodes; k++)
-                {
-                    ki += (Matrix.coeff(i, k) != 0.0f) ? 1 : 0;
-                    kj += (Matrix.coeff(k, j) != 0.0f) ? 1 : 0;
-                }
+                // Use precomputed degrees
+                int32 ki = OutDegrees[i];
+                int32 kj = OutDegrees[j];
                 
                 float Expected = (float)(ki * kj) / (2.0f * TotalEdges);
                 Modularity += (Aij - Expected);
@@ -750,6 +772,7 @@ float UReservoirTopologyGenerator::ComputeSpectralRadiusInternal(const Eigen::Sp
     float Lambda = 0.0f;
     int32 MaxIterations = 100;
     float Tolerance = 1e-6f;
+    bool Converged = false;
 
     for (int32 iter = 0; iter < MaxIterations; iter++)
     {
@@ -759,11 +782,19 @@ float UReservoirTopologyGenerator::ComputeSpectralRadiusInternal(const Eigen::Sp
         if (FMath::Abs(NewLambda - Lambda) < Tolerance)
         {
             Lambda = NewLambda;
+            Converged = true;
             break;
         }
 
         Lambda = NewLambda;
         x = y / Lambda;
+    }
+
+    // Warn if not converged
+    if (!Converged)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Spectral radius computation did not converge after %d iterations (current estimate: %f)"),
+            MaxIterations, Lambda);
     }
 
     return Lambda;

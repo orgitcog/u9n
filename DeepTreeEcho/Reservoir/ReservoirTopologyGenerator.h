@@ -245,11 +245,9 @@ public:
     // ========================================
 
     /** Convert Eigen sparse matrix to UE array */
-    UFUNCTION(BlueprintCallable, Category = "Reservoir|Topology")
     static TArray<float> EigenSparseToArray(const Eigen::SparseMatrix<float>& SparseMatrix);
 
     /** Convert UE array to Eigen sparse matrix */
-    UFUNCTION(BlueprintCallable, Category = "Reservoir|Topology")
     static Eigen::SparseMatrix<float> ArrayToEigenSparse(const TArray<float>& Array, int32 NumNodes);
 
 protected:
