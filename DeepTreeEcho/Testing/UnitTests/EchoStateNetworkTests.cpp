@@ -515,10 +515,6 @@ TEST_F(EchoStateNetworkTest, EchoStateProperty) {
 }
 
 // ============================================================================
-// MAIN
+// MAIN - Note: Using GTest's main from gtest_main
 // ============================================================================
 
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

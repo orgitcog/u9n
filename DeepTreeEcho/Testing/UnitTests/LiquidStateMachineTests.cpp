@@ -497,7 +497,7 @@ TEST_F(LiquidStateMachineTest, Homeostasis_ThresholdAdjustment) {
     float actualRate = 20.0f;  // Hz (too high)
     float threshold = -55.0f;  // mV
     float adjustmentRate = 0.001f;
-    float dt = 1.0f;
+    float dt = 100.0f;  // Larger timestep to see effect
     float tau = 10000.0f;  // 10 seconds in ms
 
     float adjustment = adjustmentRate * (actualRate - targetRate) * dt / tau;
@@ -505,6 +505,7 @@ TEST_F(LiquidStateMachineTest, Homeostasis_ThresholdAdjustment) {
 
     // Threshold should increase (become less excitable)
     EXPECT_GT(newThreshold, threshold);
+    EXPECT_NEAR(newThreshold, threshold + 0.00015f, 1e-6f);  // Expected delta
 }
 
 TEST_F(LiquidStateMachineTest, Homeostasis_RateConvergence) {
@@ -635,10 +636,6 @@ TEST_F(LiquidStateMachineTest, Performance_SpikeEncoding) {
 }
 
 // ============================================================================
-// MAIN
+// MAIN - Note: Using GTest's main from gtest_main
 // ============================================================================
 
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

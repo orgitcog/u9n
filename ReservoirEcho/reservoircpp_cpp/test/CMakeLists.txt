@@ -1,7 +1,16 @@
 cmake_minimum_required(VERSION 3.14)
 
-# Find Google Test
-find_package(GTest REQUIRED)
+# Find Google Test (check if already found by parent)
+if(NOT TARGET GTest::gtest)
+    find_package(GTest QUIET)
+    
+    if(NOT GTest_FOUND)
+        # GTest not found, skip tests
+        message(WARNING "GTest not found. Skipping ReservoirCpp tests.")
+        return()
+    endif()
+endif()
+
 include(GoogleTest)
 
 # Node test
