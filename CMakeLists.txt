@@ -132,8 +132,16 @@ endif()
 if(BUILD_TESTING)
     message(STATUS "Building unit tests")
     
-    # DeepTreeEcho Unit Tests
+    # DeepTreeEcho Unit Tests - exclude UE-dependent tests
     file(GLOB UNIT_TEST_SOURCES "DeepTreeEcho/Testing/UnitTests/*.cpp")
+    
+    # Exclude Unreal Engine dependent tests (need CoreMinimal.h, AutomationTest.h, UCLASS)
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "BidirectionalMessageProtocolTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "TypeConversionTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "ReadoutLayerTrainingTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "ReservoirTopologyGeneratorTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "ReservoirIntegrationTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "SymbolicToNeuralEncoderTests.cpp")
     
     if(UNIT_TEST_SOURCES)
         add_executable(DeepTreeEchoUnitTests ${UNIT_TEST_SOURCES})
@@ -152,6 +160,8 @@ if(BUILD_TESTING)
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
             PROPERTIES LABELS "unit"
         )
+        message(STATUS "Standalone unit tests configured (UE-dependent tests excluded for standalone build)")
+        message(STATUS "  NOTE: Full test suite runs within Unreal Engine environment")
     endif()
 endif()
 
