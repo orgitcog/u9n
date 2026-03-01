@@ -326,6 +326,15 @@ gtest_discover_tests(ReservoirTopologyGeneratorTests
 )
 
 # ============================================================================
+# Membrane Communication Channels Tests (Feature F1.3.4)
+# ============================================================================
+add_executable(MembraneCommChannelsTests
+    MembraneCommChannelsTests.cpp
+)
+
+target_link_libraries(MembraneCommChannelsTests ${GTEST_LIBS})
+
+target_include_directories(MembraneCommChannelsTests PRIVATE
 # Membrane Lifecycle Tests (Feature F1.3.3)
 # ============================================================================
 add_executable(MembraneLifecycleTests
@@ -339,6 +348,10 @@ target_include_directories(MembraneLifecycleTests PRIVATE
     ${CMAKE_SOURCE_DIR}/../../../
 )
 
+gtest_discover_tests(MembraneCommChannelsTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;membrane;p-system;channels;F1.3.4"
 gtest_discover_tests(MembraneLifecycleTests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     PROPERTIES
@@ -369,6 +382,7 @@ gtest_discover_tests(ObjectTransportRulesTests
 # ============================================================================
 add_custom_target(run_all_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 4
+    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests
     DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneLifecycleTests
     DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests ObjectTransportRulesTests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
@@ -400,6 +414,7 @@ endif()
 # ============================================================================
 # Installation
 # ============================================================================
+install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests
 install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneLifecycleTests
 install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests ObjectTransportRulesTests
     RUNTIME DESTINATION bin/tests
@@ -407,5 +422,6 @@ install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationT
 
 message(STATUS "DeepTreeEcho Tests configured")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "  Tests: CoreTests, MemoryTests, AvatarCognitionTests, ReservoirIntegrationTests, EchoStateNetworkTests, ActiveInferenceTests, DNAIntegrationTests, CognitiveLoopTests, WisdomEntelechyTests, Sys6OperadTests, BehavioralFrameworkTests, TensorLogicTests, ReservoirTopologyGeneratorTests, MembraneCommChannelsTests")
 message(STATUS "  Tests: CoreTests, MemoryTests, AvatarCognitionTests, ReservoirIntegrationTests, EchoStateNetworkTests, ActiveInferenceTests, DNAIntegrationTests, CognitiveLoopTests, WisdomEntelechyTests, Sys6OperadTests, BehavioralFrameworkTests, TensorLogicTests, ReservoirTopologyGeneratorTests, MembraneLifecycleTests")
 message(STATUS "  Tests: CoreTests, MemoryTests, AvatarCognitionTests, ReservoirIntegrationTests, EchoStateNetworkTests, ActiveInferenceTests, DNAIntegrationTests, CognitiveLoopTests, WisdomEntelechyTests, Sys6OperadTests, BehavioralFrameworkTests, TensorLogicTests, ReservoirTopologyGeneratorTests, ObjectTransportRulesTests")
