@@ -227,6 +227,82 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnWisdomCultivated, FString, Ins
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnMetamodelTransition, EMetamodelLevel, FromLevel, EMetamodelLevel, ToLevel);
 
 /**
+ * @brief Membrane lifecycle event type enumeration
+ * Used to track membrane creation, division, and dissolution events
+ */
+UENUM(BlueprintType)
+enum class EMembraneLifecycleEvent : uint8
+{
+    Created         UMETA(DisplayName = "Membrane Created"),
+    Divided         UMETA(DisplayName = "Membrane Divided"),
+    Dissolved       UMETA(DisplayName = "Membrane Dissolved"),
+    Merged          UMETA(DisplayName = "Membrane Merged")
+};
+
+/**
+ * @brief Result structure for membrane division operations
+ */
+USTRUCT(BlueprintType)
+struct FMembraneDivisionResult
+{
+    GENERATED_BODY()
+
+    /** Whether the division was successful */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bSuccess = false;
+
+    /** Type of the parent membrane that was divided */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    EMembraneType ParentType = EMembraneType::Root;
+
+    /** Types of the child membranes created */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TArray<EMembraneType> ChildTypes;
+
+    /** Error message if division failed */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString ErrorMessage;
+
+    /** Division ratio used (how contents were split) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    float DivisionRatio = 0.5f;
+};
+
+/**
+ * @brief Result structure for membrane dissolution operations
+ */
+USTRUCT(BlueprintType)
+struct FMembraneDissolutionResult
+{
+    GENERATED_BODY()
+
+    /** Whether the dissolution was successful */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bSuccess = false;
+
+    /** Type of the membrane that was dissolved */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    EMembraneType DissolvedType = EMembraneType::Root;
+
+    /** Type of the parent membrane that received contents */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    EMembraneType ReceiverType = EMembraneType::Root;
+
+    /** Contents that were propagated to parent */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TMap<FString, float> PropagatedContents;
+
+    /** Error message if dissolution failed */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FString ErrorMessage;
+};
+
+/**
+ * @brief Delegate for membrane lifecycle events (Feature F1.3.3)
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnMembraneLifecycleEvent, EMembraneLifecycleEvent, EventType, EMembraneType, MembraneType, FString, Details);
+
+/**
  * @class UDeepTreeEchoCognitiveFramework
  * @brief Main component integrating all Deep Tree Echo cognitive systems
  * 
@@ -350,6 +426,94 @@ public:
     void PropagateMembraneContents(EMembraneType FromMembrane, EMembraneType ToMembrane, const FString& ContentKey);
 
     // ========================================================================
+    // Membrane Lifecycle Operations (Feature F1.3.3)
+    // ========================================================================
+
+    /**
+     * @brief Create a new membrane as a child of an existing parent membrane
+     * 
+     * Creates a new membrane with the specified type and adds it to the hierarchy.
+     * The new membrane inherits properties from the parent based on permeability.
+     * 
+     * @param NewType The type of membrane to create
+     * @param ParentType The parent membrane to attach to
+     * @param InitialPermeability Initial permeability value (0.0-1.0)
+     * @param InitialCoherence Initial coherence value (0.0-1.0)
+     * @return True if creation was successful, false otherwise
+     */
+    UFUNCTION(BlueprintCallable, Category = "DeepTreeEcho|Membrane|Lifecycle")
+    bool CreateMembrane(EMembraneType NewType, EMembraneType ParentType, float InitialPermeability = 0.5f, float InitialCoherence = 1.0f);
+
+    /**
+     * @brief Divide a membrane into two child membranes
+     * 
+     * Performs P-System membrane division, creating two child membranes from a parent.
+     * Contents are distributed between children based on the division ratio.
+     * The parent membrane becomes a container for the new children.
+     * 
+     * @param MembraneType The membrane to divide
+     * @param DivisionRatio How to split contents between children (0.0-1.0, default 0.5 = equal)
+     * @param ChildType1 Type for the first child membrane
+     * @param ChildType2 Type for the second child membrane
+     * @return Division result containing success status and child information
+     */
+    UFUNCTION(BlueprintCallable, Category = "DeepTreeEcho|Membrane|Lifecycle")
+    FMembraneDivisionResult DivideMembrane(EMembraneType MembraneType, float DivisionRatio, EMembraneType ChildType1, EMembraneType ChildType2);
+
+    /**
+     * @brief Dissolve a membrane and merge its contents into parent
+     * 
+     * Performs P-System membrane dissolution, removing the membrane and 
+     * propagating its contents to the parent membrane based on permeability.
+     * Child membranes are re-parented to the dissolved membrane's parent.
+     * 
+     * @param MembraneType The membrane to dissolve
+     * @return Dissolution result containing success status and propagated contents
+     */
+    UFUNCTION(BlueprintCallable, Category = "DeepTreeEcho|Membrane|Lifecycle")
+    FMembraneDissolutionResult DissolveMembrane(EMembraneType MembraneType);
+
+    /**
+     * @brief Check if a membrane can be safely dissolved
+     * 
+     * Validates dissolution preconditions:
+     * - Membrane must exist
+     * - Cannot dissolve root membrane
+     * - Must have a valid parent to receive contents
+     * 
+     * @param MembraneType The membrane to check
+     * @return True if the membrane can be dissolved, false otherwise
+     */
+    UFUNCTION(BlueprintCallable, Category = "DeepTreeEcho|Membrane|Lifecycle")
+    bool CanDissolveMembrane(EMembraneType MembraneType) const;
+
+    /**
+     * @brief Check if a membrane can be divided
+     * 
+     * Validates division preconditions:
+     * - Membrane must exist
+     * - Child types must not already exist
+     * - Membrane must have sufficient coherence
+     * 
+     * @param MembraneType The membrane to check
+     * @param ChildType1 First proposed child type
+     * @param ChildType2 Second proposed child type
+     * @return True if the membrane can be divided, false otherwise
+     */
+    UFUNCTION(BlueprintCallable, Category = "DeepTreeEcho|Membrane|Lifecycle")
+    bool CanDivideMembrane(EMembraneType MembraneType, EMembraneType ChildType1, EMembraneType ChildType2) const;
+
+    /**
+     * @brief Get the parent membrane type for a given membrane
+     * 
+     * @param MembraneType The membrane to find parent for
+     * @param OutParentType Output parameter for parent type
+     * @return True if parent was found, false if membrane is root or doesn't exist
+     */
+    UFUNCTION(BlueprintCallable, Category = "DeepTreeEcho|Membrane|Lifecycle")
+    bool GetParentMembrane(EMembraneType MembraneType, EMembraneType& OutParentType) const;
+
+    // ========================================================================
     // Metamodel Interface
     // ========================================================================
 
@@ -380,6 +544,10 @@ public:
     /** Event fired on metamodel level transition */
     UPROPERTY(BlueprintAssignable, Category = "DeepTreeEcho|Events")
     FOnMetamodelTransition OnMetamodelTransition;
+
+    /** Event fired on membrane lifecycle changes (Feature F1.3.3) */
+    UPROPERTY(BlueprintAssignable, Category = "DeepTreeEcho|Events")
+    FOnMembraneLifecycleEvent OnMembraneLifecycleEvent;
 
 protected:
     // ========================================================================
@@ -437,4 +605,13 @@ protected:
 
     /** Map 4E state to avatar expression hints */
     TMap<FString, float> Map4EToExpressionHints() const;
+
+    /** Find parent membrane type for a given membrane (internal helper) */
+    bool FindParentMembrane(EMembraneType ChildType, EMembraneType& OutParentType) const;
+
+    /** Remove membrane from parent's child list (internal helper) */
+    void RemoveChildFromParent(EMembraneType ChildType, EMembraneType ParentType);
+
+    /** Add membrane to parent's child list (internal helper) */
+    void AddChildToParent(EMembraneType ChildType, EMembraneType ParentType);
 };
