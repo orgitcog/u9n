@@ -628,3 +628,315 @@ TMap<FString, float> UDeepTreeEchoCognitiveFramework::Map4EToExpressionHints() c
     
     return Hints;
 }
+
+// ============================================================================
+// Membrane Lifecycle Operations (Feature F1.3.3)
+// ============================================================================
+
+bool UDeepTreeEchoCognitiveFramework::CreateMembrane(EMembraneType NewType, EMembraneType ParentType, float InitialPermeability, float InitialCoherence)
+{
+    // Check if membrane already exists
+    if (Membranes.Contains(NewType))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("CreateMembrane: Membrane type %d already exists"), static_cast<int32>(NewType));
+        return false;
+    }
+    
+    // Check if parent exists
+    if (!Membranes.Contains(ParentType))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("CreateMembrane: Parent membrane type %d does not exist"), static_cast<int32>(ParentType));
+        return false;
+    }
+    
+    // Create the new membrane
+    FMembraneState NewMembrane;
+    NewMembrane.Type = NewType;
+    NewMembrane.Permeability = FMath::Clamp(InitialPermeability, 0.0f, 1.0f);
+    NewMembrane.Coherence = FMath::Clamp(InitialCoherence, 0.0f, 1.0f);
+    NewMembrane.ChildMembranes.Empty();
+    NewMembrane.Contents.Empty();
+    
+    // Add to membrane map
+    Membranes.Add(NewType, NewMembrane);
+    
+    // Add as child to parent
+    AddChildToParent(NewType, ParentType);
+    
+    // Broadcast lifecycle event
+    OnMembraneLifecycleEvent.Broadcast(
+        EMembraneLifecycleEvent::Created,
+        NewType,
+        FString::Printf(TEXT("Created with permeability %.2f under parent %d"), InitialPermeability, static_cast<int32>(ParentType))
+    );
+    
+    UE_LOG(LogTemp, Log, TEXT("CreateMembrane: Successfully created membrane type %d under parent %d"), 
+           static_cast<int32>(NewType), static_cast<int32>(ParentType));
+    
+    return true;
+}
+
+FMembraneDivisionResult UDeepTreeEchoCognitiveFramework::DivideMembrane(EMembraneType MembraneType, float DivisionRatio, EMembraneType ChildType1, EMembraneType ChildType2)
+{
+    FMembraneDivisionResult Result;
+    Result.ParentType = MembraneType;
+    Result.DivisionRatio = FMath::Clamp(DivisionRatio, 0.0f, 1.0f);
+    
+    // Validate preconditions
+    if (!CanDivideMembrane(MembraneType, ChildType1, ChildType2))
+    {
+        Result.bSuccess = false;
+        Result.ErrorMessage = TEXT("Division preconditions not met");
+        return Result;
+    }
+    
+    FMembraneState* ParentMembrane = Membranes.Find(MembraneType);
+    if (!ParentMembrane)
+    {
+        Result.bSuccess = false;
+        Result.ErrorMessage = TEXT("Parent membrane not found");
+        return Result;
+    }
+    
+    // Create first child membrane
+    FMembraneState Child1;
+    Child1.Type = ChildType1;
+    Child1.Permeability = ParentMembrane->Permeability;
+    Child1.Coherence = ParentMembrane->Coherence * 0.9f; // Slight coherence loss on division
+    
+    // Create second child membrane
+    FMembraneState Child2;
+    Child2.Type = ChildType2;
+    Child2.Permeability = ParentMembrane->Permeability;
+    Child2.Coherence = ParentMembrane->Coherence * 0.9f;
+    
+    // Distribute contents based on division ratio
+    for (const auto& ContentPair : ParentMembrane->Contents)
+    {
+        float Value1 = ContentPair.Value * Result.DivisionRatio;
+        float Value2 = ContentPair.Value * (1.0f - Result.DivisionRatio);
+        
+        if (Value1 > 0.01f)
+        {
+            Child1.Contents.Add(ContentPair.Key, Value1);
+        }
+        if (Value2 > 0.01f)
+        {
+            Child2.Contents.Add(ContentPair.Key, Value2);
+        }
+    }
+    
+    // Clear parent contents after distribution
+    ParentMembrane->Contents.Empty();
+    
+    // Add child membranes
+    Membranes.Add(ChildType1, Child1);
+    Membranes.Add(ChildType2, Child2);
+    
+    // Update parent's child list
+    ParentMembrane->ChildMembranes.Add(static_cast<int32>(ChildType1));
+    ParentMembrane->ChildMembranes.Add(static_cast<int32>(ChildType2));
+    
+    // Update result
+    Result.bSuccess = true;
+    Result.ChildTypes.Add(ChildType1);
+    Result.ChildTypes.Add(ChildType2);
+    
+    // Broadcast lifecycle event
+    OnMembraneLifecycleEvent.Broadcast(
+        EMembraneLifecycleEvent::Divided,
+        MembraneType,
+        FString::Printf(TEXT("Divided into types %d and %d with ratio %.2f"), 
+                       static_cast<int32>(ChildType1), static_cast<int32>(ChildType2), Result.DivisionRatio)
+    );
+    
+    UE_LOG(LogTemp, Log, TEXT("DivideMembrane: Successfully divided membrane %d into %d and %d"), 
+           static_cast<int32>(MembraneType), static_cast<int32>(ChildType1), static_cast<int32>(ChildType2));
+    
+    return Result;
+}
+
+FMembraneDissolutionResult UDeepTreeEchoCognitiveFramework::DissolveMembrane(EMembraneType MembraneType)
+{
+    FMembraneDissolutionResult Result;
+    Result.DissolvedType = MembraneType;
+    
+    // Cannot dissolve root membrane
+    if (MembraneType == EMembraneType::Root)
+    {
+        Result.bSuccess = false;
+        Result.ErrorMessage = TEXT("Cannot dissolve root membrane");
+        return Result;
+    }
+    
+    // Find the membrane to dissolve
+    FMembraneState* DissolvedMembrane = Membranes.Find(MembraneType);
+    if (!DissolvedMembrane)
+    {
+        Result.bSuccess = false;
+        Result.ErrorMessage = TEXT("Membrane not found");
+        return Result;
+    }
+    
+    // Find parent membrane
+    EMembraneType ParentType;
+    if (!FindParentMembrane(MembraneType, ParentType))
+    {
+        Result.bSuccess = false;
+        Result.ErrorMessage = TEXT("Parent membrane not found");
+        return Result;
+    }
+    
+    FMembraneState* ParentMembrane = Membranes.Find(ParentType);
+    if (!ParentMembrane)
+    {
+        Result.bSuccess = false;
+        Result.ErrorMessage = TEXT("Parent membrane state not accessible");
+        return Result;
+    }
+    
+    Result.ReceiverType = ParentType;
+    
+    // Propagate contents to parent with permeability attenuation
+    float PropagationFactor = DissolvedMembrane->Permeability * ParentMembrane->Permeability;
+    for (const auto& ContentPair : DissolvedMembrane->Contents)
+    {
+        float PropagatedValue = ContentPair.Value * PropagationFactor;
+        if (PropagatedValue > 0.01f)
+        {
+            Result.PropagatedContents.Add(ContentPair.Key, PropagatedValue);
+            
+            // Add to parent or update existing
+            if (float* ExistingValue = ParentMembrane->Contents.Find(ContentPair.Key))
+            {
+                *ExistingValue += PropagatedValue;
+            }
+            else
+            {
+                ParentMembrane->Contents.Add(ContentPair.Key, PropagatedValue);
+            }
+        }
+    }
+    
+    // Re-parent child membranes to the dissolved membrane's parent
+    for (int32 ChildIndex : DissolvedMembrane->ChildMembranes)
+    {
+        EMembraneType ChildType = static_cast<EMembraneType>(ChildIndex);
+        if (!ParentMembrane->ChildMembranes.Contains(ChildIndex))
+        {
+            ParentMembrane->ChildMembranes.Add(ChildIndex);
+        }
+    }
+    
+    // Remove dissolved membrane from parent's child list
+    RemoveChildFromParent(MembraneType, ParentType);
+    
+    // Remove the membrane from the map
+    Membranes.Remove(MembraneType);
+    
+    Result.bSuccess = true;
+    
+    // Broadcast lifecycle event
+    OnMembraneLifecycleEvent.Broadcast(
+        EMembraneLifecycleEvent::Dissolved,
+        MembraneType,
+        FString::Printf(TEXT("Dissolved into parent %d, propagated %d contents"), 
+                       static_cast<int32>(ParentType), Result.PropagatedContents.Num())
+    );
+    
+    UE_LOG(LogTemp, Log, TEXT("DissolveMembrane: Successfully dissolved membrane %d into parent %d"), 
+           static_cast<int32>(MembraneType), static_cast<int32>(ParentType));
+    
+    return Result;
+}
+
+bool UDeepTreeEchoCognitiveFramework::CanDissolveMembrane(EMembraneType MembraneType) const
+{
+    // Cannot dissolve root membrane
+    if (MembraneType == EMembraneType::Root)
+    {
+        return false;
+    }
+    
+    // Membrane must exist
+    if (!Membranes.Contains(MembraneType))
+    {
+        return false;
+    }
+    
+    // Must have a valid parent
+    EMembraneType ParentType;
+    return FindParentMembrane(MembraneType, ParentType);
+}
+
+bool UDeepTreeEchoCognitiveFramework::CanDivideMembrane(EMembraneType MembraneType, EMembraneType ChildType1, EMembraneType ChildType2) const
+{
+    // Membrane must exist
+    if (!Membranes.Contains(MembraneType))
+    {
+        return false;
+    }
+    
+    // Child types must be different
+    if (ChildType1 == ChildType2)
+    {
+        return false;
+    }
+    
+    // Child types must not already exist
+    if (Membranes.Contains(ChildType1) || Membranes.Contains(ChildType2))
+    {
+        return false;
+    }
+    
+    // Parent membrane must have sufficient coherence
+    const FMembraneState* ParentMembrane = Membranes.Find(MembraneType);
+    if (ParentMembrane && ParentMembrane->Coherence < 0.1f)
+    {
+        return false; // Coherence too low for division
+    }
+    
+    return true;
+}
+
+bool UDeepTreeEchoCognitiveFramework::GetParentMembrane(EMembraneType MembraneType, EMembraneType& OutParentType) const
+{
+    return FindParentMembrane(MembraneType, OutParentType);
+}
+
+bool UDeepTreeEchoCognitiveFramework::FindParentMembrane(EMembraneType ChildType, EMembraneType& OutParentType) const
+{
+    int32 ChildIndex = static_cast<int32>(ChildType);
+    
+    for (const auto& MembranePair : Membranes)
+    {
+        if (MembranePair.Value.ChildMembranes.Contains(ChildIndex))
+        {
+            OutParentType = MembranePair.Key;
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+void UDeepTreeEchoCognitiveFramework::RemoveChildFromParent(EMembraneType ChildType, EMembraneType ParentType)
+{
+    if (FMembraneState* ParentMembrane = Membranes.Find(ParentType))
+    {
+        int32 ChildIndex = static_cast<int32>(ChildType);
+        ParentMembrane->ChildMembranes.Remove(ChildIndex);
+    }
+}
+
+void UDeepTreeEchoCognitiveFramework::AddChildToParent(EMembraneType ChildType, EMembraneType ParentType)
+{
+    if (FMembraneState* ParentMembrane = Membranes.Find(ParentType))
+    {
+        int32 ChildIndex = static_cast<int32>(ChildType);
+        if (!ParentMembrane->ChildMembranes.Contains(ChildIndex))
+        {
+            ParentMembrane->ChildMembranes.Add(ChildIndex);
+        }
+    }
+}
