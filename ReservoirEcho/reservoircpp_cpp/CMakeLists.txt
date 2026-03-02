@@ -49,6 +49,8 @@ set(CORE_SOURCES
     src/_base.cpp
     src/_version.cpp
     src/activationsfunc.cpp
+    src/node.cpp
+    src/model.cpp
 )
 
 # Deep Tree Echo source files
