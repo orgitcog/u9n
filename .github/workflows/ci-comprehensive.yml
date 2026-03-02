@@ -131,7 +131,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: unit-test-results-deeptreeecho-${{ matrix.os }}-${{ matrix.build_type }}
           path: build/Testing/
@@ -185,7 +185,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: unit-test-results-reservoircpp-${{ matrix.os }}
           path: ReservoirEcho/reservoircpp_cpp/build/Testing/
@@ -227,7 +227,7 @@ jobs:
 
       - name: Upload coverage
         if: matrix.python-version == '3.11'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: python-coverage
           path: .coverage
@@ -277,7 +277,7 @@ jobs:
 
       - name: Upload E2E results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-test-results
           path: build/Testing/
@@ -349,7 +349,7 @@ jobs:
           ctest --output-on-failure -R "Performance|Benchmark" -C Release
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
           path: build/benchmark_results/
@@ -398,7 +398,7 @@ jobs:
           genhtml coverage.info --output-directory coverage-report || true
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage-report/
@@ -428,7 +428,7 @@ jobs:
 
       - name: Upload documentation
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: documentation
           path: docs/html/

@@ -101,7 +101,7 @@ jobs:
           tar -czvf packages/deeptreeecho-${NIGHTLY_VERSION}-linux-x64.tar.gz -C install .
 
       - name: Upload nightly
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-linux-x64
           path: packages/
@@ -161,7 +161,7 @@ jobs:
           Compress-Archive -Path install\* -DestinationPath "packages\deeptreeecho-$NIGHTLY_VERSION-windows-x64.zip"
 
       - name: Upload nightly
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-windows-x64
           path: packages/
@@ -211,7 +211,7 @@ jobs:
           tar -czvf packages/deeptreeecho-${NIGHTLY_VERSION}-macos-universal.tar.gz -C install .
 
       - name: Upload nightly
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-macos-universal
           path: packages/
@@ -258,7 +258,7 @@ jobs:
           fi
 
       - name: Upload Python wheels
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-python-wheels
           path: packages/
