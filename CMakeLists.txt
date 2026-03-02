@@ -198,6 +198,52 @@ if(BUILD_E2E_TESTS)
 endif()
 
 # ============================================================================
+# Performance Benchmarks
+# ============================================================================
+if(BUILD_BENCHMARKS)
+    message(STATUS "Building performance benchmarks")
+    
+    # Create benchmark library
+    add_library(DeepTreeEchoBenchmarks
+        DeepTreeEcho/Testing/Benchmarks/PerformanceBenchmark.cpp
+    )
+    target_include_directories(DeepTreeEchoBenchmarks PUBLIC
+        ${CMAKE_SOURCE_DIR}/DeepTreeEcho
+        ${CMAKE_SOURCE_DIR}/DeepTreeEcho/Testing/Benchmarks
+        ${CMAKE_SOURCE_DIR}/ReservoirEcho/reservoircpp_cpp/include
+    )
+    target_link_libraries(DeepTreeEchoBenchmarks
+        Threads::Threads
+        Eigen3::Eigen
+    )
+    
+    # Benchmark runner executable
+    add_executable(RunBenchmarks
+        DeepTreeEcho/Testing/Benchmarks/BenchmarkRunner.cpp
+    )
+    target_link_libraries(RunBenchmarks
+        DeepTreeEchoBenchmarks
+        Threads::Threads
+        Eigen3::Eigen
+    )
+    target_include_directories(RunBenchmarks PRIVATE
+        ${CMAKE_SOURCE_DIR}/DeepTreeEcho
+        ${CMAKE_SOURCE_DIR}/DeepTreeEcho/Testing/Benchmarks
+        ${CMAKE_SOURCE_DIR}/ReservoirEcho/reservoircpp_cpp/include
+    )
+    
+    # Add benchmark tests (using CTest)
+    add_test(NAME PerformanceBenchmarks
+        COMMAND RunBenchmarks
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+    set_tests_properties(PerformanceBenchmarks PROPERTIES
+        LABELS "benchmark"
+        TIMEOUT 600
+    )
+endif()
+
+# ============================================================================
 # Installation
 # ============================================================================
 include(GNUInstallDirs)
