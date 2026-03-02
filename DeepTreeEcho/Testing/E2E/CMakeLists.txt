@@ -111,11 +111,37 @@ gtest_discover_tests(ReservoirCognitiveE2E
 )
 
 # ============================================================================
+# Neural-Symbolic Pipeline E2E Tests (Feature F1.6.2)
+# ============================================================================
+add_executable(NeuralSymbolicPipelineE2E
+    NeuralSymbolicPipelineE2E.cpp
+)
+
+target_link_libraries(NeuralSymbolicPipelineE2E
+    GTest::gtest
+    GTest::gtest_main
+    GTest::gmock
+    Threads::Threads
+)
+
+target_include_directories(NeuralSymbolicPipelineE2E PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(NeuralSymbolicPipelineE2E
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "e2e;neural-symbolic;pipeline;f1.6.2"
+        TIMEOUT 600
+)
+
+# ============================================================================
 # All E2E Tests Target
 # ============================================================================
 add_custom_target(run_e2e_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 2 -L e2e
-    DEPENDS CognitivePipelineE2E AvatarIntegrationE2E ReservoirCognitiveE2E
+    DEPENDS CognitivePipelineE2E AvatarIntegrationE2E ReservoirCognitiveE2E NeuralSymbolicPipelineE2E
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running all DeepTreeEcho E2E tests"
 )
@@ -143,10 +169,10 @@ add_custom_target(run_performance_tests
 # ============================================================================
 # Installation
 # ============================================================================
-install(TARGETS CognitivePipelineE2E AvatarIntegrationE2E ReservoirCognitiveE2E
+install(TARGETS CognitivePipelineE2E AvatarIntegrationE2E ReservoirCognitiveE2E NeuralSymbolicPipelineE2E
     RUNTIME DESTINATION bin/tests/e2e
 )
 
 message(STATUS "DeepTreeEcho E2E Tests configured")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "  Tests: CognitivePipelineE2E, AvatarIntegrationE2E, ReservoirCognitiveE2E")
+message(STATUS "  Tests: CognitivePipelineE2E, AvatarIntegrationE2E, ReservoirCognitiveE2E, NeuralSymbolicPipelineE2E")
