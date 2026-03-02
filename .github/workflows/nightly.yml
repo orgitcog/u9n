@@ -176,7 +176,7 @@ jobs:
           name: nightly-coverage
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-coverage-report
           path: ReservoirEcho/reservoircpp_cpp/coverage-report
@@ -225,7 +225,7 @@ jobs:
           done
 
       - name: Upload benchmark report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-report
           path: benchmark-report.md
@@ -285,7 +285,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           path: artifacts
@@ -327,7 +327,7 @@ jobs:
           cat nightly-report.md
 
       - name: Upload nightly report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-report
           path: nightly-report.md
