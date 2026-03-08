@@ -14,16 +14,21 @@
 UENUM(BlueprintType)
 enum class EAvatarEmotionalState : uint8
 {
-    Neutral UMETA(DisplayName = "Neutral"),
-    Happy UMETA(DisplayName = "Happy"),
-    Sad UMETA(DisplayName = "Sad"),
-    Angry UMETA(DisplayName = "Angry"),
-    Surprised UMETA(DisplayName = "Surprised"),
-    Flirty UMETA(DisplayName = "Flirty"),
-    Chaotic UMETA(DisplayName = "Chaotic"),
-    Thoughtful UMETA(DisplayName = "Thoughtful"),
-    Excited UMETA(DisplayName = "Excited"),
-    Mysterious UMETA(DisplayName = "Mysterious")
+    Neutral     UMETA(DisplayName = "Neutral"),
+    Happy       UMETA(DisplayName = "Happy"),
+    Sad         UMETA(DisplayName = "Sad"),
+    Angry       UMETA(DisplayName = "Angry"),
+    Surprised   UMETA(DisplayName = "Surprised"),
+    Flirty      UMETA(DisplayName = "Flirty"),
+    Chaotic     UMETA(DisplayName = "Chaotic"),
+    Thoughtful  UMETA(DisplayName = "Thoughtful"),
+    Excited     UMETA(DisplayName = "Excited"),
+    Mysterious  UMETA(DisplayName = "Mysterious"),
+    // FACS-Complete negative emotions (v4)
+    Afraid      UMETA(DisplayName = "Afraid"),
+    Disgusted   UMETA(DisplayName = "Disgusted"),
+    Grieving    UMETA(DisplayName = "Grieving"),
+    Contemptuous UMETA(DisplayName = "Contemptuous")
 };
 
 UENUM(BlueprintType)

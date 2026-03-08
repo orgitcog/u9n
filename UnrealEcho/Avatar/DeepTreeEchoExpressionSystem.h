@@ -45,32 +45,60 @@ enum class ECognitiveState : uint8
 
 /**
  * Expression state enum - priority expressions from video analysis
+ * 
+ * Positive valence (JOY, WONDER, SPEAK, FOCUS) established in v3.
+ * Negative valence (FEAR, ANGER, SADNESS, DISGUST) added in v4 per FACS-complete catalog.
  */
 UENUM(BlueprintType)
 enum class EExpressionState : uint8
 {
     // Foundation (Priority 1)
-    Neutral         UMETA(DisplayName = "Neutral"),
+    Neutral             UMETA(DisplayName = "Neutral"),
     
     // Joy Spectrum (Priority 2 & 5)
-    GentleSmile     UMETA(DisplayName = "Gentle Smile (JOY_03)"),
-    BroadSmile      UMETA(DisplayName = "Broad Smile (JOY_01)"),
-    Laughing        UMETA(DisplayName = "Laughing (JOY_02)"),
-    Blissful        UMETA(DisplayName = "Blissful (JOY_05)"),
-    PlayfulGrin     UMETA(DisplayName = "Playful Grin (JOY_06)"),
+    GentleSmile         UMETA(DisplayName = "Gentle Smile (JOY_03)"),
+    BroadSmile          UMETA(DisplayName = "Broad Smile (JOY_01)"),
+    Laughing            UMETA(DisplayName = "Laughing (JOY_02)"),
+    Blissful            UMETA(DisplayName = "Blissful (JOY_05)"),
+    PlayfulGrin         UMETA(DisplayName = "Playful Grin (JOY_06)"),
     
     // Wonder Spectrum (Priority 4)
-    Contemplative   UMETA(DisplayName = "Contemplative (WONDER_03)"),
-    CuriousGaze     UMETA(DisplayName = "Curious Gaze (WONDER_02)"),
-    Awe             UMETA(DisplayName = "Awe (WONDER_01)"),
+    Contemplative       UMETA(DisplayName = "Contemplative (WONDER_03)"),
+    CuriousGaze         UMETA(DisplayName = "Curious Gaze (WONDER_02)"),
+    Awe                 UMETA(DisplayName = "Awe (WONDER_01)"),
     
     // Speaking (Priority 3)
-    SpeakingVowel   UMETA(DisplayName = "Speaking Vowel (SPEAK_01)"),
-    SpeakingConsonant UMETA(DisplayName = "Speaking Consonant (SPEAK_02)"),
+    SpeakingVowel       UMETA(DisplayName = "Speaking Vowel (SPEAK_01)"),
+    SpeakingConsonant   UMETA(DisplayName = "Speaking Consonant (SPEAK_02)"),
     
     // Attention
-    AlertGaze       UMETA(DisplayName = "Alert Gaze (FOCUS_01)"),
-    UpwardGaze      UMETA(DisplayName = "Upward Gaze (FOCUS_02)")
+    AlertGaze           UMETA(DisplayName = "Alert Gaze (FOCUS_01)"),
+    UpwardGaze          UMETA(DisplayName = "Upward Gaze (FOCUS_02)"),
+
+    // --- Negative Valence (FACS-Complete v4) ---
+
+    // Fear Spectrum (FEAR_01-04) — AU1+AU2+AU4+AU5+AU7+AU20+AU26
+    FearStartle         UMETA(DisplayName = "Startle (FEAR_01)"),
+    FearAnxious         UMETA(DisplayName = "Anxious Dread (FEAR_02)"),
+    FearTerror          UMETA(DisplayName = "Frozen Terror (FEAR_03)"),
+    FearWorried         UMETA(DisplayName = "Worried Concern (FEAR_04)"),
+
+    // Anger Spectrum (ANGER_01-04) — AU4+AU5+AU7+AU23+AU24
+    AngerIrritation     UMETA(DisplayName = "Irritation (ANGER_01)"),
+    AngerFury           UMETA(DisplayName = "Controlled Fury (ANGER_02)"),
+    AngerRage           UMETA(DisplayName = "Rage (ANGER_03)"),
+    AngerResolve        UMETA(DisplayName = "Determined Resolve (ANGER_04)"),
+
+    // Sadness Spectrum (SAD_01-04) — AU1+AU4+AU15+AU17
+    SadMelancholy       UMETA(DisplayName = "Melancholy (SAD_01)"),
+    SadGrief            UMETA(DisplayName = "Grief (SAD_02)"),
+    SadCrying           UMETA(DisplayName = "Crying (SAD_03)"),
+    SadDisappointed     UMETA(DisplayName = "Disappointed (SAD_04)"),
+
+    // Disgust Spectrum (DISG_01-03) — AU9+AU10+AU15+AU17
+    DisgustDistaste     UMETA(DisplayName = "Mild Distaste (DISG_01)"),
+    DisgustRevulsion    UMETA(DisplayName = "Revulsion (DISG_02)"),
+    DisgustContempt     UMETA(DisplayName = "Contemptuous Disgust (DISG_03)")
 };
 
 /**
@@ -169,6 +197,58 @@ struct FDeepTreeEchoMorphTargets
     
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Viseme")
     float VisemeOO = 0.0f;
+
+    // --- Negative Emotion Morph Targets (FACS-Complete v4) ---
+    // Required for FEAR, ANGER, SADNESS, DISGUST spectra.
+
+    // AU15 — Lip corner depressor (sadness, disgust)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mouth")
+    float MouthFrownL = 0.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mouth")
+    float MouthFrownR = 0.0f;
+
+    // AU17 — Chin raiser (sadness, anger)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chin")
+    float ChinRaiseL = 0.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chin")
+    float ChinRaiseR = 0.0f;
+
+    // AU24 — Lip pressor (anger)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mouth")
+    float LipPressL = 0.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mouth")
+    float LipPressR = 0.0f;
+
+    // AU23 — Lip tightener (anger)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mouth")
+    float LipTightenL = 0.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mouth")
+    float LipTightenR = 0.0f;
+
+    // AU10 — Upper lip raiser (disgust)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mouth")
+    float LipRaiseL = 0.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mouth")
+    float LipRaiseR = 0.0f;
+
+    // AU20 — Lip stretcher (fear)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mouth")
+    float MouthStretchL = 0.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mouth")
+    float MouthStretchR = 0.0f;
+
+    // AU11 — Nasolabial deepener (sadness)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Nose")
+    float NasolabialDeepenL = 0.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Nose")
+    float NasolabialDeepenR = 0.0f;
 
     // Interpolation helper
     static FDeepTreeEchoMorphTargets Lerp(const FDeepTreeEchoMorphTargets& A, const FDeepTreeEchoMorphTargets& B, float Alpha);
@@ -377,6 +457,7 @@ protected:
     // ========== Internal Update Functions ==========
 
     void InitializeExpressionPresets();
+    void InitializeNegativeEmotionPresets();
     void InitializeEchobeatsMapping();
     void InitializeCognitiveMapping();
 
