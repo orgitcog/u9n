@@ -70,6 +70,11 @@
 #include "Emotion/EmotionalSystem.h"
 #include "Wisdom/WisdomCultivation.h"
 #include "Wisdom/RelevanceRealizationEnnead.h"
+#include "Wisdom/InsightFacilitator.h"
+#include "Wisdom/ContemplativeAffordanceDetector.h"
+#include "Wisdom/DialogicalPracticeFramework.h"
+#include "Wisdom/SelfDeceptionDetector.h"
+#include "Wisdom/MeaningIntegrator.h"
 
 // ============================================================================
 // Active Inference & Learning
