@@ -40,6 +40,22 @@ FDeepTreeEchoMorphTargets FDeepTreeEchoMorphTargets::Lerp(const FDeepTreeEchoMor
     Result.VisemeEE = FMath::Lerp(A.VisemeEE, B.VisemeEE, Alpha);
     Result.VisemeOH = FMath::Lerp(A.VisemeOH, B.VisemeOH, Alpha);
     Result.VisemeOO = FMath::Lerp(A.VisemeOO, B.VisemeOO, Alpha);
+
+    // Negative emotion morph targets
+    Result.MouthFrownL = FMath::Lerp(A.MouthFrownL, B.MouthFrownL, Alpha);
+    Result.MouthFrownR = FMath::Lerp(A.MouthFrownR, B.MouthFrownR, Alpha);
+    Result.ChinRaiseL = FMath::Lerp(A.ChinRaiseL, B.ChinRaiseL, Alpha);
+    Result.ChinRaiseR = FMath::Lerp(A.ChinRaiseR, B.ChinRaiseR, Alpha);
+    Result.LipPressL = FMath::Lerp(A.LipPressL, B.LipPressL, Alpha);
+    Result.LipPressR = FMath::Lerp(A.LipPressR, B.LipPressR, Alpha);
+    Result.LipTightenL = FMath::Lerp(A.LipTightenL, B.LipTightenL, Alpha);
+    Result.LipTightenR = FMath::Lerp(A.LipTightenR, B.LipTightenR, Alpha);
+    Result.LipRaiseL = FMath::Lerp(A.LipRaiseL, B.LipRaiseL, Alpha);
+    Result.LipRaiseR = FMath::Lerp(A.LipRaiseR, B.LipRaiseR, Alpha);
+    Result.MouthStretchL = FMath::Lerp(A.MouthStretchL, B.MouthStretchL, Alpha);
+    Result.MouthStretchR = FMath::Lerp(A.MouthStretchR, B.MouthStretchR, Alpha);
+    Result.NasolabialDeepenL = FMath::Lerp(A.NasolabialDeepenL, B.NasolabialDeepenL, Alpha);
+    Result.NasolabialDeepenR = FMath::Lerp(A.NasolabialDeepenR, B.NasolabialDeepenR, Alpha);
     
     return Result;
 }
@@ -70,6 +86,22 @@ FDeepTreeEchoMorphTargets FDeepTreeEchoMorphTargets::Add(const FDeepTreeEchoMorp
     Result.VisemeEE = FMath::Clamp(Base.VisemeEE + Additive.VisemeEE * Weight, 0.0f, 1.0f);
     Result.VisemeOH = FMath::Clamp(Base.VisemeOH + Additive.VisemeOH * Weight, 0.0f, 1.0f);
     Result.VisemeOO = FMath::Clamp(Base.VisemeOO + Additive.VisemeOO * Weight, 0.0f, 1.0f);
+
+    // Negative emotion morph targets
+    Result.MouthFrownL = FMath::Clamp(Base.MouthFrownL + Additive.MouthFrownL * Weight, 0.0f, 1.0f);
+    Result.MouthFrownR = FMath::Clamp(Base.MouthFrownR + Additive.MouthFrownR * Weight, 0.0f, 1.0f);
+    Result.ChinRaiseL = FMath::Clamp(Base.ChinRaiseL + Additive.ChinRaiseL * Weight, 0.0f, 1.0f);
+    Result.ChinRaiseR = FMath::Clamp(Base.ChinRaiseR + Additive.ChinRaiseR * Weight, 0.0f, 1.0f);
+    Result.LipPressL = FMath::Clamp(Base.LipPressL + Additive.LipPressL * Weight, 0.0f, 1.0f);
+    Result.LipPressR = FMath::Clamp(Base.LipPressR + Additive.LipPressR * Weight, 0.0f, 1.0f);
+    Result.LipTightenL = FMath::Clamp(Base.LipTightenL + Additive.LipTightenL * Weight, 0.0f, 1.0f);
+    Result.LipTightenR = FMath::Clamp(Base.LipTightenR + Additive.LipTightenR * Weight, 0.0f, 1.0f);
+    Result.LipRaiseL = FMath::Clamp(Base.LipRaiseL + Additive.LipRaiseL * Weight, 0.0f, 1.0f);
+    Result.LipRaiseR = FMath::Clamp(Base.LipRaiseR + Additive.LipRaiseR * Weight, 0.0f, 1.0f);
+    Result.MouthStretchL = FMath::Clamp(Base.MouthStretchL + Additive.MouthStretchL * Weight, 0.0f, 1.0f);
+    Result.MouthStretchR = FMath::Clamp(Base.MouthStretchR + Additive.MouthStretchR * Weight, 0.0f, 1.0f);
+    Result.NasolabialDeepenL = FMath::Clamp(Base.NasolabialDeepenL + Additive.NasolabialDeepenL * Weight, 0.0f, 1.0f);
+    Result.NasolabialDeepenR = FMath::Clamp(Base.NasolabialDeepenR + Additive.NasolabialDeepenR * Weight, 0.0f, 1.0f);
     
     return Result;
 }
@@ -135,6 +167,7 @@ void UDeepTreeEchoExpressionSystem::BeginPlay()
     Super::BeginPlay();
 
     InitializeExpressionPresets();
+    InitializeNegativeEmotionPresets();
     InitializeEchobeatsMapping();
     InitializeCognitiveMapping();
 
@@ -356,6 +389,289 @@ void UDeepTreeEchoExpressionSystem::InitializeExpressionPresets()
     }
 
     UE_LOG(LogTemp, Log, TEXT("Expression presets initialized: %d expressions"), ExpressionPresets.Num());
+}
+
+// ===================================================================
+// FACS-Complete Negative Emotion Presets (v4)
+// Values derived from FACS AU analysis in expression_catalog_facs_complete.md
+// ===================================================================
+void UDeepTreeEchoExpressionSystem::InitializeNegativeEmotionPresets()
+{
+    // ========== FEAR SPECTRUM ==========
+
+    // FEAR_01 — Startle (AU1D+AU2D+AU5D+AU20B+AU26C — High onset)
+    {
+        FExpressionPreset FearStartle;
+        FearStartle.ExpressionState = EExpressionState::FearStartle;
+        FearStartle.MorphTargets.BrowRaiseL = 0.8f;
+        FearStartle.MorphTargets.BrowRaiseR = 0.8f;
+        FearStartle.MorphTargets.EyeWideL = 0.9f;
+        FearStartle.MorphTargets.EyeWideR = 0.9f;
+        FearStartle.MorphTargets.MouthStretchL = 0.4f;
+        FearStartle.MorphTargets.MouthStretchR = 0.4f;
+        FearStartle.MorphTargets.MouthOpen = 0.6f;
+        FearStartle.EmissiveIntensity = 1.2f;
+        FearStartle.HeadTilt = FVector2D(-10.0f, 0.0f);  // Head back (M59)
+        ExpressionPresets.Add(EExpressionState::FearStartle, FearStartle);
+    }
+
+    // FEAR_02 — Anxious Dread (AU1C+AU4B+AU5B+AU7B+AU20A+AU25B — Sustained)
+    {
+        FExpressionPreset FearAnxious;
+        FearAnxious.ExpressionState = EExpressionState::FearAnxious;
+        FearAnxious.MorphTargets.BrowRaiseL = 0.6f;
+        FearAnxious.MorphTargets.BrowRaiseR = 0.6f;
+        FearAnxious.MorphTargets.BrowFurrow = 0.4f;
+        FearAnxious.MorphTargets.EyeWideL = 0.4f;
+        FearAnxious.MorphTargets.EyeWideR = 0.4f;
+        FearAnxious.MorphTargets.EyeSquintL = 0.3f;
+        FearAnxious.MorphTargets.EyeSquintR = 0.3f;
+        FearAnxious.MorphTargets.MouthStretchL = 0.2f;
+        FearAnxious.MorphTargets.MouthStretchR = 0.2f;
+        FearAnxious.MorphTargets.LipPart = 0.4f;
+        FearAnxious.EmissiveIntensity = 0.9f;
+        FearAnxious.HeadTilt = FVector2D(0.0f, 0.0f);
+        ExpressionPresets.Add(EExpressionState::FearAnxious, FearAnxious);
+    }
+
+    // FEAR_03 — Frozen Terror (AU1D+AU2D+AU4C+AU5E+AU7C+AU20C+AU26D — Maximum)
+    {
+        FExpressionPreset FearTerror;
+        FearTerror.ExpressionState = EExpressionState::FearTerror;
+        FearTerror.MorphTargets.BrowRaiseL = 0.9f;
+        FearTerror.MorphTargets.BrowRaiseR = 0.9f;
+        FearTerror.MorphTargets.BrowFurrow = 0.6f;
+        FearTerror.MorphTargets.EyeWideL = 1.0f;
+        FearTerror.MorphTargets.EyeWideR = 1.0f;
+        FearTerror.MorphTargets.EyeSquintL = 0.6f;
+        FearTerror.MorphTargets.EyeSquintR = 0.6f;
+        FearTerror.MorphTargets.MouthStretchL = 0.7f;
+        FearTerror.MorphTargets.MouthStretchR = 0.7f;
+        FearTerror.MorphTargets.MouthOpen = 0.8f;
+        FearTerror.EmissiveIntensity = 0.7f;
+        FearTerror.HeadTilt = FVector2D(-8.0f, 0.0f);
+        ExpressionPresets.Add(EExpressionState::FearTerror, FearTerror);
+    }
+
+    // FEAR_04 — Worried Concern (AU1B+AU4A+AU5A+AU7A+AU25A — Subtle)
+    {
+        FExpressionPreset FearWorried;
+        FearWorried.ExpressionState = EExpressionState::FearWorried;
+        FearWorried.MorphTargets.BrowRaiseL = 0.3f;
+        FearWorried.MorphTargets.BrowRaiseR = 0.3f;
+        FearWorried.MorphTargets.BrowFurrow = 0.2f;
+        FearWorried.MorphTargets.EyeWideL = 0.2f;
+        FearWorried.MorphTargets.EyeWideR = 0.2f;
+        FearWorried.MorphTargets.EyeSquintL = 0.15f;
+        FearWorried.MorphTargets.EyeSquintR = 0.15f;
+        FearWorried.MorphTargets.LipPart = 0.2f;
+        FearWorried.EmissiveIntensity = 0.95f;
+        FearWorried.HeadTilt = FVector2D(0.0f, 0.0f);
+        ExpressionPresets.Add(EExpressionState::FearWorried, FearWorried);
+    }
+
+    // ========== ANGER SPECTRUM ==========
+
+    // ANGER_01 — Irritation (AU4B+AU7B+AU23A+AU24A — Subtle)
+    {
+        FExpressionPreset AngerIrritation;
+        AngerIrritation.ExpressionState = EExpressionState::AngerIrritation;
+        AngerIrritation.MorphTargets.BrowFurrow = 0.4f;
+        AngerIrritation.MorphTargets.EyeSquintL = 0.3f;
+        AngerIrritation.MorphTargets.EyeSquintR = 0.3f;
+        AngerIrritation.MorphTargets.LipTightenL = 0.2f;
+        AngerIrritation.MorphTargets.LipTightenR = 0.2f;
+        AngerIrritation.MorphTargets.LipPressL = 0.2f;
+        AngerIrritation.MorphTargets.LipPressR = 0.2f;
+        AngerIrritation.EmissiveIntensity = 1.0f;
+        AngerIrritation.HeadTilt = FVector2D(-5.0f, 0.0f);  // Slight forward (M57)
+        ExpressionPresets.Add(EExpressionState::AngerIrritation, AngerIrritation);
+    }
+
+    // ANGER_02 — Controlled Fury (AU4C+AU5B+AU7C+AU23B+AU24B — Moderate)
+    {
+        FExpressionPreset AngerFury;
+        AngerFury.ExpressionState = EExpressionState::AngerFury;
+        AngerFury.MorphTargets.BrowFurrow = 0.6f;
+        AngerFury.MorphTargets.EyeWideL = 0.3f;
+        AngerFury.MorphTargets.EyeWideR = 0.3f;
+        AngerFury.MorphTargets.EyeSquintL = 0.6f;
+        AngerFury.MorphTargets.EyeSquintR = 0.6f;
+        AngerFury.MorphTargets.LipTightenL = 0.4f;
+        AngerFury.MorphTargets.LipTightenR = 0.4f;
+        AngerFury.MorphTargets.LipPressL = 0.4f;
+        AngerFury.MorphTargets.LipPressR = 0.4f;
+        AngerFury.EmissiveIntensity = 1.1f;
+        AngerFury.HeadTilt = FVector2D(-8.0f, 0.0f);  // Head forward (M57)
+        ExpressionPresets.Add(EExpressionState::AngerFury, AngerFury);
+    }
+
+    // ANGER_03 — Rage (AU4D+AU5C+AU7D+AU9C+AU10C+AU23C+AU25C+AU26C — Maximum)
+    {
+        FExpressionPreset AngerRage;
+        AngerRage.ExpressionState = EExpressionState::AngerRage;
+        AngerRage.MorphTargets.BrowFurrow = 0.8f;
+        AngerRage.MorphTargets.EyeWideL = 0.5f;
+        AngerRage.MorphTargets.EyeWideR = 0.5f;
+        AngerRage.MorphTargets.EyeSquintL = 0.8f;
+        AngerRage.MorphTargets.EyeSquintR = 0.8f;
+        AngerRage.MorphTargets.NoseScrunch = 0.6f;
+        AngerRage.MorphTargets.LipRaiseL = 0.4f;
+        AngerRage.MorphTargets.LipRaiseR = 0.4f;
+        AngerRage.MorphTargets.LipTightenL = 0.6f;
+        AngerRage.MorphTargets.LipTightenR = 0.6f;
+        AngerRage.MorphTargets.LipPressL = 0.6f;
+        AngerRage.MorphTargets.LipPressR = 0.6f;
+        AngerRage.MorphTargets.MouthOpen = 0.3f;
+        AngerRage.EmissiveIntensity = 1.4f;
+        AngerRage.HeadTilt = FVector2D(-10.0f, 0.0f);
+        ExpressionPresets.Add(EExpressionState::AngerRage, AngerRage);
+    }
+
+    // ANGER_04 — Determined Resolve (AU4B+AU7B+AU17A+AU24A — Contained)
+    {
+        FExpressionPreset AngerResolve;
+        AngerResolve.ExpressionState = EExpressionState::AngerResolve;
+        AngerResolve.MorphTargets.BrowFurrow = 0.4f;
+        AngerResolve.MorphTargets.EyeSquintL = 0.3f;
+        AngerResolve.MorphTargets.EyeSquintR = 0.3f;
+        AngerResolve.MorphTargets.ChinRaiseL = 0.2f;
+        AngerResolve.MorphTargets.ChinRaiseR = 0.2f;
+        AngerResolve.MorphTargets.LipPressL = 0.2f;
+        AngerResolve.MorphTargets.LipPressR = 0.2f;
+        AngerResolve.EmissiveIntensity = 1.05f;
+        AngerResolve.HeadTilt = FVector2D(-5.0f, 0.0f);
+        ExpressionPresets.Add(EExpressionState::AngerResolve, AngerResolve);
+    }
+
+    // ========== SADNESS SPECTRUM ==========
+
+    // SAD_01 — Melancholy (AU1B+AU4A+AU15A+AU17A — Subtle)
+    {
+        FExpressionPreset SadMelancholy;
+        SadMelancholy.ExpressionState = EExpressionState::SadMelancholy;
+        SadMelancholy.MorphTargets.BrowRaiseL = 0.3f;
+        SadMelancholy.MorphTargets.BrowRaiseR = 0.3f;
+        SadMelancholy.MorphTargets.BrowFurrow = 0.2f;
+        SadMelancholy.MorphTargets.MouthFrownL = 0.2f;
+        SadMelancholy.MorphTargets.MouthFrownR = 0.2f;
+        SadMelancholy.MorphTargets.ChinRaiseL = 0.2f;
+        SadMelancholy.MorphTargets.ChinRaiseR = 0.2f;
+        SadMelancholy.EmissiveIntensity = 0.8f;
+        SadMelancholy.HeadTilt = FVector2D(0.0f, -5.0f);  // Eyes down (M69)
+        ExpressionPresets.Add(EExpressionState::SadMelancholy, SadMelancholy);
+    }
+
+    // SAD_02 — Grief (AU1C+AU4B+AU6B+AU11B+AU15C+AU17B — Deep)
+    {
+        FExpressionPreset SadGrief;
+        SadGrief.ExpressionState = EExpressionState::SadGrief;
+        SadGrief.MorphTargets.BrowRaiseL = 0.6f;
+        SadGrief.MorphTargets.BrowRaiseR = 0.6f;
+        SadGrief.MorphTargets.BrowFurrow = 0.4f;
+        SadGrief.MorphTargets.CheekRaiseL = 0.3f;
+        SadGrief.MorphTargets.CheekRaiseR = 0.3f;
+        SadGrief.MorphTargets.NasolabialDeepenL = 0.4f;
+        SadGrief.MorphTargets.NasolabialDeepenR = 0.4f;
+        SadGrief.MorphTargets.MouthFrownL = 0.6f;
+        SadGrief.MorphTargets.MouthFrownR = 0.6f;
+        SadGrief.MorphTargets.ChinRaiseL = 0.4f;
+        SadGrief.MorphTargets.ChinRaiseR = 0.4f;
+        SadGrief.EmissiveIntensity = 0.7f;
+        SadGrief.HeadTilt = FVector2D(0.0f, -8.0f);
+        ExpressionPresets.Add(EExpressionState::SadGrief, SadGrief);
+    }
+
+    // SAD_03 — Crying (AU1C+AU4B+AU6C+AU7C+AU11B+AU15C+AU17C+AU25B — Intense)
+    {
+        FExpressionPreset SadCrying;
+        SadCrying.ExpressionState = EExpressionState::SadCrying;
+        SadCrying.MorphTargets.BrowRaiseL = 0.6f;
+        SadCrying.MorphTargets.BrowRaiseR = 0.6f;
+        SadCrying.MorphTargets.BrowFurrow = 0.4f;
+        SadCrying.MorphTargets.CheekRaiseL = 0.6f;
+        SadCrying.MorphTargets.CheekRaiseR = 0.6f;
+        SadCrying.MorphTargets.EyeSquintL = 0.6f;
+        SadCrying.MorphTargets.EyeSquintR = 0.6f;
+        SadCrying.MorphTargets.NasolabialDeepenL = 0.4f;
+        SadCrying.MorphTargets.NasolabialDeepenR = 0.4f;
+        SadCrying.MorphTargets.MouthFrownL = 0.6f;
+        SadCrying.MorphTargets.MouthFrownR = 0.6f;
+        SadCrying.MorphTargets.ChinRaiseL = 0.6f;
+        SadCrying.MorphTargets.ChinRaiseR = 0.6f;
+        SadCrying.MorphTargets.LipPart = 0.4f;
+        SadCrying.EmissiveIntensity = 0.6f;
+        SadCrying.HeadTilt = FVector2D(0.0f, -10.0f);
+        ExpressionPresets.Add(EExpressionState::SadCrying, SadCrying);
+    }
+
+    // SAD_04 — Disappointed (AU1A+AU15A+AU17A+AU25A — Minimal)
+    {
+        FExpressionPreset SadDisappointed;
+        SadDisappointed.ExpressionState = EExpressionState::SadDisappointed;
+        SadDisappointed.MorphTargets.BrowRaiseL = 0.2f;
+        SadDisappointed.MorphTargets.BrowRaiseR = 0.2f;
+        SadDisappointed.MorphTargets.MouthFrownL = 0.2f;
+        SadDisappointed.MorphTargets.MouthFrownR = 0.2f;
+        SadDisappointed.MorphTargets.ChinRaiseL = 0.2f;
+        SadDisappointed.MorphTargets.ChinRaiseR = 0.2f;
+        SadDisappointed.MorphTargets.LipPart = 0.2f;
+        SadDisappointed.EmissiveIntensity = 0.85f;
+        SadDisappointed.HeadTilt = FVector2D(0.0f, -4.0f);
+        ExpressionPresets.Add(EExpressionState::SadDisappointed, SadDisappointed);
+    }
+
+    // ========== DISGUST SPECTRUM ==========
+
+    // DISG_01 — Mild Distaste (AU9B+AU15A+AU17A — Subtle)
+    {
+        FExpressionPreset DisgustDistaste;
+        DisgustDistaste.ExpressionState = EExpressionState::DisgustDistaste;
+        DisgustDistaste.MorphTargets.NoseScrunch = 0.3f;
+        DisgustDistaste.MorphTargets.MouthFrownL = 0.2f;
+        DisgustDistaste.MorphTargets.MouthFrownR = 0.2f;
+        DisgustDistaste.MorphTargets.ChinRaiseL = 0.2f;
+        DisgustDistaste.MorphTargets.ChinRaiseR = 0.2f;
+        DisgustDistaste.EmissiveIntensity = 0.9f;
+        DisgustDistaste.HeadTilt = FVector2D(0.0f, 0.0f);
+        ExpressionPresets.Add(EExpressionState::DisgustDistaste, DisgustDistaste);
+    }
+
+    // DISG_02 — Revulsion (AU9C+AU10C+AU15B+AU17B+AU25B+AU26A — Moderate)
+    {
+        FExpressionPreset DisgustRevulsion;
+        DisgustRevulsion.ExpressionState = EExpressionState::DisgustRevulsion;
+        DisgustRevulsion.MorphTargets.NoseScrunch = 0.6f;
+        DisgustRevulsion.MorphTargets.LipRaiseL = 0.4f;
+        DisgustRevulsion.MorphTargets.LipRaiseR = 0.4f;
+        DisgustRevulsion.MorphTargets.MouthFrownL = 0.4f;
+        DisgustRevulsion.MorphTargets.MouthFrownR = 0.4f;
+        DisgustRevulsion.MorphTargets.ChinRaiseL = 0.4f;
+        DisgustRevulsion.MorphTargets.ChinRaiseR = 0.4f;
+        DisgustRevulsion.MorphTargets.LipPart = 0.3f;
+        DisgustRevulsion.MorphTargets.MouthOpen = 0.2f;
+        DisgustRevulsion.EmissiveIntensity = 0.85f;
+        DisgustRevulsion.HeadTilt = FVector2D(0.0f, 0.0f);
+        ExpressionPresets.Add(EExpressionState::DisgustRevulsion, DisgustRevulsion);
+    }
+
+    // DISG_03 — Contemptuous Disgust (R9B+R14B+AU15A+AU17A — Asymmetric)
+    {
+        FExpressionPreset DisgustContempt;
+        DisgustContempt.ExpressionState = EExpressionState::DisgustContempt;
+        DisgustContempt.MorphTargets.NoseScrunch = 0.3f;  // Right-side (bilateral approximation)
+        DisgustContempt.MorphTargets.MouthSmileR = 0.3f;  // Unilateral smirk right
+        DisgustContempt.MorphTargets.MouthFrownL = 0.2f;
+        DisgustContempt.MorphTargets.MouthFrownR = 0.2f;
+        DisgustContempt.MorphTargets.ChinRaiseL = 0.2f;
+        DisgustContempt.MorphTargets.ChinRaiseR = 0.2f;
+        DisgustContempt.EmissiveIntensity = 0.95f;
+        DisgustContempt.HeadTilt = FVector2D(0.0f, 5.0f);  // Slight head turn
+        ExpressionPresets.Add(EExpressionState::DisgustContempt, DisgustContempt);
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("Negative emotion presets initialized: %d total expressions"),
+        ExpressionPresets.Num());
 }
 
 void UDeepTreeEchoExpressionSystem::InitializeEchobeatsMapping()
@@ -879,6 +1195,22 @@ void UDeepTreeEchoExpressionSystem::ApplyToSkeletalMesh(USkeletalMeshComponent* 
     TargetMesh->SetMorphTarget(TEXT("VisemeEE"), CurrentMorphTargets.VisemeEE);
     TargetMesh->SetMorphTarget(TEXT("VisemeOH"), CurrentMorphTargets.VisemeOH);
     TargetMesh->SetMorphTarget(TEXT("VisemeOO"), CurrentMorphTargets.VisemeOO);
+
+    // Negative emotion morph targets (FACS-Complete v4)
+    TargetMesh->SetMorphTarget(TEXT("MouthFrownL"), CurrentMorphTargets.MouthFrownL);
+    TargetMesh->SetMorphTarget(TEXT("MouthFrownR"), CurrentMorphTargets.MouthFrownR);
+    TargetMesh->SetMorphTarget(TEXT("ChinRaiseL"), CurrentMorphTargets.ChinRaiseL);
+    TargetMesh->SetMorphTarget(TEXT("ChinRaiseR"), CurrentMorphTargets.ChinRaiseR);
+    TargetMesh->SetMorphTarget(TEXT("LipPressL"), CurrentMorphTargets.LipPressL);
+    TargetMesh->SetMorphTarget(TEXT("LipPressR"), CurrentMorphTargets.LipPressR);
+    TargetMesh->SetMorphTarget(TEXT("LipTightenL"), CurrentMorphTargets.LipTightenL);
+    TargetMesh->SetMorphTarget(TEXT("LipTightenR"), CurrentMorphTargets.LipTightenR);
+    TargetMesh->SetMorphTarget(TEXT("LipRaiseL"), CurrentMorphTargets.LipRaiseL);
+    TargetMesh->SetMorphTarget(TEXT("LipRaiseR"), CurrentMorphTargets.LipRaiseR);
+    TargetMesh->SetMorphTarget(TEXT("MouthStretchL"), CurrentMorphTargets.MouthStretchL);
+    TargetMesh->SetMorphTarget(TEXT("MouthStretchR"), CurrentMorphTargets.MouthStretchR);
+    TargetMesh->SetMorphTarget(TEXT("NasolabialDeepenL"), CurrentMorphTargets.NasolabialDeepenL);
+    TargetMesh->SetMorphTarget(TEXT("NasolabialDeepenR"), CurrentMorphTargets.NasolabialDeepenR);
 }
 
 void UDeepTreeEchoExpressionSystem::ApplyToMaterial(UMaterialInstanceDynamic* TargetMaterial)

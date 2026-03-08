@@ -1,4 +1,5 @@
 #include "Avatar3DComponentEnhanced.h"
+#include "DeepTreeEchoExpressionSystem.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Animation/AnimInstance.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -537,10 +538,74 @@ void UAvatar3DComponentEnhanced::InitializeDynamicMaterials()
 
 void UAvatar3DComponentEnhanced::ApplyEmotionToFacialAnimation()
 {
-    // In production, this would set blend shape weights based on emotion
-    // For now, just log the emotion change
-    UE_LOG(LogTemp, Log, TEXT("Applying emotion to facial animation: %d"), 
-           (int32)EmotionalState.CurrentEmotion);
+    // Map high-level EAvatarEmotionalState to EExpressionState for the expression system.
+    // Selects the representative expression for each emotion category.
+    EExpressionState TargetExpression = EExpressionState::Neutral;
+    float TransitionTime = 0.5f;
+
+    switch (EmotionalState.CurrentEmotion)
+    {
+        case EAvatarEmotionalState::Happy:
+            TargetExpression = (EmotionalState.EmotionIntensity > 0.7f)
+                ? EExpressionState::BroadSmile : EExpressionState::GentleSmile;
+            break;
+        case EAvatarEmotionalState::Excited:
+            TargetExpression = EExpressionState::Laughing;
+            break;
+        case EAvatarEmotionalState::Surprised:
+            TargetExpression = EExpressionState::Awe;
+            break;
+        case EAvatarEmotionalState::Thoughtful:
+            TargetExpression = EExpressionState::Contemplative;
+            break;
+        case EAvatarEmotionalState::Flirty:
+            TargetExpression = EExpressionState::PlayfulGrin;
+            break;
+        case EAvatarEmotionalState::Mysterious:
+            TargetExpression = EExpressionState::CuriousGaze;
+            break;
+        case EAvatarEmotionalState::Chaotic:
+            TargetExpression = EExpressionState::FearStartle;
+            TransitionTime = 0.1f;
+            break;
+        // Negative emotions (FACS-Complete v4)
+        case EAvatarEmotionalState::Sad:
+            TargetExpression = (EmotionalState.EmotionIntensity > 0.6f)
+                ? EExpressionState::SadGrief : EExpressionState::SadMelancholy;
+            break;
+        case EAvatarEmotionalState::Grieving:
+            TargetExpression = EExpressionState::SadCrying;
+            break;
+        case EAvatarEmotionalState::Angry:
+            TargetExpression = (EmotionalState.EmotionIntensity > 0.7f)
+                ? EExpressionState::AngerRage : EExpressionState::AngerIrritation;
+            break;
+        case EAvatarEmotionalState::Afraid:
+            TargetExpression = (EmotionalState.EmotionIntensity > 0.7f)
+                ? EExpressionState::FearTerror : EExpressionState::FearWorried;
+            break;
+        case EAvatarEmotionalState::Disgusted:
+            TargetExpression = EExpressionState::DisgustRevulsion;
+            break;
+        case EAvatarEmotionalState::Contemptuous:
+            TargetExpression = EExpressionState::DisgustContempt;
+            break;
+        default:
+            TargetExpression = EExpressionState::Neutral;
+            break;
+    }
+
+    // Delegate to the expression system component if present on the owner
+    if (AActor* Owner = GetOwner())
+    {
+        if (UDeepTreeEchoExpressionSystem* ExprSys = Owner->FindComponentByClass<UDeepTreeEchoExpressionSystem>())
+        {
+            ExprSys->SetExpressionState(TargetExpression, TransitionTime);
+        }
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("ApplyEmotionToFacialAnimation: emotion=%d -> expression=%d"),
+        (int32)EmotionalState.CurrentEmotion, (int32)TargetExpression);
 }
 
 void UAvatar3DComponentEnhanced::TriggerRandomChaoticEvent()
