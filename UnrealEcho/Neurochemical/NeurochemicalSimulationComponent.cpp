@@ -1,4 +1,5 @@
 #include "NeurochemicalSimulationComponent.h"
+#include "CortisolDynamicsSystem.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Avatar/FacialAnimationSystem.h"
 #include "Avatar/GestureSystem.h"
@@ -30,6 +31,7 @@ UNeurochemicalSimulationComponent::UNeurochemicalSimulationComponent()
     
     // Start at baseline
     CurrentState = BaselineState;
+    CortisolDynamicsRef = nullptr;
     
     // Initialize decay rates (how fast each neurochemical naturally decreases)
     DecayRates.Add(ENeurochemicalType::Dopamine, 0.08f);
@@ -169,12 +171,21 @@ void UNeurochemicalSimulationComponent::TriggerRewardResponse(float Intensity)
 
 void UNeurochemicalSimulationComponent::TriggerStressResponse(float Intensity)
 {
-    // Stress response: Cortisol and norepinephrine increase, serotonin decreases
-    ModifyNeurochemical(ENeurochemicalType::Cortisol, 0.4f * Intensity);
+    // Delegate cortisol dynamics to the dedicated system if available
+    if (CortisolDynamicsRef)
+    {
+        CortisolDynamicsRef->ApplyStressor(Intensity, 5.0f);
+    }
+    else
+    {
+        ModifyNeurochemical(ENeurochemicalType::Cortisol, 0.4f * Intensity);
+    }
+
+    // Other neurochemical effects of stress
     ModifyNeurochemical(ENeurochemicalType::Norepinephrine, 0.3f * Intensity);
     ModifyNeurochemical(ENeurochemicalType::Serotonin, -0.2f * Intensity);
     ModifyNeurochemical(ENeurochemicalType::GABA, -0.15f * Intensity);
-    
+
     UE_LOG(LogTemp, Log, TEXT("Stress response triggered with intensity %.2f"), Intensity);
 }
 
@@ -255,6 +266,13 @@ void UNeurochemicalSimulationComponent::ResetToBaseline()
 {
     CurrentState = BaselineState;
     UE_LOG(LogTemp, Log, TEXT("Neurochemical state reset to baseline"));
+}
+
+void UNeurochemicalSimulationComponent::SetCortisolDynamicsSystem(UCortisolDynamicsSystem* System)
+{
+    CortisolDynamicsRef = System;
+    UE_LOG(LogTemp, Log, TEXT("Cortisol dynamics system %s"),
+           System ? TEXT("connected") : TEXT("disconnected"));
 }
 
 // ===== Interactions =====
@@ -338,14 +356,22 @@ void UNeurochemicalSimulationComponent::UpdateNeurochemicalDynamics(float DeltaT
     for (auto& DecayPair : DecayRates)
     {
         ENeurochemicalType Type = DecayPair.Key;
+
+        // Skip cortisol if managed by the dedicated dynamics system
+        if (Type == ENeurochemicalType::Cortisol && CortisolDynamicsRef)
+        {
+            SetNeurochemicalLevel(Type, CortisolDynamicsRef->GetCortisolLevel());
+            continue;
+        }
+
         float CurrentLevel = GetNeurochemicalLevel(Type);
-        
+
         // Apply decay
         float Decay = CalculateNeurochemicalDecay(Type, DeltaTime);
-        
+
         // Apply production
         float Production = CalculateNeurochemicalProduction(Type);
-        
+
         // Update level
         float NewLevel = CurrentLevel - Decay + Production;
         SetNeurochemicalLevel(Type, NewLevel);

@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+class UCortisolDynamicsSystem;
+
 #include "NeurochemicalSimulationComponent.generated.h"
 
 /**
@@ -183,6 +185,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Neurochemistry")
     void ResetToBaseline();
 
+    /** Connect an external cortisol dynamics system to drive cortisol levels */
+    UFUNCTION(BlueprintCallable, Category = "Neurochemistry")
+    void SetCortisolDynamicsSystem(UCortisolDynamicsSystem* System);
+
     // ===== Interactions =====
 
     UFUNCTION(BlueprintCallable, Category = "Neurochemistry")
@@ -242,4 +248,8 @@ private:
 
     UPROPERTY(EditAnywhere, Category = "Neurochemistry|Advanced")
     TMap<ENeurochemicalType, float> ProductionRates;
+
+    /** Optional reference to external cortisol dynamics system */
+    UPROPERTY()
+    UCortisolDynamicsSystem* CortisolDynamicsRef;
 };

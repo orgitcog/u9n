@@ -14,6 +14,7 @@ ANeurochemicalSystem::ANeurochemicalSystem()
 	ResourceTracker = CreateDefaultSubobject<UResourceTracker>(TEXT("ResourceTracker"));
 	ScarcityDetector = CreateDefaultSubobject<UScarcityDetector>(TEXT("ScarcityDetector"));
 	HomeostasisRegulator = CreateDefaultSubobject<UHomeostasisRegulator>(TEXT("HomeostasisRegulator"));
+	CortisolDynamics = CreateDefaultSubobject<UCortisolDynamicsSystem>(TEXT("CortisolDynamics"));
 }
 
 void ANeurochemicalSystem::BeginPlay()
@@ -41,6 +42,9 @@ void ANeurochemicalSystem::Tick(float DeltaTime)
 
 	CuriosityModule->ChaosFactor = ChaosController->ChaosLevel;
 	CuriosityModule->Update(DeltaTime);
+
+	// Update cortisol dynamics simulation
+	CortisolDynamics->Update(DeltaTime);
 
 	RecoverySystem->Monitor(ChaosController->ChaosLevel);
 }

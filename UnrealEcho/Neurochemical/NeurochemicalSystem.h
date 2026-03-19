@@ -11,6 +11,7 @@
 #include "ResourceTracker.h"
 #include "ScarcityDetector.h"
 #include "HomeostasisRegulator.h"
+#include "CortisolDynamicsSystem.h"
 #include "NeurochemicalSystem.generated.h"
 
 UCLASS()
@@ -53,6 +54,9 @@ public:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Neurochemical")
 	UHomeostasisRegulator* HomeostasisRegulator;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Neurochemical")
+	UCortisolDynamicsSystem* CortisolDynamics;
 
 	UFUNCTION()
 	void HandleCuriosityTrigger();
