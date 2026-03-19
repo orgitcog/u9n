@@ -350,3 +350,5 @@ __pycache__/
 # ReservoirEcho specific build exclusions
 ReservoirEcho/reservoircpp_cpp/build/
 MetaHuman-DNA-Calibration/dnacalib/build/
+build_test/
+build_bench/

@@ -36,7 +36,10 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Priority 1: System-installed Eigen3
 find_package(Eigen3 3.3 QUIET)
 
-if(NOT EIGEN3_FOUND)
+if(EIGEN3_FOUND)
+    # System Eigen3 found - target Eigen3::Eigen already exists
+    message(STATUS "Using system Eigen3 from ${EIGEN3_INCLUDE_DIR}")
+else()
     # Priority 2: Bundled Eigen 3.4.0 (check if complete)
     set(EIGEN_3_4_DIR "${CMAKE_SOURCE_DIR}/ReservoirEcho/external/eigen-3.4.0")
     if(EXISTS "${EIGEN_3_4_DIR}/Eigen/Core")
@@ -44,27 +47,29 @@ if(NOT EIGEN3_FOUND)
         set(EIGEN3_FOUND TRUE)
         message(STATUS "Using bundled Eigen 3.4.0 from ${EIGEN3_INCLUDE_DIR}")
     endif()
-endif()
 
-if(NOT EIGEN3_FOUND)
-    # Priority 3: Taskflow bundled Eigen 3.3.7 (known to be complete)
-    set(EIGEN_3_3_DIR "${CMAKE_SOURCE_DIR}/ReservoirEcho/external/taskflow-3.8.0/3rd-party/eigen-3.3.7")
-    if(EXISTS "${EIGEN_3_3_DIR}/Eigen/Core")
-        set(EIGEN3_INCLUDE_DIR "${EIGEN_3_3_DIR}")
-        set(EIGEN3_FOUND TRUE)
-        message(STATUS "Using bundled Eigen 3.3.7 from ${EIGEN3_INCLUDE_DIR}")
+    if(NOT EIGEN3_FOUND)
+        # Priority 3: Taskflow bundled Eigen 3.3.7 (known to be complete)
+        set(EIGEN_3_3_DIR "${CMAKE_SOURCE_DIR}/ReservoirEcho/external/taskflow-3.8.0/3rd-party/eigen-3.3.7")
+        if(EXISTS "${EIGEN_3_3_DIR}/Eigen/Core")
+            set(EIGEN3_INCLUDE_DIR "${EIGEN_3_3_DIR}")
+            set(EIGEN3_FOUND TRUE)
+            message(STATUS "Using bundled Eigen 3.3.7 from ${EIGEN3_INCLUDE_DIR}")
+        endif()
+    endif()
+
+    if(NOT EIGEN3_FOUND)
+        message(FATAL_ERROR "Eigen library not found. Install libeigen3-dev or ensure bundled Eigen has header files.")
+    endif()
+
+    # Create an interface library for Eigen only if not already defined by find_package
+    if(NOT TARGET Eigen3::Eigen)
+        add_library(Eigen3::Eigen INTERFACE IMPORTED)
+        set_target_properties(Eigen3::Eigen PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${EIGEN3_INCLUDE_DIR}"
+        )
     endif()
 endif()
-
-if(NOT EIGEN3_FOUND)
-    message(FATAL_ERROR "Eigen library not found. Install libeigen3-dev or ensure bundled Eigen has header files.")
-endif()
-
-# Create an interface library for Eigen
-add_library(Eigen3::Eigen INTERFACE IMPORTED)
-set_target_properties(Eigen3::Eigen PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${EIGEN3_INCLUDE_DIR}"
-)
 
 # Set compiler flags
 if(MSVC)
@@ -79,10 +84,24 @@ endif()
 add_subdirectory(ReservoirEcho/reservoircpp_cpp)
 
 # ============================================================================
+# Dependencies for Testing
+# ============================================================================
+# Find Threads package for test targets
+find_package(Threads REQUIRED)
+
+# ============================================================================
 # Testing Infrastructure
 # ============================================================================
 if(BUILD_TESTING OR BUILD_E2E_TESTS)
+    # Try to find system GTest with GMock support
     find_package(GTest QUIET)
+    
+    # Check if GMock target exists (system GTest may not include it)
+    if(GTest_FOUND AND NOT TARGET GTest::gmock)
+        message(STATUS "System GTest found but GMock not available, fetching GoogleTest")
+        set(GTest_FOUND FALSE)
+    endif()
+    
     if(NOT GTest_FOUND)
         include(FetchContent)
         FetchContent_Declare(
@@ -92,7 +111,11 @@ if(BUILD_TESTING OR BUILD_E2E_TESTS)
         )
         set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
         FetchContent_MakeAvailable(googletest)
+        message(STATUS "Using fetched GoogleTest with GMock support")
+    else()
+        message(STATUS "Using system GoogleTest with GMock support")
     endif()
+    
     include(GoogleTest)
     enable_testing()
 endif()
@@ -109,8 +132,16 @@ endif()
 if(BUILD_TESTING)
     message(STATUS "Building unit tests")
     
-    # DeepTreeEcho Unit Tests
+    # DeepTreeEcho Unit Tests - exclude UE-dependent tests
     file(GLOB UNIT_TEST_SOURCES "DeepTreeEcho/Testing/UnitTests/*.cpp")
+    
+    # Exclude Unreal Engine dependent tests (need CoreMinimal.h, AutomationTest.h, UCLASS)
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "BidirectionalMessageProtocolTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "TypeConversionTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "ReadoutLayerTrainingTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "ReservoirTopologyGeneratorTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "ReservoirIntegrationTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "SymbolicToNeuralEncoderTests.cpp")
     
     if(UNIT_TEST_SOURCES)
         add_executable(DeepTreeEchoUnitTests ${UNIT_TEST_SOURCES})
@@ -129,6 +160,8 @@ if(BUILD_TESTING)
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
             PROPERTIES LABELS "unit"
         )
+        message(STATUS "Standalone unit tests configured (UE-dependent tests excluded for standalone build)")
+        message(STATUS "  NOTE: Full test suite runs within Unreal Engine environment")
     endif()
 endif()
 
@@ -162,6 +195,52 @@ if(BUILD_E2E_TESTS)
                 TIMEOUT 300
         )
     endforeach()
+endif()
+
+# ============================================================================
+# Performance Benchmarks
+# ============================================================================
+if(BUILD_BENCHMARKS)
+    message(STATUS "Building performance benchmarks")
+    
+    # Create benchmark library
+    add_library(DeepTreeEchoBenchmarks
+        DeepTreeEcho/Testing/Benchmarks/PerformanceBenchmark.cpp
+    )
+    target_include_directories(DeepTreeEchoBenchmarks PUBLIC
+        ${CMAKE_SOURCE_DIR}/DeepTreeEcho
+        ${CMAKE_SOURCE_DIR}/DeepTreeEcho/Testing/Benchmarks
+        ${CMAKE_SOURCE_DIR}/ReservoirEcho/reservoircpp_cpp/include
+    )
+    target_link_libraries(DeepTreeEchoBenchmarks
+        Threads::Threads
+        Eigen3::Eigen
+    )
+    
+    # Benchmark runner executable
+    add_executable(RunBenchmarks
+        DeepTreeEcho/Testing/Benchmarks/BenchmarkRunner.cpp
+    )
+    target_link_libraries(RunBenchmarks
+        DeepTreeEchoBenchmarks
+        Threads::Threads
+        Eigen3::Eigen
+    )
+    target_include_directories(RunBenchmarks PRIVATE
+        ${CMAKE_SOURCE_DIR}/DeepTreeEcho
+        ${CMAKE_SOURCE_DIR}/DeepTreeEcho/Testing/Benchmarks
+        ${CMAKE_SOURCE_DIR}/ReservoirEcho/reservoircpp_cpp/include
+    )
+    
+    # Add benchmark tests (using CTest)
+    add_test(NAME PerformanceBenchmarks
+        COMMAND RunBenchmarks
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+    set_tests_properties(PerformanceBenchmarks PROPERTIES
+        LABELS "benchmark"
+        TIMEOUT 600
+    )
 endif()
 
 # ============================================================================

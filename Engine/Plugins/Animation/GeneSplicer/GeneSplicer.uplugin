@@ -1,0 +1,47 @@
+{
+	"FileVersion": 3,
+	"Version": 9.8,
+	"VersionName": "9.8.2",
+	"FriendlyName": "GeneSplicer Plugin v9.8.2",
+	"Description": "GeneSplicer plugin for facial animation",
+	"Category": "Animation",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"Installed": true,
+	"Modules": [
+		{
+			"Name": "GeneSplicerLib",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault"
+		},
+		{
+			"Name": "GeneSplicerLibTest",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "GeneSplicerModule",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "RigLogic",
+			"Enabled": true
+		},
+		{		
+			"Name": "ControlRig",
+			"Enabled": true
+		}
+
+	]
+}

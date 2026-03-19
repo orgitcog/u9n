@@ -1,6 +1,11 @@
 #include "NeurochemicalSimulationComponent.h"
 #include "CortisolDynamicsSystem.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "Avatar/FacialAnimationSystem.h"
+#include "Avatar/GestureSystem.h"
+#include "Avatar/EmotionalAuraComponent.h"
+#include "Personality/PersonalityTraitSystem.h"
+#include "EchoPulseResonanceChamber.h"
 
 UNeurochemicalSimulationComponent::UNeurochemicalSimulationComponent()
 {
@@ -426,16 +431,204 @@ void UNeurochemicalSimulationComponent::UpdateEmotionalState()
 
 void UNeurochemicalSimulationComponent::ApplyNeurochemistryToAvatar()
 {
-    // In production, this would update the Avatar3DComponent with neurochemical effects
-    // For now, just log significant changes
+    AActor* Owner = GetOwner();
+    if (!Owner)
+    {
+        return;
+    }
+
+    // ========================================
+    // FACIAL ANIMATION INTEGRATION
+    // ========================================
+    if (UFacialAnimationSystem* FacialSystem = Owner->FindComponentByClass<UFacialAnimationSystem>())
+    {
+        // Determine dominant emotional expression from neurochemistry
+        // Happiness -> Happy expression
+        if (CurrentEmotionalChemistry.Happiness > 0.7f)
+        {
+            FacialSystem->TransitionToExpression(TEXT("Happy"),
+                FMath::Lerp(0.5f, 1.0f, (CurrentEmotionalChemistry.Happiness - 0.7f) / 0.3f));
+        }
+        // Anxiety -> Nervous/Worried expression
+        else if (CurrentEmotionalChemistry.Anxiety > 0.6f)
+        {
+            FacialSystem->TransitionToExpression(TEXT("Nervous"),
+                FMath::Lerp(0.5f, 1.0f, (CurrentEmotionalChemistry.Anxiety - 0.6f) / 0.4f));
+        }
+        // Calmness -> Peaceful/Serene expression
+        else if (CurrentEmotionalChemistry.Calmness > 0.7f)
+        {
+            FacialSystem->TransitionToExpression(TEXT("Peaceful"),
+                FMath::Lerp(0.5f, 1.0f, (CurrentEmotionalChemistry.Calmness - 0.7f) / 0.3f));
+        }
+        // Excitement -> Excited expression
+        else if (CurrentEmotionalChemistry.Excitement > 0.7f)
+        {
+            FacialSystem->TransitionToExpression(TEXT("Excited"),
+                FMath::Lerp(0.5f, 1.0f, (CurrentEmotionalChemistry.Excitement - 0.7f) / 0.3f));
+        }
+
+        // Modulate blink rate based on norepinephrine (alertness)
+        float BlinkInterval = FMath::Lerp(5.0f, 2.0f, CurrentState.NorepinephrineLevel);
+        FacialSystem->SetBlinkInterval(BlinkInterval);
+
+        // Modulate eye openness based on cortisol (stress = wider eyes)
+        float EyeOpenness = FMath::Lerp(0.8f, 1.0f, CurrentState.CortisolLevel);
+        FacialSystem->SetEyeOpenness(EyeOpenness);
+    }
+
+    // ========================================
+    // GESTURE SYSTEM INTEGRATION
+    // ========================================
+    if (UGestureSystem* GestureSystem = Owner->FindComponentByClass<UGestureSystem>())
+    {
+        // Modulate gesture frequency based on dopamine (motivation)
+        float GestureFrequency = FMath::Lerp(0.3f, 1.0f, CurrentState.DopamineLevel);
+        GestureSystem->SetGestureFrequency(GestureFrequency);
+
+        // Set gesture energy based on norepinephrine
+        float GestureEnergy = FMath::Lerp(0.4f, 1.0f, CurrentState.NorepinephrineLevel);
+        GestureSystem->SetGestureEnergy(GestureEnergy);
+
+        // High anxiety triggers fidgeting
+        if (CurrentEmotionalChemistry.Anxiety > 0.6f)
+        {
+            GestureSystem->EnableFidgeting(true);
+            GestureSystem->SetFidgetIntensity(CurrentEmotionalChemistry.Anxiety);
+        }
+        else
+        {
+            GestureSystem->EnableFidgeting(false);
+        }
+
+        // High oxytocin enables open/welcoming gestures
+        if (CurrentState.OxytocinLevel > 0.6f)
+        {
+            GestureSystem->SetGestureStyle(TEXT("Open"));
+        }
+        else if (CurrentState.CortisolLevel > 0.6f)
+        {
+            GestureSystem->SetGestureStyle(TEXT("Defensive"));
+        }
+        else
+        {
+            GestureSystem->SetGestureStyle(TEXT("Neutral"));
+        }
+    }
+
+    // ========================================
+    // EMOTIONAL AURA INTEGRATION
+    // ========================================
+    if (UEmotionalAuraComponent* AuraComponent = Owner->FindComponentByClass<UEmotionalAuraComponent>())
+    {
+        // Set aura color based on dominant emotion
+        FLinearColor AuraColor;
+
+        if (CurrentEmotionalChemistry.Happiness > CurrentEmotionalChemistry.Anxiety &&
+            CurrentEmotionalChemistry.Happiness > CurrentEmotionalChemistry.Calmness)
+        {
+            // Golden/warm aura for happiness
+            AuraColor = FLinearColor(1.0f, 0.85f, 0.3f, CurrentEmotionalChemistry.Happiness);
+        }
+        else if (CurrentEmotionalChemistry.Anxiety > CurrentEmotionalChemistry.Calmness)
+        {
+            // Red/orange aura for anxiety
+            AuraColor = FLinearColor(1.0f, 0.3f, 0.2f, CurrentEmotionalChemistry.Anxiety);
+        }
+        else if (CurrentEmotionalChemistry.Calmness > 0.6f)
+        {
+            // Blue/cyan aura for calmness
+            AuraColor = FLinearColor(0.3f, 0.7f, 1.0f, CurrentEmotionalChemistry.Calmness);
+        }
+        else if (CurrentEmotionalChemistry.Affection > 0.6f)
+        {
+            // Pink aura for affection
+            AuraColor = FLinearColor(1.0f, 0.5f, 0.7f, CurrentEmotionalChemistry.Affection);
+        }
+        else
+        {
+            // Default neutral white aura
+            AuraColor = FLinearColor(0.8f, 0.8f, 0.85f, 0.5f);
+        }
+
+        AuraComponent->SetAuraColor(AuraColor);
+
+        // Aura intensity based on emotional intensity
+        float EmotionalIntensity = FMath::Max(
+            FMath::Max(CurrentEmotionalChemistry.Happiness, CurrentEmotionalChemistry.Excitement),
+            FMath::Max(CurrentEmotionalChemistry.Anxiety, CurrentEmotionalChemistry.Affection));
+        AuraComponent->SetAuraIntensity(EmotionalIntensity);
+
+        // Aura pulse rate based on arousal (norepinephrine + dopamine)
+        float ArousalLevel = (CurrentState.NorepinephrineLevel + CurrentState.DopamineLevel) * 0.5f;
+        float PulseRate = FMath::Lerp(0.5f, 2.0f, ArousalLevel);
+        AuraComponent->SetPulseRate(PulseRate);
+    }
+
+    // ========================================
+    // PERSONALITY MODULATION
+    // ========================================
+    if (UPersonalityTraitSystem* PersonalitySystem = Owner->FindComponentByClass<UPersonalityTraitSystem>())
+    {
+        // High dopamine boosts confidence
+        if (CurrentState.DopamineLevel > 0.7f)
+        {
+            PersonalitySystem->ModifyTrait(EPersonalityTraitType::Confident,
+                (CurrentState.DopamineLevel - 0.7f) * 0.1f);
+        }
+
+        // High serotonin boosts playfulness
+        if (CurrentState.SerotoninLevel > 0.7f)
+        {
+            PersonalitySystem->ModifyTrait(EPersonalityTraitType::Playful,
+                (CurrentState.SerotoninLevel - 0.7f) * 0.1f);
+        }
+
+        // High cortisol can trigger hyper-chaotic behavior
+        if (CurrentState.CortisolLevel > 0.7f && CurrentState.NorepinephrineLevel > 0.6f)
+        {
+            PersonalitySystem->ModifyTrait(EPersonalityTraitType::HyperChaotic,
+                (CurrentState.CortisolLevel - 0.5f) * 0.15f);
+        }
+    }
+
+    // ========================================
+    // ECHO PULSE RESONANCE
+    // ========================================
+    if (UEchoPulseResonanceChamber* ResonanceChamber = Owner->FindComponentByClass<UEchoPulseResonanceChamber>())
+    {
+        // Feed emotional intensity into resonance chamber
+        float EmotionalSignal = (CurrentEmotionalChemistry.Happiness +
+                                 CurrentEmotionalChemistry.Excitement +
+                                 CurrentEmotionalChemistry.Affection) / 3.0f;
+
+        // Scale to resonance chamber range (0-100)
+        float ResonanceInput = EmotionalSignal * 10.0f;
+        ResonanceChamber->UpdateResonance(ResonanceInput);
+
+        // Process decay
+        ResonanceChamber->ProcessDecay(GetWorld()->GetDeltaSeconds());
+    }
+
+    // ========================================
+    // DEBUG LOGGING
+    // ========================================
     if (CurrentEmotionalChemistry.Happiness > 0.8f)
     {
-        UE_LOG(LogTemp, Verbose, TEXT("High happiness state (%.2f)"), CurrentEmotionalChemistry.Happiness);
+        UE_LOG(LogTemp, Verbose, TEXT("NeurochemicalSimulation: High happiness (%.2f) -> Avatar updated"),
+               CurrentEmotionalChemistry.Happiness);
     }
-    
+
     if (CurrentEmotionalChemistry.Anxiety > 0.7f)
     {
-        UE_LOG(LogTemp, Verbose, TEXT("High anxiety state (%.2f)"), CurrentEmotionalChemistry.Anxiety);
+        UE_LOG(LogTemp, Verbose, TEXT("NeurochemicalSimulation: High anxiety (%.2f) -> Avatar updated"),
+               CurrentEmotionalChemistry.Anxiety);
+    }
+
+    if (CurrentEmotionalChemistry.Excitement > 0.8f)
+    {
+        UE_LOG(LogTemp, Verbose, TEXT("NeurochemicalSimulation: High excitement (%.2f) -> Avatar updated"),
+               CurrentEmotionalChemistry.Excitement);
     }
 }
 

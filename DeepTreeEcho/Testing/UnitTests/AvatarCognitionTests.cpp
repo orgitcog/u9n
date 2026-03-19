@@ -944,12 +944,3 @@ TEST(AnimationPerformanceTest, BlendShapeComputePerformance) {
     
     EXPECT_LT(duration.count(), 50);  // 1000 computations in under 50ms
 }
-
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

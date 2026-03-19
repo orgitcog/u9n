@@ -1,0 +1,190 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+//------------------------------------------------------------------------------
+// Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files(the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions :
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+//------------------------------------------------------------------------------
+
+// FidelityFX Super Resolution - Robust Contrast Adaptive Sharpening
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/ScreenPass.ush"
+
+
+// =====================================================================================
+//
+// SHADER RESOURCES
+//
+// =====================================================================================
+
+// RCAS params
+uint4 Const0;
+float2 VPColor_ExtentInverse;
+
+
+// =====================================================================================
+//
+// FIDELITYFX SETUP
+//
+// =====================================================================================
+#define A_HLSL 1
+#define A_GPU  1
+
+#if USE_RCAS_DENOISE 
+#define FSR_RCAS_DENOISE 1
+#endif
+
+#if USE_PASSTHROUGH_ALPHA
+#define FSR_RCAS_PASSTHROUGH_ALPHA 1
+#endif
+
+#if ENABLE_FP16
+	#define FSR_RCAS_H   1
+	#define FSR_RCAS_HX2 1
+	#define A_HALF       1
+	#include "ffx_a.ush"
+
+	Texture2D<AH4>   InputTexture;
+	RWTexture2D<AH4> OutputTexture;
+	AH4 FsrRcasLoadH(min16int2 p)  {return InputTexture.Load(int3(p, 0));}
+	AH4 FsrRcasLoadHx2(min16int2 p){return InputTexture.Load(int3(p, 0));}
+#else
+	#define FSR_RCAS_F 1
+	#include "ffx_a.ush"
+
+	Texture2D           InputTexture;
+	RWTexture2D<float4> OutputTexture;
+	AF4 FsrRcasLoadF(int2 p){return InputTexture.Load(int3(p, 0));}
+#endif
+	
+// should be included after ffx_a.ush, defines FSR_OUTPUTDEVICE
+#include "PostProcessMobileFFX_Common.ush"
+
+
+// Note: Input is expected to be in Gamma2-encoding.
+// LDR: This is already the case.
+// HDR: A ColorConversionCS runs before FSR to provide Gamma2 input to FSR passes
+#if ENABLE_FP16
+	void FsrRcasInputH  (inout AH1 r,inout AH1 g,inout AH1 b){} // RCAS is done in perceptual space (sRGB~Gamma2)
+	void FsrRcasInputHx2(inout AH2 r,inout AH2 g,inout AH2 b){} // Hence, no need to modify r/g/b
+#else
+	void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b){}
+#endif
+
+
+#include "ffx_fsr1.ush"
+
+
+// =====================================================================================
+// 
+// RCAS IMPLEMENTATION
+// 
+// =====================================================================================
+#if ENABLE_FP16 // half precision floating point
+AH4 RCASPassCommon(AU2 gxy)
+#else
+AF4 RCASPassCommon(AU2 gxy)
+#endif
+{
+	//
+	// RCAS()
+	//
+	#if ENABLE_FP16 // half precision floating point
+
+		#if USE_PASSTHROUGH_ALPHA
+
+			AH4 Gamma2Color = AH4(0, 0, 0, 0);
+			FsrRcasH(Gamma2Color.r, Gamma2Color.g, Gamma2Color.b, Gamma2Color.a, gxy, Const0);
+	
+		#else
+	
+			AH4 Gamma2Color = AH4(0, 0, 0, 1);
+			FsrRcasH(Gamma2Color.r, Gamma2Color.g, Gamma2Color.b, gxy, Const0);
+	
+		#endif // USE_PASSTHROUGH_ALPHA
+	
+	#else // FP32 - full precision floating point
+
+		#if USE_PASSTHROUGH_ALPHA
+	
+			AF4 Gamma2Color = AF4(0, 0, 0, 0);
+			FsrRcasF(Gamma2Color.r, Gamma2Color.g, Gamma2Color.b, Gamma2Color.a, gxy, Const0);
+	
+		#else
+	
+			AF4 Gamma2Color = AF4(0, 0, 0, 1);
+			FsrRcasF(Gamma2Color.r, Gamma2Color.g, Gamma2Color.b, gxy, Const0);
+	
+		#endif // USE_PASSTHROUGH_ALPHA
+	
+	#endif // ENABLE_FP16
+
+	return Gamma2Color;
+}
+
+
+
+// =====================================================================================
+//
+// ENTRY POINTS
+//
+// =====================================================================================
+#if COMPUTE_SHADER
+[numthreads(THREADGROUP_SIZEX, THREADGROUP_SIZEY, THREADGROUP_SIZEZ)]
+void MainCS(uint3 LocalThreadId : SV_GroupThreadID, uint3 WorkGroupId : SV_GroupID, uint3 Dtid : SV_DispatchThreadID)
+{
+	// Do remapping of local xy in workgroup for a more PS-like swizzle pattern.
+	AU2 gxy = ARmp8x8(LocalThreadId.x) + AU2(WorkGroupId.x << 4u, WorkGroupId.y << 4u);	
+	
+#if ENABLE_FP16
+	OutputTexture[gxy] = RCASPassCommon(gxy);
+
+	gxy.x += 8u;
+	OutputTexture[gxy] = RCASPassCommon(gxy);
+
+	gxy.y += 8u;
+	OutputTexture[gxy] = RCASPassCommon(gxy);
+
+	gxy.x -= 8u;
+	OutputTexture[gxy] = RCASPassCommon(gxy);
+#else
+	OutputTexture[gxy] = RCASPassCommon(gxy);
+
+	gxy.x += 8u;
+	OutputTexture[gxy] = RCASPassCommon(gxy);
+
+	gxy.y += 8u;
+	OutputTexture[gxy] = RCASPassCommon(gxy);
+
+	gxy.x -= 8u;
+	OutputTexture[gxy] = RCASPassCommon(gxy);
+#endif
+}
+#endif // COMPUTE_SHADER
+
+#if ENABLE_FP16
+void MainPS(noperspective float4 UVAndScreenPos : TEXCOORD0, float4 SvPosition : SV_POSITION, out AH4 OutColor : SV_Target0)
+{
+	AU2 gxy = AU2(SvPosition.xy);
+	OutColor = RCASPassCommon(gxy);
+}
+#else
+void MainPS(noperspective float4 UVAndScreenPos : TEXCOORD0, float4 SvPosition : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	AU2 gxy = AU2(SvPosition.xy);
+	OutColor = RCASPassCommon(gxy);
+}
+#endif

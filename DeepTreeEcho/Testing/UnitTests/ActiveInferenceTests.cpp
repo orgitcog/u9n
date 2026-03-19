@@ -88,30 +88,41 @@ struct FGenerativeModel {
     Matrix B;  // Transition model P(s'|s,a)
     Vector C;  // Preferred observations (log preferences)
     Vector D;  // Prior over initial states
-    
+
     int NumStates = 4;
     int NumObservations = 4;
     int NumActions = 3;
-    
+
     FGenerativeModel() {
-        // Initialize with default dimensions
+        InitializeArrays();
+    }
+
+    FGenerativeModel(int numStates, int numObservations, int numActions)
+        : NumStates(numStates), NumObservations(numObservations), NumActions(numActions) {
+        InitializeArrays();
+    }
+
+    void InitializeArrays() {
+        // Initialize with current dimensions
         A.resize(NumObservations, Vector(NumStates, 0.25));
         B.resize(NumStates, Vector(NumStates * NumActions, 0.0));
         C.resize(NumObservations, 0.0);
-        D.resize(NumStates, 0.25);
-        
+        D.resize(NumStates, 1.0 / NumStates);
+
         // Set up simple observation model (identity-ish)
         for (int i = 0; i < NumObservations; i++) {
             for (int j = 0; j < NumStates; j++) {
                 A[i][j] = (i == j) ? 0.7 : 0.1;
             }
         }
-        
+
         // Normalize columns
         for (int j = 0; j < NumStates; j++) {
             double sum = 0.0;
             for (int i = 0; i < NumObservations; i++) sum += A[i][j];
-            for (int i = 0; i < NumObservations; i++) A[i][j] /= sum;
+            if (sum > 1e-10) {
+                for (int i = 0; i < NumObservations; i++) A[i][j] /= sum;
+            }
         }
     }
 };
@@ -203,10 +214,19 @@ public:
         // G = E_Q[log Q(s') - log P(o',s'|a)]
         // G ≈ -E_Q[log P(o'|s')] + KL[Q(s')||P(s')]  (simplified)
         
-        // Predict next state distribution under action
+        // Predict next state distribution under action using transition model B
         Vector predictedState(Model.NumStates, 0.0);
-        for (int s = 0; s < Model.NumStates; s++) {
-            predictedState[s] = CurrentBelief.StateBelief[s];  // Simplified
+        for (int s_next = 0; s_next < Model.NumStates; s_next++) {
+            for (int s = 0; s < Model.NumStates; s++) {
+                // B matrix encodes P(s'|s,a) - use action to index correct transition
+                int bIndex = s * Model.NumActions + action;
+                if (bIndex < static_cast<int>(Model.B[s_next].size())) {
+                    predictedState[s_next] += Model.B[s_next][bIndex] * CurrentBelief.StateBelief[s];
+                } else {
+                    // Fallback to identity-like transition if index out of bounds
+                    predictedState[s_next] += (s == s_next ? 0.9 : 0.1 / (Model.NumStates - 1)) * CurrentBelief.StateBelief[s];
+                }
+            }
         }
         
         // Expected observation
@@ -376,18 +396,50 @@ public:
         BeliefDim = beliefDim;
         DesireDim = desireDim;
         IntentionDim = intentionDim;
-        
+
         State.Beliefs.resize(beliefDim, 0.0);
         State.Desires.resize(desireDim, 0.0);
         State.Intentions.resize(intentionDim, 0.0);
+
+        // Initialize active inference engine with properly sized model
+        // Create model with explicit dimensions for belief, observation, and action spaces
+        FGenerativeModel model(beliefDim, beliefDim, intentionDim);
         
-        // Initialize active inference engine
-        FGenerativeModel model;
+        // CRITICAL: Set dimension members BEFORE resizing matrices
+        // These are used by MockActiveInferenceEngine for iteration bounds
         model.NumStates = beliefDim;
         model.NumObservations = beliefDim;
         model.NumActions = intentionDim;
-        InferenceEngine.Initialize(model);
         
+        // Resize model matrices to match the new dimensions
+        model.A.clear();
+        model.A.resize(beliefDim, Vector(beliefDim, 0.0));
+        model.B.clear();
+        model.B.resize(beliefDim, Vector(beliefDim * intentionDim, 0.0));
+        model.C.clear();
+        model.C.resize(beliefDim, 0.0);  // Preferences must match observation dim
+        model.D.clear();
+        model.D.resize(beliefDim, 1.0 / beliefDim);  // Uniform prior
+        
+        // Set up observation model (identity-ish)
+        for (int i = 0; i < beliefDim; i++) {
+            for (int j = 0; j < beliefDim; j++) {
+                double offDiag = (beliefDim > 1) ? 0.1 / (beliefDim - 1) : 0.0;
+                model.A[i][j] = (i == j) ? 0.7 : offDiag;
+            }
+        }
+        
+        // Normalize columns
+        for (int j = 0; j < beliefDim; j++) {
+            double sum = 0.0;
+            for (int i = 0; i < beliefDim; i++) sum += model.A[i][j];
+            if (sum > 1e-10) {
+                for (int i = 0; i < beliefDim; i++) model.A[i][j] /= sum;
+            }
+        }
+        
+        InferenceEngine.Initialize(model);
+
         bInitialized = true;
     }
     
@@ -400,7 +452,10 @@ public:
     
     void SetDesires(const Vector& desires) {
         State.Desires = desires;
-        InferenceEngine.SetPreferences(desires);
+        // Ensure preferences match model observation dimension
+        Vector prefs = desires;
+        prefs.resize(BeliefDim, 0.0);  // Pad or truncate to match observation dim
+        InferenceEngine.SetPreferences(prefs);
     }
     
     int FormIntention() {
@@ -935,13 +990,4 @@ TEST(ActiveInferencePerformanceTest, ActionSelectionPerformance) {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     
     EXPECT_LT(duration.count(), 200);  // 5000 selections in under 200ms
-}
-
-// ============================================================================
-// Main Entry Point
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

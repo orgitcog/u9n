@@ -1,0 +1,60 @@
+{
+  "organizations": [
+    {
+      "name": "OrgitCog",
+      "github_org": "orgitcog",
+      "role": "primary",
+      "repos": ["u9n"],
+      "tracking_repo": "u9n",
+      "responsibilities": [
+        "Core Unreal-Echo integration",
+        "DeepTreeEcho neural systems",
+        "Project coordination"
+      ]
+    },
+    {
+      "name": "CogPy",
+      "github_org": "cogpy",
+      "role": "contributor",
+      "repos": ["cogplan9", "cogpilot.jl", "cognu-mach", "coglux", "coglow", "coggml"],
+      "responsibilities": [
+        "Cognitive planning systems",
+        "Julia-based cognitive pilot",
+        "GNU Mach integration",
+        "Linux cognitive extensions",
+        "Low-level cognitive libraries",
+        "GGML tensor integration"
+      ]
+    }
+  ],
+  "sync_settings": {
+    "auto_sync_labels": true,
+    "auto_sync_milestones": true,
+    "tracking_issue_frequency": "weekly",
+    "report_format": "markdown"
+  },
+  "label_categories_to_sync": [
+    "epic",
+    "phase",
+    "feature",
+    "roadmap",
+    "priority: critical",
+    "priority: high",
+    "priority: medium",
+    "priority: low",
+    "status: planned",
+    "status: in-progress",
+    "status: blocked",
+    "status: completed"
+  ],
+  "cross_org_dependencies": [
+    {
+      "from": {"org": "cogpy", "repo": "coggml", "feature": "tensor-core"},
+      "to": {"org": "orgitcog", "repo": "u9n", "feature": "F1.2.1"}
+    },
+    {
+      "from": {"org": "cogpy", "repo": "cogplan9", "feature": "planning-core"},
+      "to": {"org": "orgitcog", "repo": "u9n", "feature": "F3.3.1"}
+    }
+  ]
+}

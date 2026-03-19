@@ -121,6 +121,18 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Cognitive Visualization")
     void SetVisualizationEnabled(bool bEnabled);
 
+    /** Set overall visualization intensity */
+    UFUNCTION(BlueprintCallable, Category = "Cognitive Visualization")
+    void SetVisualizationIntensity(float Intensity);
+
+    /** Trigger echo resonance effect for memory/cognitive pulses */
+    UFUNCTION(BlueprintCallable, Category = "Cognitive Visualization")
+    void TriggerResonanceEffect(float Intensity, float Duration);
+
+    /** Visualize memory constellation pattern */
+    UFUNCTION(BlueprintCallable, Category = "Cognitive Visualization")
+    void VisualizeMemoryConstellation(const TArray<FVector>& MemoryNodes);
+
     /** Get neural network nodes */
     UFUNCTION(BlueprintPure, Category = "Cognitive Visualization")
     TArray<FNeuralNode> GetNeuralNodes() const { return NeuralNodes; }
@@ -199,4 +211,23 @@ private:
 
     /** Decision visualization timer */
     float DecisionVisualizationTimer;
+
+    /** Overall visualization intensity multiplier */
+    UPROPERTY()
+    float VisualizationIntensity = 1.0f;
+
+    /** Resonance effect active */
+    bool bResonanceActive = false;
+
+    /** Resonance effect intensity */
+    float ResonanceIntensity = 0.0f;
+
+    /** Resonance effect timer */
+    float ResonanceTimer = 0.0f;
+
+    /** Resonance effect duration */
+    float ResonanceDuration = 0.0f;
+
+    /** Memory constellation nodes for visualization */
+    TArray<FVector> MemoryConstellationNodes;
 };

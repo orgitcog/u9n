@@ -4,7 +4,7 @@ Welcome to the Deep Tree Echo cognitive framework documentation. This index help
 
 ## 📚 Documentation Overview
 
-The documentation suite consists of 5 comprehensive guides totaling 57KB of detailed information about the system architecture, integration status, and usage guidelines.
+The documentation suite consists of 7 comprehensive guides totaling 125KB+ of detailed information about the system architecture, API reference, integration status, and usage guidelines.
 
 ## 🚀 Quick Start Guide
 
@@ -14,6 +14,8 @@ The documentation suite consists of 5 comprehensive guides totaling 57KB of deta
 2. **Review**: [VERIFICATION_REPORT.md](VERIFICATION_REPORT.md) - System status and readiness
 3. **Learn**: [RESERVOIRCPP_INTEGRATION_GUIDE.md](RESERVOIRCPP_INTEGRATION_GUIDE.md) - Technical implementation
 4. **Explore**: [README.md](README.md) - Repository structure and architecture
+5. **Reference**: [E1 Foundation API Reference](docs/api/E1_FOUNDATION_API_REFERENCE.md) - Complete API documentation
+6. **Understand**: [E1 Foundation Architecture](docs/architecture/E1_FOUNDATION_ARCHITECTURE.md) - System architecture
 
 ## 📖 Document Descriptions
 
@@ -118,6 +120,51 @@ Main repository documentation with architecture overview and quick reference.
 
 ---
 
+### API & Architecture Reference
+
+#### [E1 Foundation API Reference](docs/api/E1_FOUNDATION_API_REFERENCE.md)
+**Size**: 31KB | **Audience**: Developers, Integration Engineers  
+**Read Time**: 30-45 minutes
+
+Complete API documentation for all E1 Foundation components of the Deep Tree Echo cognitive framework.
+
+**Contents**:
+- Core component APIs (UDeepTreeEchoCore)
+- Reservoir computing APIs (UDeepTreeEchoReservoir, UEchoStateNetwork)
+- 4E Embodied cognition APIs (UEmbodiedCognitionComponent)
+- Memory system APIs (Hypergraph, Episodic, Temporal)
+- Active Inference APIs
+- Avatar system APIs
+- Data structures and configuration reference
+- Code examples and usage patterns
+
+**Best for**: Implementing features, understanding component APIs, and integrating with the cognitive framework.
+
+---
+
+#### [E1 Foundation Architecture](docs/architecture/E1_FOUNDATION_ARCHITECTURE.md)
+**Size**: 37KB | **Audience**: Architects, Engineers, Technical Leads  
+**Read Time**: 25-35 minutes
+
+Comprehensive architectural documentation for the E1 Foundation layer.
+
+**Contents**:
+- Architecture overview with diagrams
+- 12-step cognitive cycle design
+- 3 concurrent consciousness streams
+- Nested shell structure (OEIS A000081)
+- 4E Embodied cognition architecture
+- Reservoir computing architecture
+- Memory architecture
+- Data flow diagrams
+- Integration points
+- Deployment architecture
+- Performance characteristics
+
+**Best for**: Understanding system design, planning integrations, and architectural decisions.
+
+---
+
 ## 🎯 Documentation by Use Case
 
 ### "I want to understand what the system does"
@@ -129,8 +176,10 @@ Main repository documentation with architecture overview and quick reference.
 2. Reference: [ECHO_INTEGRATION_STATUS.md](ECHO_INTEGRATION_STATUS.md) (Goals status)
 
 ### "I want to implement/extend functionality"
-1. Start: [RESERVOIRCPP_INTEGRATION_GUIDE.md](RESERVOIRCPP_INTEGRATION_GUIDE.md) (Technical guide)
-2. Reference: [README.md](README.md) (Architecture)
+1. Start: [E1 Foundation API Reference](docs/api/E1_FOUNDATION_API_REFERENCE.md) (Complete API docs)
+2. Then: [E1 Foundation Architecture](docs/architecture/E1_FOUNDATION_ARCHITECTURE.md) (Architecture overview)
+3. Reference: [RESERVOIRCPP_INTEGRATION_GUIDE.md](RESERVOIRCPP_INTEGRATION_GUIDE.md) (Technical guide)
+4. Reference: [README.md](README.md) (Architecture)
 
 ### "I need to check project status/progress"
 1. Start: [ECHO_INTEGRATION_STATUS.md](ECHO_INTEGRATION_STATUS.md) (Status report)
@@ -194,15 +243,21 @@ Main repository documentation with architecture overview and quick reference.
 | RESERVOIRCPP_INTEGRATION_GUIDE.md | 16KB | Technical | Developers |
 | ECHO_INTEGRATION_STATUS.md | 13KB | Analysis | Product Managers |
 | README.md | 7KB | Overview | All Users |
+| docs/api/E1_FOUNDATION_API_REFERENCE.md | 31KB | API Reference | Developers |
+| docs/architecture/E1_FOUNDATION_ARCHITECTURE.md | 37KB | Architecture | Architects |
 
 ## 🛠️ For Developers
 
 ### Key Technical Documents
-1. [RESERVOIRCPP_INTEGRATION_GUIDE.md](RESERVOIRCPP_INTEGRATION_GUIDE.md) - Integration patterns and code examples
-2. [VERIFICATION_REPORT.md](VERIFICATION_REPORT.md) - Component verification and API testing
+1. [E1 Foundation API Reference](docs/api/E1_FOUNDATION_API_REFERENCE.md) - Complete API documentation
+2. [E1 Foundation Architecture](docs/architecture/E1_FOUNDATION_ARCHITECTURE.md) - System architecture
+3. [RESERVOIRCPP_INTEGRATION_GUIDE.md](RESERVOIRCPP_INTEGRATION_GUIDE.md) - Integration patterns and code examples
+4. [VERIFICATION_REPORT.md](VERIFICATION_REPORT.md) - Component verification and API testing
 
 ### Code Examples Location
-All code examples and usage patterns are in: [RESERVOIRCPP_INTEGRATION_GUIDE.md](RESERVOIRCPP_INTEGRATION_GUIDE.md)
+All code examples and usage patterns are in:
+- [E1 Foundation API Reference](docs/api/E1_FOUNDATION_API_REFERENCE.md) → Examples section
+- [RESERVOIRCPP_INTEGRATION_GUIDE.md](RESERVOIRCPP_INTEGRATION_GUIDE.md)
 
 ### Configuration Guidelines
 Reservoir parameters and tuning: [RESERVOIRCPP_INTEGRATION_GUIDE.md](RESERVOIRCPP_INTEGRATION_GUIDE.md) → Configuration section
@@ -254,7 +309,8 @@ The documentation addresses these requirements:
 - Verify system status in verification report
 
 ### Understanding Components
-- Architecture: [README.md](README.md)
+- Architecture: [E1 Foundation Architecture](docs/architecture/E1_FOUNDATION_ARCHITECTURE.md)
+- API Reference: [E1 Foundation API Reference](docs/api/E1_FOUNDATION_API_REFERENCE.md)
 - Integration: [RESERVOIRCPP_INTEGRATION_GUIDE.md](RESERVOIRCPP_INTEGRATION_GUIDE.md)
 - Status: [ECHO_INTEGRATION_STATUS.md](ECHO_INTEGRATION_STATUS.md)
 
@@ -263,14 +319,14 @@ The documentation addresses these requirements:
 This documentation suite has been verified to be:
 - ✅ Complete (covers all system aspects)
 - ✅ Accurate (reflects actual system state)
-- ✅ Comprehensive (57KB of detailed content)
+- ✅ Comprehensive (125KB+ of detailed content)
 - ✅ Well-organized (clear navigation and indexing)
 
 ---
 
-**Last Updated**: December 20, 2024  
-**Repository**: o9nn/un9n  
-**Documentation Version**: 1.0  
+**Last Updated**: March 2, 2026  
+**Repository**: orgitcog/u9n  
+**Documentation Version**: 1.1  
 **Status**: ✅ Complete and Current
 
 ---
@@ -282,3 +338,5 @@ This documentation suite has been verified to be:
 - [🔧 Integration Guide](RESERVOIRCPP_INTEGRATION_GUIDE.md)
 - [📊 Status Report](ECHO_INTEGRATION_STATUS.md)
 - [📖 Main README](README.md)
+- [📚 E1 API Reference](docs/api/E1_FOUNDATION_API_REFERENCE.md)
+- [🏗️ E1 Architecture](docs/architecture/E1_FOUNDATION_ARCHITECTURE.md)

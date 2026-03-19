@@ -22,6 +22,7 @@
 #include <chrono>
 #include <random>
 #include <atomic>
+#include <algorithm>
 
 // ============================================================================
 // E2E Test Infrastructure
@@ -196,19 +197,40 @@ public:
     std::vector<float> Retrieve(const std::vector<float>& cue, int topK = 1) {
         if (Patterns.empty()) return cue;
         
-        // Find most similar
-        float bestSim = -1.0f;
-        size_t bestIdx = 0;
-        
+        // Find top-K most similar patterns
+        std::vector<std::pair<float, size_t>> similarities;
         for (size_t i = 0; i < Patterns.size(); i++) {
             float sim = CosineSimilarity(cue, Patterns[i]);
-            if (sim > bestSim) {
-                bestSim = sim;
-                bestIdx = i;
+            similarities.push_back({sim, i});
+        }
+        
+        // Sort by similarity (descending)
+        std::sort(similarities.begin(), similarities.end(),
+                  [](const auto& a, const auto& b) { return a.first > b.first; });
+        
+        // Return weighted combination of top-K patterns
+        int k = std::min(topK, static_cast<int>(similarities.size()));
+        if (k <= 0) return cue;
+        
+        std::vector<float> result(Patterns[0].size(), 0.0f);
+        float totalWeight = 0.0f;
+        
+        for (int i = 0; i < k; i++) {
+            float weight = similarities[i].first;
+            if (weight < 0.0f) weight = 0.0f;
+            totalWeight += weight;
+            const auto& pattern = Patterns[similarities[i].second];
+            for (size_t j = 0; j < pattern.size() && j < result.size(); j++) {
+                result[j] += weight * pattern[j];
             }
         }
         
-        return Patterns[bestIdx];
+        // Normalize by total weight
+        if (totalWeight > 1e-6f) {
+            for (float& v : result) v /= totalWeight;
+        }
+        
+        return result;
     }
     
     std::vector<float> GetWorkingMemory() const {

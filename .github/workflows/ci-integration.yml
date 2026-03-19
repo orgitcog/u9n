@@ -81,7 +81,7 @@ jobs:
           echo "=== DNACalib build complete ==="
 
       - name: Upload combined build artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: integration-build-linux
           path: |
@@ -104,7 +104,7 @@ jobs:
           submodules: recursive
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: integration-build-linux
           path: .
@@ -135,7 +135,7 @@ jobs:
 
       - name: Upload test report
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: unit-test-report
           path: test-report.md
@@ -166,7 +166,7 @@ jobs:
           pip install numpy pytest pytest-cov pytest-timeout
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: integration-build-linux
           path: .
@@ -430,7 +430,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           path: artifacts
@@ -474,7 +474,7 @@ jobs:
           cat integration-report.md
 
       - name: Upload integration report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: integration-report
           path: integration-report.md
