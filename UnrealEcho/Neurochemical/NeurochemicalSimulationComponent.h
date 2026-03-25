@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 class UCortisolDynamicsSystem;
+class UDopaminergicRewardSystem;
 
 #include "NeurochemicalSimulationComponent.generated.h"
 
@@ -189,6 +190,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Neurochemistry")
     void SetCortisolDynamicsSystem(UCortisolDynamicsSystem* System);
 
+    /** Connect an external dopaminergic reward system to drive dopamine levels */
+    UFUNCTION(BlueprintCallable, Category = "Neurochemistry")
+    void SetDopaminergicRewardSystem(UDopaminergicRewardSystem* System);
+
     // ===== Interactions =====
 
     UFUNCTION(BlueprintCallable, Category = "Neurochemistry")
@@ -252,4 +257,8 @@ private:
     /** Optional reference to external cortisol dynamics system */
     UPROPERTY()
     UCortisolDynamicsSystem* CortisolDynamicsRef;
+
+    /** Optional reference to external dopaminergic reward system */
+    UPROPERTY()
+    UDopaminergicRewardSystem* DopaminergicRewardRef;
 };
