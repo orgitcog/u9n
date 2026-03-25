@@ -1,5 +1,6 @@
 #include "NeurochemicalSimulationComponent.h"
 #include "CortisolDynamicsSystem.h"
+#include "DopaminergicRewardSystem.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Avatar/FacialAnimationSystem.h"
 #include "Avatar/GestureSystem.h"
@@ -32,6 +33,7 @@ UNeurochemicalSimulationComponent::UNeurochemicalSimulationComponent()
     // Start at baseline
     CurrentState = BaselineState;
     CortisolDynamicsRef = nullptr;
+    DopaminergicRewardRef = nullptr;
     
     // Initialize decay rates (how fast each neurochemical naturally decreases)
     DecayRates.Add(ENeurochemicalType::Dopamine, 0.08f);
@@ -161,11 +163,21 @@ FEmotionalChemistry UNeurochemicalSimulationComponent::GetEmotionalChemistry() c
 
 void UNeurochemicalSimulationComponent::TriggerRewardResponse(float Intensity)
 {
-    // Reward response: Dopamine spike, some serotonin, endorphins
-    ModifyNeurochemical(ENeurochemicalType::Dopamine, 0.3f * Intensity);
+    // Delegate dopamine dynamics to the dedicated system if available
+    if (DopaminergicRewardRef)
+    {
+        DopaminergicRewardRef->ProcessUnexpectedReward(Intensity);
+        // Let UpdateNeurochemicalDynamics sync the dopamine level from the system
+    }
+    else
+    {
+        ModifyNeurochemical(ENeurochemicalType::Dopamine, 0.3f * Intensity);
+    }
+
+    // Co-released neurochemicals (independent of dopamine system)
     ModifyNeurochemical(ENeurochemicalType::Serotonin, 0.2f * Intensity);
     ModifyNeurochemical(ENeurochemicalType::Endorphins, 0.15f * Intensity);
-    
+
     UE_LOG(LogTemp, Log, TEXT("Reward response triggered with intensity %.2f"), Intensity);
 }
 
@@ -275,6 +287,13 @@ void UNeurochemicalSimulationComponent::SetCortisolDynamicsSystem(UCortisolDynam
            System ? TEXT("connected") : TEXT("disconnected"));
 }
 
+void UNeurochemicalSimulationComponent::SetDopaminergicRewardSystem(UDopaminergicRewardSystem* System)
+{
+    DopaminergicRewardRef = System;
+    UE_LOG(LogTemp, Log, TEXT("Dopaminergic reward system %s"),
+           System ? TEXT("connected") : TEXT("disconnected"));
+}
+
 // ===== Interactions =====
 
 void UNeurochemicalSimulationComponent::SimulateExercise(float Intensity, float Duration)
@@ -361,6 +380,13 @@ void UNeurochemicalSimulationComponent::UpdateNeurochemicalDynamics(float DeltaT
         if (Type == ENeurochemicalType::Cortisol && CortisolDynamicsRef)
         {
             SetNeurochemicalLevel(Type, CortisolDynamicsRef->GetCortisolLevel());
+            continue;
+        }
+
+        // Skip dopamine if managed by the dedicated reward system
+        if (Type == ENeurochemicalType::Dopamine && DopaminergicRewardRef)
+        {
+            SetNeurochemicalLevel(Type, DopaminergicRewardRef->GetNAccDopamine());
             continue;
         }
 
