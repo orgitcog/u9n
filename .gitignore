@@ -76,6 +76,11 @@
 !*.tsx
 !*.command
 
+# Go source files
+!*.go
+!go.mod
+!go.sum
+
 # Other configuration and markup files
 !*.ini
 !*.json
