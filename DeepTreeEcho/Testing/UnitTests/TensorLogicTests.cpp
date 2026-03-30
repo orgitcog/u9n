@@ -15,6 +15,8 @@
 #include <functional>
 #include <set>
 
+namespace {
+
 // ============================================================================
 // Mock implementations of TensorLogic types (matching headers)
 // ============================================================================
@@ -1335,3 +1337,5 @@ TEST_F(TensorLogicEngineTest, ZeroTensor) {
 }
 
 // Note: main() is provided by GTest::gtest_main in CMakeLists.txt
+
+} // namespace

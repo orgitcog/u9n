@@ -21,6 +21,8 @@
 #include <chrono>
 #include <functional>
 
+namespace {
+
 // ============================================================================
 // Mock Types for Sys6 Operad Engine
 // ============================================================================
@@ -995,3 +997,5 @@ TEST(Sys6IntegrationTest, FullCycleWithAllOperations) {
 }
 
 // Note: main() is provided by GTest::gtest_main in CMakeLists.txt
+
+} // namespace

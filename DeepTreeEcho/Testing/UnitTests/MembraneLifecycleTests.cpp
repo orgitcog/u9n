@@ -21,6 +21,8 @@
 #include <string>
 #include <algorithm>
 
+namespace {
+
 // Mock membrane structures for standalone testing (simulates UE environment)
 enum class MockMembraneType : uint8_t
 {
@@ -864,12 +866,6 @@ TEST_F(MembraneLifecycleTest, ContentPropagation_MultipleContents)
     EXPECT_FLOAT_EQ(system->Membranes[MockMembraneType::Custom2].Contents["ContentC"], 15.0f);
 }
 
-// ============================================================================
-// Main
-// ============================================================================
 
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+
+} // namespace

@@ -19,6 +19,8 @@
 #include <random>
 #include <algorithm>
 
+namespace {
+
 // ============================================================================
 // Mock Types for Entelechy Framework
 // ============================================================================
@@ -1304,3 +1306,5 @@ TEST(RelevancePerformanceTest, ActivationPerformance) {
 }
 
 // Note: main() is provided by GTest::gtest_main in CMakeLists.txt
+
+} // namespace

@@ -19,6 +19,8 @@
 #include <random>
 #include <chrono>
 
+namespace {
+
 // ============================================================================
 // Mock Types for Future State Prediction
 // ============================================================================
@@ -1225,3 +1227,5 @@ TEST_F(FutureStatePredictionTest, MultiDomainPrediction) {
     EXPECT_FALSE(motPred.PredictedState.empty());
     EXPECT_FALSE(emoPred.PredictedState.empty());
 }
+
+} // namespace

@@ -21,6 +21,8 @@
 #include <mutex>
 #include <condition_variable>
 
+namespace {
+
 // ============================================================================
 // Mock Types for 12-Step Cognitive Loop
 // ============================================================================
@@ -789,3 +791,5 @@ TEST(CognitiveLoopEdgeCaseTest, ConcurrentAccess) {
 }
 
 // Note: main() is provided by GTest::gtest_main in CMakeLists.txt
+
+} // namespace
