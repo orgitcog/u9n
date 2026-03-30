@@ -303,7 +303,7 @@ jobs:
           lcov --list coverage.info
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: ${{ env.RESERVOIR_DIR }}/coverage.info
           flags: reservoir-echo
