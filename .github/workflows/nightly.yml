@@ -169,7 +169,7 @@ jobs:
           genhtml coverage.info --output-directory coverage-report
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: ReservoirEcho/reservoircpp_cpp/coverage.info
           flags: nightly
