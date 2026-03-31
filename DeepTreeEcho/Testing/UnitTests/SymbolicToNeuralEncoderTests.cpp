@@ -26,6 +26,7 @@ using FVector = std::array<float, 3>;
 using FRotator = std::array<float, 3>;
 using int32 = int;
 using uint32 = unsigned int;
+using int64 = long long;
 using float32 = float;
 #define UPROPERTY(...)
 #define UFUNCTION(...)

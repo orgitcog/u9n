@@ -198,6 +198,9 @@ gtest_discover_tests(CortisolDynamicsTests
     PROPERTIES
         LABELS "unit;neurochemical;cortisol"
         TIMEOUT 60
+)
+
+# ============================================================================
 # DNA Integration Tests
 # ============================================================================
 add_executable(DNAIntegrationTests
@@ -456,12 +459,159 @@ gtest_discover_tests(FutureStatePredictionTests
 )
 
 # ============================================================================
+# Virtual Controller Driver Tests
+# ============================================================================
+add_executable(VirtualControllerDriverTests
+    VirtualControllerDriverTests.cpp
+)
+
+target_link_libraries(VirtualControllerDriverTests ${GTEST_LIBS})
+
+target_include_directories(VirtualControllerDriverTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(VirtualControllerDriverTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;gaming;controller;motor-cortex"
+        TIMEOUT 60
+)
+
+# ============================================================================
+# Gaming Mastery System Tests
+# ============================================================================
+add_executable(GamingMasterySystemTests
+    GamingMasterySystemTests.cpp
+)
+
+target_link_libraries(GamingMasterySystemTests ${GTEST_LIBS})
+
+target_include_directories(GamingMasterySystemTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(GamingMasterySystemTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;gaming;mastery;dreyfus"
+        TIMEOUT 60
+)
+
+# ============================================================================
+# DTE Avatar Agent Tests
+# ============================================================================
+add_executable(DTEAvatarAgentTests
+    DTEAvatarAgentTests.cpp
+)
+
+target_link_libraries(DTEAvatarAgentTests ${GTEST_LIBS})
+
+target_include_directories(DTEAvatarAgentTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(DTEAvatarAgentTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;avatar;agent;sima;4e-cognition"
+        TIMEOUT 120
+)
+
+# ============================================================================
+# Embodied Autonomy Pipeline Tests
+# ============================================================================
+add_executable(EmbodiedAutonomyPipelineTests
+    EmbodiedAutonomyPipelineTests.cpp
+)
+
+target_link_libraries(EmbodiedAutonomyPipelineTests ${GTEST_LIBS})
+
+target_include_directories(EmbodiedAutonomyPipelineTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(EmbodiedAutonomyPipelineTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;autonomy;pipeline;embodied"
+        TIMEOUT 120
+)
+
+# ============================================================================
+# Dopaminergic Reward System Tests (Feature F4.1.2)
+# ============================================================================
+add_executable(DopaminergicRewardSystemTests
+    DopaminergicRewardSystemTests.cpp
+)
+
+target_link_libraries(DopaminergicRewardSystemTests ${GTEST_LIBS})
+
+target_include_directories(DopaminergicRewardSystemTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(DopaminergicRewardSystemTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;neurochemical;dopamine;reward;F4.1.2"
+        TIMEOUT 60
+)
+
+# ============================================================================
+# Liquid State Machine Tests (Feature F1.2.2)
+# ============================================================================
+add_executable(LiquidStateMachineTests
+    LiquidStateMachineTests.cpp
+)
+
+target_link_libraries(LiquidStateMachineTests ${GTEST_LIBS})
+
+target_include_directories(LiquidStateMachineTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+    ${CMAKE_SOURCE_DIR}/../../Reservoir
+)
+
+gtest_discover_tests(LiquidStateMachineTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;reservoir;lsm;spiking;F1.2.2"
+        TIMEOUT 120
+)
+
+# ============================================================================
+# Symbolic To Neural Encoder Tests
+# ============================================================================
+add_executable(SymbolicToNeuralEncoderTests
+    SymbolicToNeuralEncoderTests.cpp
+)
+
+target_link_libraries(SymbolicToNeuralEncoderTests ${GTEST_LIBS})
+
+target_include_directories(SymbolicToNeuralEncoderTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(SymbolicToNeuralEncoderTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;neural-symbolic;encoder"
+        TIMEOUT 60
+)
+
+# ============================================================================
 # All Tests Target
 # ============================================================================
 add_custom_target(run_all_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 4
-    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests ActiveInferenceTests CortisolDynamicsTests
-    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests
+    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running all DeepTreeEcho unit tests"
 )
@@ -491,12 +641,10 @@ endif()
 # ============================================================================
 # Installation
 # ============================================================================
-install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests ActiveInferenceTests CortisolDynamicsTests
-install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests
+install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests
     RUNTIME DESTINATION bin/tests
 )
 
 message(STATUS "DeepTreeEcho Tests configured")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "  Tests: CoreTests, MemoryTests, AvatarCognitionTests, ReservoirIntegrationTests, ActiveInferenceTests, CortisolDynamicsTests")
-message(STATUS "  Tests: CoreTests, MemoryTests, AvatarCognitionTests, ReservoirIntegrationTests, EchoStateNetworkTests, ActiveInferenceTests, DNAIntegrationTests, CognitiveLoopTests, WisdomEntelechyTests, Sys6OperadTests, BehavioralFrameworkTests, TensorLogicTests, ReservoirTopologyGeneratorTests, MembraneCommChannelsTests, MembraneLifecycleTests, ObjectTransportRulesTests, HypergraphPatternMatcherTests, FutureStatePredictionTests")
+message(STATUS "  Tests: CoreTests, MemoryTests, AvatarCognitionTests, ReservoirIntegrationTests, EchoStateNetworkTests, ActiveInferenceTests, CortisolDynamicsTests, DNAIntegrationTests, CognitiveLoopTests, WisdomEntelechyTests, Sys6OperadTests, BehavioralFrameworkTests, TensorLogicTests, ReservoirTopologyGeneratorTests, MembraneCommChannelsTests, MembraneLifecycleTests, ObjectTransportRulesTests, HypergraphPatternMatcherTests, FutureStatePredictionTests, VirtualControllerDriverTests, GamingMasterySystemTests, DTEAvatarAgentTests, EmbodiedAutonomyPipelineTests, DopaminergicRewardSystemTests, LiquidStateMachineTests, SymbolicToNeuralEncoderTests")
