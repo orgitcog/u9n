@@ -23,6 +23,8 @@
 #include <map>
 #include <algorithm>
 
+namespace {
+
 // ========================================
 // MOCK STRUCTURES FOR STANDALONE TESTING
 // ========================================
@@ -1021,11 +1023,6 @@ TEST_F(MembraneCommChannelsTest, MultipleObjectsTransportTogether) {
     EXPECT_EQ(channelManager.CountObjectsInMembrane(parentID, "b"), 1);
 }
 
-// ========================================
-// MAIN FUNCTION
-// ========================================
 
-int main(int argc, char **argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+
+} // namespace

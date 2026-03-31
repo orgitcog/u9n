@@ -18,6 +18,8 @@
 #include <unordered_map>
 #include <set>
 
+namespace {
+
 // ============================================================================
 // Mock Types and Structures
 // ============================================================================
@@ -828,3 +830,5 @@ TEST(MemoryPerformanceTest, EpisodicQueryPerformance) {
     
     EXPECT_LT(duration.count(), 500);  // 200 queries in under 500ms
 }
+
+} // namespace

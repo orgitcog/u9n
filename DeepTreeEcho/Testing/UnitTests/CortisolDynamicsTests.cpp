@@ -22,6 +22,8 @@
 #include <algorithm>
 #include <functional>
 
+namespace {
+
 #define UPROPERTY(...)
 #define UFUNCTION(...)
 #define UCLASS(...)
@@ -741,12 +743,6 @@ TEST_F(CortisolDynamicsTest, SetTimeOfDayWrapsCorrectly) {
     EXPECT_NEAR(System->GetState().Circadian.TimeOfDay, 22.0f, 0.01f);
 }
 
-// ============================================================================
-// Main Entry Point
-// ============================================================================
 
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+
+} // namespace

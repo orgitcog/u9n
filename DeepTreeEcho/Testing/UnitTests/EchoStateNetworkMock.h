@@ -81,8 +81,8 @@ public:
             Config.ReservoirSparsity, Seed);
         
         // Scale to spectral radius
-        ScaleToSpectralRadius(ReservoirWeights, Config.SpectralRadius);
-        State.ActualSpectralRadius = ComputeSpectralRadius(ReservoirWeights);
+        ScaleToSpectralRadius(ReservoirWeights, Config.SpectralRadius, Seed);
+        State.ActualSpectralRadius = ComputeSpectralRadius(ReservoirWeights, 500, Seed);
         
         // Generate input weights
         int InputCols = Config.bEnableBias ? Config.InputDim + 1 : Config.InputDim;
@@ -115,7 +115,7 @@ public:
     }
 
     void ResetState() {
-        State.ReservoirState.resize(Config.ReservoirSize, 0.0f);
+        State.ReservoirState.assign(Config.ReservoirSize, 0.0f);
         State.LastInput.clear();
         State.LastOutput.clear();
         State.Timestep = 0;
@@ -341,11 +341,14 @@ private:
         return mat;
     }
 
-    float ComputeSpectralRadius(const MockSparseMatrix& mat, int maxIter = 100) {
+    float ComputeSpectralRadius(const MockSparseMatrix& mat, int maxIter = 500, int seed = 42) {
         if (mat.Rows != mat.Cols) return 0.0f;
         
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
+        
         std::vector<float> v(mat.Rows);
-        for (float& x : v) x = (rand() % 1000) / 1000.0f - 0.5f;
+        for (float& x : v) x = dist(rng);
         
         float norm = VectorNorm(v);
         if (norm > 0.0f) {
@@ -363,6 +366,8 @@ private:
             norm = VectorNorm(v_new);
             if (norm > 0.0f) {
                 for (float& x : v_new) x /= norm;
+            } else {
+                break;
             }
             
             if (std::abs(lambda - eigenvalue) < 1e-6f) {
@@ -377,8 +382,8 @@ private:
         return std::abs(eigenvalue);
     }
 
-    void ScaleToSpectralRadius(MockSparseMatrix& mat, float targetRadius) {
-        float currentRadius = ComputeSpectralRadius(mat);
+    void ScaleToSpectralRadius(MockSparseMatrix& mat, float targetRadius, int seed = 42) {
+        float currentRadius = ComputeSpectralRadius(mat, 500, seed);
         if (currentRadius > 1e-10f) {
             float scale = targetRadius / currentRadius;
             for (float& val : mat.Values) {

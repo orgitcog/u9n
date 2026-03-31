@@ -21,6 +21,8 @@
 #include <random>
 #include <cmath>
 
+namespace {
+
 // ============================================================================
 // Mock Types for Behavioral Testing Framework
 // ============================================================================
@@ -1031,3 +1033,5 @@ TEST(BehavioralPerformanceTest, NeurochemicalPerformance) {
 }
 
 // Note: main() is provided by GTest::gtest_main in CMakeLists.txt
+
+} // namespace

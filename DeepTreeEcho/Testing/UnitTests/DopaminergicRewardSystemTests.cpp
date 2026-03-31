@@ -23,6 +23,8 @@
 #include <algorithm>
 #include <limits>
 
+namespace {
+
 // ============================================================================
 // Minimal Unreal Engine mock for standalone compilation
 // ============================================================================
@@ -698,12 +700,14 @@ TEST_F(DopaminergicRewardSystemTest, CuedAnticipationLessThanConsummatory)
 
 TEST_F(DopaminergicRewardSystemTest, HighDopamineCausesReceptorDownregulation)
 {
-    // Force high NAcc dopamine
+    // Force high NAcc dopamine above downregulation threshold (0.75)
     System->GetMutableState().NAccDopamine = 0.9f;
     float D1Before = System->GetState().Receptors.D1Sensitivity;
     float D2Before = System->GetState().Receptors.D2Sensitivity;
 
-    SimulateSeconds(*System, 5.0f);
+    // Use short simulation time (0.3s) - DA stays above threshold before clearance
+    // brings it below, avoiding the subsequent recovery phase
+    SimulateSeconds(*System, 0.3f);
 
     EXPECT_LT(System->GetState().Receptors.D1Sensitivity, D1Before);
     EXPECT_LT(System->GetState().Receptors.D2Sensitivity, D2Before);
@@ -762,7 +766,9 @@ TEST_F(DopaminergicRewardSystemTest, PhasicFatigueReducesRepeatedBursts)
     System->RegisterRewardOutcome(1.0f);
     float FirstBurst = System->GetPhasicDopamine();
 
-    // Accumulate fatigue and trigger another burst
+    // Reset burst amplitude so the second burst can be compared cleanly,
+    // then accumulate fatigue and trigger another burst
+    System->GetMutableState().VTANeurons.PhasicBurstAmplitude = 0.0f;
     System->GetMutableState().VTANeurons.PhasicFatigue = 0.8f;
     System->SetValuePrediction(0.0f);
     System->RegisterRewardOutcome(1.0f);
@@ -797,8 +803,8 @@ TEST_F(DopaminergicRewardSystemTest, PhasicBurstIncreasesMotivationalDrive)
     float DriveBefore = System->GetMotivationalDrive();
 
     System->SetValuePrediction(0.0f);
-    System->RegisterRewardOutcome(1.0f); // Large positive RPE
-    System->Update(0.0f); // Apply motivational update without time advancing
+    System->RegisterRewardOutcome(1.0f); // Large positive RPE triggers phasic burst
+    System->Update(0.001f); // Advance by minimal time to apply motivational update
 
     float DriveAfter = System->GetMotivationalDrive();
     EXPECT_GT(DriveAfter, DriveBefore);
@@ -902,3 +908,5 @@ TEST_F(DopaminergicRewardSystemTest, ExtendedSimulationDoesNotDiverge)
 }
 
 
+
+} // namespace

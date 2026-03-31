@@ -18,6 +18,8 @@
 #include <random>
 #include <functional>
 
+namespace {
+
 // ============================================================================
 // Mock Types for Active Inference
 // ============================================================================
@@ -991,3 +993,5 @@ TEST(ActiveInferencePerformanceTest, ActionSelectionPerformance) {
     
     EXPECT_LT(duration.count(), 200);  // 5000 selections in under 200ms
 }
+
+} // namespace

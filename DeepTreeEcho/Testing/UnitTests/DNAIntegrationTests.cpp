@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <set>
 
+namespace {
+
 // ============================================================================
 // Mock Types for DNA Integration System
 // ============================================================================
@@ -1524,3 +1526,4 @@ TEST(IntegrationTest, FullVisualizationPipeline) {
     EXPECT_EQ(viz.GetMemoryConstellationNodeCount(), 2);
     EXPECT_GT(viz.GetParticleCount(), 0);
 }
+} // namespace

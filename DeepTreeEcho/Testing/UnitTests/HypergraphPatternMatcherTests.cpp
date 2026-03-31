@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+
 // ========================================
 // MOCK STRUCTURES FOR STANDALONE TESTING
 // ========================================
@@ -1401,11 +1403,5 @@ TEST_F(HypergraphPatternMatcherTest, MatchWithNullHypergraph) {
     EXPECT_FALSE(result.ErrorMessage.empty());
 }
 
-// ========================================
-// MAIN
-// ========================================
 
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+} // namespace

@@ -18,6 +18,8 @@
 #include <cmath>
 #include <random>
 
+namespace {
+
 // ============================================================================
 // Mock Types for Avatar System
 // ============================================================================
@@ -944,3 +946,5 @@ TEST(AnimationPerformanceTest, BlendShapeComputePerformance) {
     
     EXPECT_LT(duration.count(), 50);  // 1000 computations in under 50ms
 }
+
+} // namespace

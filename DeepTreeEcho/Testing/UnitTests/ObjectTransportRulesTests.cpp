@@ -20,6 +20,8 @@
 // Include mock header for standalone testing
 #include "ObjectTransportRulesMock.h"
 
+namespace {
+
 using ::testing::_;
 using ::testing::Return;
 using ::testing::AtLeast;
@@ -728,12 +730,6 @@ TEST_F(ObjectTransportRulesTest, MultiLevelTransport)
     EXPECT_GT(TransportRules->GetSymbols(SkinId).GetSymbolCount(FName("Message")), 0);
 }
 
-// ============================================================================
-// Main
-// ============================================================================
 
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+
+} // namespace

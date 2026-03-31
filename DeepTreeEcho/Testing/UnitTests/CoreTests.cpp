@@ -19,6 +19,8 @@
 #include <random>
 #include <thread>
 
+namespace {
+
 // Mock Unreal Engine types for standalone testing
 #ifndef WITH_UNREAL_ENGINE
 namespace FString { using Type = std::string; }
@@ -675,3 +677,5 @@ TEST(PerformanceTest, CycleProcessingPerformance) {
     EXPECT_LT(duration.count(), 100);  // 100 cycles in under 100ms
     EXPECT_EQ(manager.GetCycleCount(), 100);
 }
+
+} // namespace

@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <numeric>
 
+namespace {
+
 // Mock LSM structures for standalone testing (simulates UE environment)
 struct MockLIFNeuronState {
     int32_t NeuronID = 0;
@@ -639,3 +641,5 @@ TEST_F(LiquidStateMachineTest, Performance_SpikeEncoding) {
 // MAIN - Note: Using GTest's main from gtest_main
 // ============================================================================
 
+
+} // namespace
