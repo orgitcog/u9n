@@ -12,6 +12,11 @@ on:
         required: true
         default: true
         type: boolean
+      deduplicate:
+        description: 'Close duplicate open issues (keeps the lowest-numbered original)'
+        required: false
+        default: false
+        type: boolean
       create_labels:
         description: 'Create labels from config'
         required: false
@@ -43,8 +48,18 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
 
+      - name: Deduplicate Issues
+        if: inputs.deduplicate
+        run: |
+          python echodev/project-template/scripts/generate-issues.py \
+            --roadmap echodev/project-template/config/roadmap-data.json \
+            --org ${{ github.repository_owner }} \
+            --repo ${{ github.event.repository.name }} \
+            --deduplicate \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
       - name: Create Labels
-        if: inputs.create_labels
+        if: inputs.create_labels && !inputs.deduplicate
         run: |
           python echodev/project-template/scripts/generate-issues.py \
             --roadmap echodev/project-template/config/roadmap-data.json \
@@ -55,7 +70,7 @@ jobs:
             ${{ inputs.dry_run && '--dry-run' || '' }}
 
       - name: Create Milestones
-        if: inputs.create_milestones
+        if: inputs.create_milestones && !inputs.deduplicate
         run: |
           python echodev/project-template/scripts/generate-issues.py \
             --roadmap echodev/project-template/config/roadmap-data.json \
@@ -66,7 +81,7 @@ jobs:
             ${{ inputs.dry_run && '--dry-run' || '' }}
 
       - name: Generate Issues for Specific Epic
-        if: inputs.epic != ''
+        if: inputs.epic != '' && !inputs.deduplicate
         run: |
           python echodev/project-template/scripts/generate-issues.py \
             --roadmap echodev/project-template/config/roadmap-data.json \
@@ -76,7 +91,7 @@ jobs:
             ${{ inputs.dry_run && '--dry-run' || '' }}
 
       - name: Generate All Issues
-        if: inputs.epic == ''
+        if: inputs.epic == '' && !inputs.deduplicate
         run: |
           python echodev/project-template/scripts/generate-issues.py \
             --roadmap echodev/project-template/config/roadmap-data.json \
@@ -89,12 +104,14 @@ jobs:
           echo "## Issue Generation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ "${{ inputs.dry_run }}" == "true" ]; then
-            echo "**Mode:** Dry Run (no issues created)" >> $GITHUB_STEP_SUMMARY
+            echo "**Mode:** Dry Run (no changes made)" >> $GITHUB_STEP_SUMMARY
           else
-            echo "**Mode:** Live (issues created)" >> $GITHUB_STEP_SUMMARY
+            echo "**Mode:** Live" >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -n "${{ inputs.epic }}" ]; then
+          if [ "${{ inputs.deduplicate }}" == "true" ]; then
+            echo "**Action:** Deduplicate issues" >> $GITHUB_STEP_SUMMARY
+          elif [ -n "${{ inputs.epic }}" ]; then
             echo "**Epic:** ${{ inputs.epic }}" >> $GITHUB_STEP_SUMMARY
           else
             echo "**Epic:** All" >> $GITHUB_STEP_SUMMARY

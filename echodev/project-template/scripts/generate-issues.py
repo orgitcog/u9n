@@ -9,6 +9,8 @@ Usage:
     python generate-issues.py --roadmap roadmap.json --org orgitcog --repo u9n
     python generate-issues.py --roadmap roadmap.json --dry-run
     python generate-issues.py --roadmap roadmap.json --epic E1 --org orgitcog --repo u9n
+    python generate-issues.py --roadmap roadmap.json --deduplicate
+    python generate-issues.py --roadmap roadmap.json --deduplicate --dry-run
 """
 
 import argparse
@@ -17,7 +19,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from datetime import datetime
 
 
@@ -162,10 +164,102 @@ class IssueGenerator:
         self.repo = repo
         self.dry_run = dry_run
         self.created_issues: Dict[str, int] = {}
-        
-    def create_issue(self, title: str, body: str, labels: List[str], 
+        self._existing_titles: Optional[Dict[str, int]] = None
+
+    def _load_existing_issues(self) -> Dict[str, int]:
+        """Fetch all open issue titles from the repo (title -> lowest issue number)."""
+        if self._existing_titles is not None:
+            return self._existing_titles
+        print(f"  Fetching existing open issues from {self.org}/{self.repo}...")
+        cmd = [
+            "gh", "issue", "list",
+            "--repo", f"{self.org}/{self.repo}",
+            "--state", "open",
+            "--limit", "2000",
+            "--json", "number,title",
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            items = json.loads(result.stdout)
+            # Map title -> lowest issue number (keep the original)
+            mapping: Dict[str, int] = {}
+            for item in sorted(items, key=lambda x: x["number"]):
+                title = item["title"]
+                if title not in mapping:
+                    mapping[title] = item["number"]
+            self._existing_titles = mapping
+            print(f"  Found {len(mapping)} existing open issues.")
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"  Warning: could not fetch existing issues: {e}")
+            self._existing_titles = {}
+        return self._existing_titles
+
+    def issue_exists(self, title: str) -> Optional[int]:
+        """Return the existing issue number if an open issue with this title exists, else None."""
+        existing = self._load_existing_issues()
+        return existing.get(title)
+
+    def deduplicate_issues(self) -> None:
+        """Close all duplicate open issues, keeping the lowest-numbered original."""
+        print(f"\nFetching all open issues from {self.org}/{self.repo} for deduplication...")
+        cmd = [
+            "gh", "issue", "list",
+            "--repo", f"{self.org}/{self.repo}",
+            "--state", "open",
+            "--limit", "2000",
+            "--json", "number,title",
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            items = json.loads(result.stdout)
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"  Error fetching issues: {e}")
+            return
+
+        # Group by title, sorted by number ascending
+        title_map: Dict[str, List[int]] = {}
+        for item in sorted(items, key=lambda x: x["number"]):
+            title_map.setdefault(item["title"], []).append(item["number"])
+
+        duplicates = {t: nums for t, nums in title_map.items() if len(nums) > 1}
+        if not duplicates:
+            print("  No duplicate open issues found.")
+            return
+
+        total_to_close = sum(len(v) - 1 for v in duplicates.values())
+        print(f"  Found {len(duplicates)} duplicate groups, {total_to_close} issues to close.")
+
+        closed = 0
+        skipped = 0
+        for title, nums in sorted(duplicates.items()):
+            keep = nums[0]
+            for dup_num in nums[1:]:
+                if self.dry_run:
+                    print(f"  [DRY RUN] Would close #{dup_num} (duplicate of #{keep}): {title}")
+                    skipped += 1
+                else:
+                    close_cmd = [
+                        "gh", "issue", "close", str(dup_num),
+                        "--repo", f"{self.org}/{self.repo}",
+                    ]
+                    try:
+                        subprocess.run(close_cmd, capture_output=True, text=True, check=True)
+                        print(f"  Closed #{dup_num} (duplicate of #{keep}): {title}")
+                        closed += 1
+                    except subprocess.CalledProcessError as e:
+                        print(f"  Error closing #{dup_num}: {e.stderr.strip()}")
+                        skipped += 1
+
+        print(f"\nDeduplication complete: {closed} closed, {skipped} skipped.")
+
+    def create_issue(self, title: str, body: str, labels: List[str],
                      milestone: Optional[str] = None) -> Optional[int]:
-        """Create a GitHub issue using gh CLI."""
+        """Create a GitHub issue using gh CLI, skipping if one already exists."""
+        existing_num = self.issue_exists(title)
+        if existing_num is not None:
+            print(f"  Skipping (already exists as #{existing_num}): {title}")
+            return existing_num
+
         if self.dry_run:
             print(f"\n[DRY RUN] Would create issue:")
             print(f"  Title: {title}")
@@ -173,26 +267,28 @@ class IssueGenerator:
             print(f"  Milestone: {milestone}")
             print(f"  Body preview: {body[:200]}...")
             return None
-        
+
         cmd = [
             "gh", "issue", "create",
             "--repo", f"{self.org}/{self.repo}",
             "--title", title,
             "--body", body
         ]
-        
+
         for label in labels:
             cmd.extend(["--label", label])
-        
+
         if milestone:
             cmd.extend(["--milestone", milestone])
-        
+
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             # Extract issue number from URL
             issue_url = result.stdout.strip()
             issue_num = int(issue_url.split("/")[-1])
             print(f"  Created: {issue_url}")
+            # Register in cache to prevent duplicates within this run
+            self._existing_titles[title] = issue_num
             return issue_num
         except subprocess.CalledProcessError as e:
             print(f"  Error creating issue: {e.stderr}")
@@ -391,7 +487,12 @@ def main():
     parser.add_argument(
         "--dry-run", "-n",
         action="store_true",
-        help="Show what would be created without actually creating"
+        help="Show what would be created/closed without actually doing it"
+    )
+    parser.add_argument(
+        "--deduplicate",
+        action="store_true",
+        help="Close duplicate open issues, keeping the lowest-numbered original"
     )
     parser.add_argument(
         "--create-labels",
@@ -420,7 +521,12 @@ def main():
     
     # Initialize generator
     generator = IssueGenerator(args.org, args.repo, args.dry_run)
-    
+
+    # Deduplicate existing issues if requested
+    if args.deduplicate:
+        generator.deduplicate_issues()
+        return
+
     # Create labels if requested
     if args.create_labels and args.labels_config:
         labels_config = load_roadmap(args.labels_config)
