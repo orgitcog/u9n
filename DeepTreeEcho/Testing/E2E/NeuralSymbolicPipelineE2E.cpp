@@ -174,7 +174,8 @@ public:
         float CoActivationThreshold = 0.2f;
     };
     
-    void Initialize(const Config& config = Config())
+    void Initialize() { Initialize(Config{}); }
+    void Initialize(const Config& config)
     {
         Cfg = config;
         AtomIDCounter = 0;
@@ -416,7 +417,8 @@ public:
         float SmoothingFactor = 0.3f;
     };
     
-    void Initialize(const Config& config = Config())
+    void Initialize() { Initialize(Config{}); }
+    void Initialize(const Config& config)
     {
         Cfg = config;
         EmbeddingIDCounter = 0;
@@ -626,7 +628,8 @@ public:
         size_t BatchThreshold = 10;
     };
     
-    void Initialize(const Config& config = Config())
+    void Initialize() { Initialize(Config{}); }
+    void Initialize(const Config& config)
     {
         Cfg = config;
         MessageIDCounter = 0;
