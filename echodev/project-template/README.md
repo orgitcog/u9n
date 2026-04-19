@@ -66,7 +66,28 @@ python scripts/generate-issues.py \
   --repo u9n
 ```
 
-### 3. Create Labels and Milestones
+### 3. Deduplicate Issues
+
+If duplicate issues were accidentally created, you can close them while keeping the lowest-numbered original:
+
+```bash
+# Dry run to preview what would be closed
+python scripts/generate-issues.py \
+  --roadmap config/roadmap-data.json \
+  --org orgitcog \
+  --repo u9n \
+  --deduplicate \
+  --dry-run
+
+# Actually close duplicates
+python scripts/generate-issues.py \
+  --roadmap config/roadmap-data.json \
+  --org orgitcog \
+  --repo u9n \
+  --deduplicate
+```
+
+### 4. Create Labels and Milestones
 
 ```bash
 # Create labels
@@ -86,7 +107,7 @@ python scripts/generate-issues.py \
   --milestones-config config/milestones.json
 ```
 
-### 4. Generate Cross-Org Progress Report
+### 5. Generate Cross-Org Progress Report
 
 ```bash
 python scripts/sync-orgs.py \
@@ -95,7 +116,7 @@ python scripts/sync-orgs.py \
   --output progress-report.md
 ```
 
-### 5. Create Tracking Issue
+### 6. Create Tracking Issue
 
 ```bash
 python scripts/sync-orgs.py \
@@ -105,7 +126,7 @@ python scripts/sync-orgs.py \
   --target-repo u9n
 ```
 
-### 6. Sync Labels Between Repos
+### 7. Sync Labels Between Repos
 
 ```bash
 python scripts/sync-orgs.py \
@@ -147,7 +168,29 @@ Edit `config/labels.json` to add or modify labels.
 
 ## GitHub Actions
 
-The template includes a workflow that:
+The template includes workflows for:
+
+### Generate Roadmap Issues Workflow
+
+**Location:** `.github/workflows/generate-issues.yml`
+
+This workflow can be manually triggered via **Actions → Generate Roadmap Issues → Run workflow** with the following options:
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `epic` | (blank) | Specific Epic to generate (e.g., E1, E2). Leave blank for all. |
+| `dry_run` | `true` | Dry run mode - preview what would be created without making changes. |
+| `deduplicate` | `false` | Close duplicate open issues (keeps the lowest-numbered original). |
+| `create_labels` | `false` | Create labels from config. |
+| `create_milestones` | `false` | Create milestones from config. |
+
+**Important:** The script has built-in idempotency - it checks for existing issues by title before creating new ones. Re-running the workflow will skip issues that already exist.
+
+### Cross-Org Progress Sync Workflow
+
+**Location:** `.github/workflows/sync-progress.yml`
+
+This workflow:
 
 - Runs weekly on Mondays at 9 AM UTC
 - Generates a progress report
