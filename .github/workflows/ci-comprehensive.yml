@@ -115,16 +115,19 @@ jobs:
             ${{ runner.os }}-build-
 
       - name: Configure CMake
+        shell: bash
         run: |
-          cmake -B build \
+          cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DBUILD_TESTING=ON \
             -DENABLE_COVERAGE=${{ matrix.build_type == 'Debug' && runner.os == 'Linux' }}
 
       - name: Build
+        shell: bash
         run: cmake --build build --config ${{ matrix.build_type }} -j $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 
       - name: Run Unit Tests
+        shell: bash
         run: |
           cd build
           ctest --output-on-failure --parallel 2 -L unit -C ${{ matrix.build_type }}
@@ -170,17 +173,20 @@ jobs:
 
       - name: Configure CMake
         working-directory: ReservoirEcho/reservoircpp_cpp
+        shell: bash
         run: |
-          cmake -B build \
+          cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DBUILD_TESTING=ON
 
       - name: Build
         working-directory: ReservoirEcho/reservoircpp_cpp
+        shell: bash
         run: cmake --build build --config ${{ matrix.build_type }} -j 2
 
       - name: Run Tests
         working-directory: ReservoirEcho/reservoircpp_cpp/build
+        shell: bash
         run: ctest --output-on-failure --parallel 2 -C ${{ matrix.build_type }}
 
       - name: Upload test results
@@ -261,16 +267,19 @@ jobs:
           key: ${{ runner.os }}-e2e-${{ hashFiles('**/CMakeLists.txt') }}
 
       - name: Configure CMake
+        shell: bash
         run: |
-          cmake -B build \
+          cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTING=ON \
             -DBUILD_E2E_TESTS=ON
 
       - name: Build E2E Tests
+        shell: bash
         run: cmake --build build --config Release -j $(nproc)
 
       - name: Run E2E Tests
+        shell: bash
         run: |
           cd build
           ctest --output-on-failure --parallel 1 -L e2e -C Release --timeout 600
@@ -305,11 +314,13 @@ jobs:
           sudo apt-get install -y libgtest-dev libeigen3-dev libboost-all-dev
 
       - name: Configure and Build
+        shell: bash
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
           cmake --build build --config Release -j $(nproc)
 
       - name: Run Stress Tests
+        shell: bash
         run: |
           cd build
           ctest --output-on-failure -R "Stress" -C Release --timeout 1800
@@ -337,13 +348,15 @@ jobs:
           sudo apt-get install -y libgtest-dev libeigen3-dev libboost-all-dev libbenchmark-dev
 
       - name: Configure and Build
+        shell: bash
         run: |
-          cmake -B build \
+          cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_BENCHMARKS=ON
           cmake --build build --config Release -j $(nproc)
 
       - name: Run Benchmarks
+        shell: bash
         run: |
           cd build
           ctest --output-on-failure -R "Performance|Benchmark" -C Release
@@ -379,14 +392,16 @@ jobs:
           pip install gcovr pytest pytest-cov
 
       - name: Configure with coverage
+        shell: bash
         run: |
-          cmake -B build \
+          cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON \
             -DENABLE_COVERAGE=ON \
             -DCMAKE_CXX_FLAGS="--coverage -fprofile-arcs -ftest-coverage"
 
       - name: Build and test
+        shell: bash
         run: |
           cmake --build build --config Debug -j $(nproc)
           cd build && ctest --output-on-failure -C Debug || true

@@ -63,6 +63,10 @@ struct FString
     FString& operator+=(const std::string& Other) { Value += Other; return *this; }
     FString operator+(const std::string& Other) const { return FString(Value + Other); }
     
+    bool operator==(const FString& Other) const { return Value == Other.Value; }
+    bool operator!=(const FString& Other) const { return Value != Other.Value; }
+    bool operator<(const FString& Other) const { return Value < Other.Value; }
+    
     const char* operator*() const { return Value.c_str(); }
 };
 
