@@ -634,8 +634,14 @@ TEST_F(LiquidStateMachineTest, Performance_SpikeEncoding) {
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-    // Should be fast (<100ms for 100 encodings)
-    EXPECT_LT(duration.count(), 100);
+    // Should be fast (<100ms for 100 encodings).
+    // Windows Debug builds are consistently slower in CI due to instrumentation overhead.
+#if defined(_WIN32) && !defined(NDEBUG)
+    constexpr auto kSpikeEncodingThresholdMs = 150;
+#else
+    constexpr auto kSpikeEncodingThresholdMs = 100;
+#endif
+    EXPECT_LT(duration.count(), kSpikeEncodingThresholdMs);
 }
 
 // ============================================================================
