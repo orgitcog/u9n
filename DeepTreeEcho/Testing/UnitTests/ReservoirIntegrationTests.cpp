@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <chrono>
 #include <memory>
 #include <vector>
 #include <random>
@@ -702,11 +703,12 @@ TEST(TemporalPatternTest, SequenceProcessing) {
     
     esn.Initialize(config);
     
+    constexpr double kPi = 3.14159265358979323846;
     // Process a sine wave sequence
     std::vector<Vector> outputs;
     for (int t = 0; t < 100; t++) {
         Vector input(1);
-        input(0) = std::sin(2.0 * M_PI * t / 20.0);
+        input(0) = std::sin(2.0 * kPi * t / 20.0);
         outputs.push_back(esn.Forward(input));
     }
     

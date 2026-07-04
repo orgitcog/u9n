@@ -30,6 +30,7 @@
 #include <cmath>
 #include <algorithm>
 #include <functional>
+#include <numeric>
 
 // ============================================================================
 // NEURAL-SYMBOLIC PIPELINE E2E TEST TYPES
@@ -938,10 +939,11 @@ protected:
         FTestNeuralState state;
         state.StateID = "neural_pattern_" + std::to_string(pattern);
         state.Activations.resize(dim);
+        constexpr float kPi = 3.14159265358979323846f;
         
         for (int i = 0; i < dim; i++)
         {
-            state.Activations[i] = std::sin(2.0f * M_PI * i / dim * pattern) * 0.8f;
+            state.Activations[i] = std::sin(2.0f * kPi * i / dim * pattern) * 0.8f;
         }
         
         state.Confidence = 0.95f;

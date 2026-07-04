@@ -15,6 +15,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <chrono>
 #include <memory>
 #include <vector>
 #include <cmath>
