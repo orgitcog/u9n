@@ -62,14 +62,34 @@ struct FPredicate {
 ### API
 
 ```cpp
-// Translate a single activation tensor
-TArray<FSymbolicAtom> TranslateTensor(const TArray<float>& Activations);
+// Translate a single activation tensor to a symbolic atom
+FSymbolicAtom TranslateTensor(const TArray<float>& Tensor);
+
+// Translate activation map to predicates
+TArray<FPredicate> TranslateActivations(const FActivationMap& Activations);
+
+// Translate complete neural state to symbolic state
+FSymbolicState TranslateNeuralState(const FNeuralState& State);
 
 // Batch translate multiple tensors
-TArray<FTranslationResult> TranslateBatch(const TArray<TArray<float>>& Batch);
+TArray<FSymbolicAtom> BatchTranslateTensors(const TArray<TArray<float>>& Tensors);
 
-// Generate predicates from atom patterns
-TArray<FPredicate> GeneratePredicates(const TArray<FSymbolicAtom>& Atoms);
+// Batch translate multiple neural states
+TArray<FSymbolicState> BatchTranslateStates(const TArray<FNeuralState>& States);
+
+// Atom factory
+FSymbolicAtom CreateAtomFromActivation(float ActivationValue, int32 FeatureIndex, const FString& AtomType);
+TArray<FSymbolicAtom> CreateAtomsFromActivationVector(const TArray<float>& Activations, const FString& AtomType);
+FPredicate CreatePredicateFromAtoms(const FSymbolicAtom& Atom1, const FSymbolicAtom& Atom2, const FString& PredicateName);
+
+// Discretization & Confidence
+int32 DiscretizeActivation(float ActivationValue) const;
+bool ShouldCreateAtom(float ActivationValue) const;
+float CalculateConfidence(float ActivationValue) const;
+
+// Uncertainty propagation
+float PropagateUncertainty(float NeuralConfidence, int32 FeatureCount) const;
+float CalculatePredicateUncertainty(const TArray<FSymbolicAtom>& InputAtoms) const;
 ```
 
 ### Performance Targets
