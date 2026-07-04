@@ -29,8 +29,10 @@ jobs:
           fetch-depth: 0
 
       - name: Check PR title format
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          TITLE="${{ github.event.pull_request.title }}"
+          TITLE="$PR_TITLE"
           echo "PR Title: $TITLE"
 
           # Check for conventional commit format (optional enforcement)
@@ -43,8 +45,10 @@ jobs:
           fi
 
       - name: Check PR description
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          BODY="${{ github.event.pull_request.body }}"
+          BODY="$PR_BODY"
           if [ -z "$BODY" ] || [ ${#BODY} -lt 10 ]; then
             echo "⚠ PR description is empty or too short"
             echo "Please add a meaningful description of your changes"
@@ -53,8 +57,10 @@ jobs:
           fi
 
       - name: Check for linked issues
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          BODY="${{ github.event.pull_request.body }}"
+          BODY="$PR_BODY"
           if [[ "$BODY" =~ (close[sd]?|fix(e[sd])?|resolve[sd]?)\ +#[0-9]+ ]]; then
             echo "✓ PR links to an issue"
           else
