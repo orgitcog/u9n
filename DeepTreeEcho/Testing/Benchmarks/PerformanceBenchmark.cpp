@@ -9,6 +9,7 @@
 #include "PerformanceBenchmark.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <numeric>

@@ -386,10 +386,11 @@ protected:
     
     std::vector<Vector> GenerateSineSequence(int length, int dim) {
         std::vector<Vector> sequence;
+        constexpr double kPi = 3.14159265358979323846;
         for (int t = 0; t < length; t++) {
             Vector v(dim);
             for (int i = 0; i < dim; i++) {
-                v(i) = std::sin(2.0 * M_PI * t / 20.0 + i * 0.1);
+                v(i) = std::sin(2.0 * kPi * t / 20.0 + i * 0.1);
             }
             sequence.push_back(v);
         }

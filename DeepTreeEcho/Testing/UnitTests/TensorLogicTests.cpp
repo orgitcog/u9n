@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <array>
+#include <chrono>
 #include <vector>
 #include <unordered_map>
 #include <cmath>

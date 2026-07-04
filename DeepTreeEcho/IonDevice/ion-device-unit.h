@@ -80,6 +80,9 @@ struct IonDeviceUnitEntelechy {
 // ═══ Device Driver ═════════════════════════════════════════════════════════
 class IonDeviceUnit : public DeviceDriver {
 public:
+    IonDeviceUnit()
+        : DeviceDriver("IonDeviceUnit", "1.0.0") {}
+
     bool load(VirtualPCB* pcb_) override;
     bool initialize() override;
     bool probe() override;

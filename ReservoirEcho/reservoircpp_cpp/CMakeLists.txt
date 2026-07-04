@@ -75,6 +75,12 @@ target_include_directories(deep_tree_echo PUBLIC
 )
 target_link_libraries(deep_tree_echo PUBLIC reservoircpp_core)
 
+if(WIN32 AND BUILD_SHARED_LIBS)
+    set_target_properties(reservoircpp_core deep_tree_echo PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+    )
+endif()
+
 # Add tests
 # Support both BUILD_TESTS and BUILD_TESTING for compatibility
 option(BUILD_TESTS "Build the tests" OFF)
