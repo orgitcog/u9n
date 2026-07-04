@@ -224,7 +224,11 @@ TArray<FInsightEntry> UNarrativeMemoryPipeline::GenerateInsights()
     WisdomLevel += NewInsights.Num() * 0.01f;
     WisdomLevel  = FMath::Clamp(WisdomLevel, 0.0f, 1.0f);
 
-    UnprocessedDiaryCount = 0;
+    // Only mark diary entries as processed if we actually generated insights
+    if (NewInsights.Num() > 0)
+    {
+        UnprocessedDiaryCount = 0;
+    }
 
     if (Insights.Num() > MaxInsights)
     {
@@ -562,8 +566,12 @@ void UNarrativeMemoryPipeline::PruneDiary()
 {
     if (DiaryEntries.Num() <= MaxDiaryEntries) return;
 
-    // Discard oldest quarter
     int32 ToRemove = DiaryEntries.Num() - MaxDiaryEntries;
+
+    // Reduce unprocessed count by number of unprocessed entries being removed
+    // (oldest entries are most likely to be unprocessed if insight gen hasn't run)
+    UnprocessedDiaryCount = FMath::Max(0, UnprocessedDiaryCount - ToRemove);
+
     DiaryEntries.RemoveAt(0, ToRemove, /*bAllowShrinking=*/false);
 }
 
@@ -571,12 +579,22 @@ void UNarrativeMemoryPipeline::PruneInsights()
 {
     if (Insights.Num() <= MaxInsights) return;
 
-    // Sort ascending by confidence then trim the weakest
-    Algo::Sort(Insights, [](const FInsightEntry& A, const FInsightEntry& B)
-    {
-        return A.Confidence < B.Confidence;
-    });
-
     int32 ToRemove = Insights.Num() - MaxInsights;
-    Insights.RemoveAt(0, ToRemove, /*bAllowShrinking=*/false);
+
+    // Remove lowest-confidence entries without reordering the array.
+    // Find and remove them one at a time to preserve insertion order (recency).
+    for (int32 i = 0; i < ToRemove; ++i)
+    {
+        int32 WeakestIdx = 0;
+        float WeakestConf = Insights[0].Confidence;
+        for (int32 j = 1; j < Insights.Num(); ++j)
+        {
+            if (Insights[j].Confidence < WeakestConf)
+            {
+                WeakestConf = Insights[j].Confidence;
+                WeakestIdx = j;
+            }
+        }
+        Insights.RemoveAt(WeakestIdx, 1, /*bAllowShrinking=*/false);
+    }
 }

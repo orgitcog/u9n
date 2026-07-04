@@ -38,7 +38,11 @@ namespace echo {
 class EngineOwner {
 public:
     explicit EngineOwner(const EchoConfig& cfg) {
-        if (echo_engine_init(&engine_, &cfg) != ECHO_OK) {
+        int result = echo_engine_init(&engine_, &cfg);
+        if (result != ECHO_OK) {
+            // Clean up any partial allocation from failed init
+            echo_engine_free(&engine_);
+            engine_ = {};
             initialized_ = false;
         } else {
             initialized_ = true;
@@ -58,6 +62,7 @@ public:
     EngineOwner(EngineOwner&& o) noexcept
         : engine_(o.engine_), initialized_(o.initialized_) {
         o.initialized_ = false;
+        o.engine_ = {};  // Zero out source to prevent accidental use of stale pointers
     }
 
     bool valid()    const { return initialized_; }

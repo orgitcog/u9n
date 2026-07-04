@@ -58,6 +58,9 @@ bool IonDeviceUnit::initialize() {
     // Issue INIT command — device transitions to READY
     write_reg32(REG_ION_CMD, CMD_INIT);
 
+    // Set device status to READY after successful initialization
+    write_reg32(REG_ION_STATUS, STATUS_READY);
+
     // Clear cached telemetry snapshot
     telemetry_ = {};
 
