@@ -9,6 +9,10 @@ public class UnrealEcho : ModuleRules
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
+		// SECURITY NOTE: This module intentionally does NOT use PreBuildSteps or
+		// PostBuildSteps. Any addition of build steps requires explicit security
+		// review per SECURITY.md policy. See issue #603.
+
 		// UnrealEcho source directories (relative to repository root)
 		string UnrealEchoRoot = Path.GetFullPath(Path.Combine(ModuleDirectory, "../../UnrealEcho"));
 		string DeepTreeEchoRoot = Path.GetFullPath(Path.Combine(ModuleDirectory, "../../DeepTreeEcho"));
