@@ -12,6 +12,7 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <chrono>
 #include <memory>
 #include <vector>
 #include <cmath>
