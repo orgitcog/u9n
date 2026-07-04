@@ -34,7 +34,7 @@ jobs:
     name: Code Quality
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -80,7 +80,7 @@ jobs:
             build_type: Debug
     
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -104,7 +104,7 @@ jobs:
           brew install googletest eigen boost
 
       - name: Cache build
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             build
@@ -152,7 +152,7 @@ jobs:
         build_type: [Release]
     
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -166,7 +166,7 @@ jobs:
           sudo apt-get install -y libgtest-dev libeigen3-dev
 
       - name: Cache build
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ReservoirEcho/reservoircpp_cpp/build
           key: ${{ runner.os }}-reservoircpp-${{ matrix.build_type }}-${{ hashFiles('ReservoirEcho/reservoircpp_cpp/CMakeLists.txt') }}
@@ -207,7 +207,7 @@ jobs:
         python-version: ['3.9', '3.10', '3.11']
     
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -248,7 +248,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || github.event.inputs.run_e2e == 'true'
     
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -261,7 +261,7 @@ jobs:
           sudo apt-get install -y libgtest-dev libeigen3-dev libboost-all-dev
 
       - name: Cache build
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: build
           key: ${{ runner.os }}-e2e-${{ hashFiles('**/CMakeLists.txt') }}
@@ -301,7 +301,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_stress == 'true'
     
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -335,7 +335,7 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
     
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -376,7 +376,7 @@ jobs:
     needs: [unit-tests-deeptreeecho, unit-tests-python]
     
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -426,7 +426,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Doxygen
         run: |
