@@ -224,6 +224,11 @@ public:
         }
         WriteBuffer.Count += ToWrite;
         WriteBuffer.FrameNumber = FrameCounter;
+
+        if (Config.SyncPolicy == ESyncPolicy::Immediate && bIsActive && ToWrite > 0)
+        {
+            ForceSync();
+        }
         return ToWrite;
     }
 
@@ -360,6 +365,7 @@ public:
     {
         if (!bIsActive) return;
         FrameCounter++;
+        BatchTimeAccumulator += DeltaTime;
         Metrics.FramesSinceLastSync = static_cast<int32_t>(FrameCounter - LastSyncFrame);
         Metrics.PendingNeuralUpdates = NeuralBuffers[NeuralWriteIndex].Count;
         Metrics.PendingSymbolicUpdates = SymbolicBuffers[SymbolicWriteIndex].Count;
@@ -374,6 +380,7 @@ public:
         if (ShouldSync(DeltaTime))
         {
             ForceSync();
+            BatchTimeAccumulator = 0.0f;
         }
     }
 
@@ -392,25 +399,31 @@ private:
     int64_t FrameCounter = 0;
     int64_t LastSyncFrame = 0;
     double SyncLatencySum = 0.0;
-    int32_t PreviousCognitiveStep = 0;
+    int32_t PreviousCognitiveStep = 1;
 
     void PerformBufferSwap()
     {
-        // Swap neural buffers
-        NeuralBuffers[NeuralWriteIndex].State = EBufferState::Swapping;
-        int32_t OldWrite = NeuralWriteIndex;
-        NeuralWriteIndex = 1 - NeuralWriteIndex;
-        NeuralBuffers[NeuralWriteIndex].Clear();
-        NeuralBuffers[NeuralWriteIndex].State = EBufferState::Writing;
-        NeuralBuffers[OldWrite].State = EBufferState::Reading;
+        // Only swap a buffer pair if the write buffer has data
+        if (NeuralBuffers[NeuralWriteIndex].Count > 0)
+        {
+            NeuralBuffers[NeuralWriteIndex].State = EBufferState::Swapping;
+            int32_t OldWrite = NeuralWriteIndex;
+            NeuralWriteIndex = 1 - NeuralWriteIndex;
+            NeuralBuffers[NeuralWriteIndex].Clear();
+            NeuralBuffers[NeuralWriteIndex].State = EBufferState::Writing;
+            NeuralBuffers[OldWrite].State = EBufferState::Reading;
+        }
 
-        // Swap symbolic buffers
-        SymbolicBuffers[SymbolicWriteIndex].State = EBufferState::Swapping;
-        OldWrite = SymbolicWriteIndex;
-        SymbolicWriteIndex = 1 - SymbolicWriteIndex;
-        SymbolicBuffers[SymbolicWriteIndex].Clear();
-        SymbolicBuffers[SymbolicWriteIndex].State = EBufferState::Writing;
-        SymbolicBuffers[OldWrite].State = EBufferState::Reading;
+        // Only swap symbolic buffers if write buffer has data
+        if (SymbolicBuffers[SymbolicWriteIndex].Count > 0)
+        {
+            SymbolicBuffers[SymbolicWriteIndex].State = EBufferState::Swapping;
+            int32_t OldWrite = SymbolicWriteIndex;
+            SymbolicWriteIndex = 1 - SymbolicWriteIndex;
+            SymbolicBuffers[SymbolicWriteIndex].Clear();
+            SymbolicBuffers[SymbolicWriteIndex].State = EBufferState::Writing;
+            SymbolicBuffers[OldWrite].State = EBufferState::Reading;
+        }
 
         Metrics.TotalSwapCount++;
         Metrics.TotalSyncCount++;
@@ -423,7 +436,7 @@ private:
         case ESyncPolicy::Immediate:
             return false; // handled in Submit methods
         case ESyncPolicy::Batched:
-            return (BatchTimeAccumulator + DeltaTime) >= Config.BatchIntervalSeconds;
+            return BatchTimeAccumulator >= Config.BatchIntervalSeconds;
         case ESyncPolicy::CycleAligned:
             if (CurrentCognitiveStep != PreviousCognitiveStep)
             {

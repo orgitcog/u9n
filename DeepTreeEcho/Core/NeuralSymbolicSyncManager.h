@@ -300,9 +300,9 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "SyncManager|State")
     bool bIsActive = false;
 
-    /** Current cognitive step (cached from CycleManager) */
+    /** Current cognitive step (cached from CycleManager, 1-12) */
     UPROPERTY(BlueprintReadOnly, Category = "SyncManager|State")
-    int32 CurrentCognitiveStep = 0;
+    int32 CurrentCognitiveStep = 1;
 
     // ========================================
     // PUBLIC API - LIFECYCLE
@@ -465,5 +465,5 @@ private:
     double SyncLatencySum = 0.0;
 
     /** Previous cognitive step (to detect transitions) */
-    int32 PreviousCognitiveStep = 0;
+    int32 PreviousCognitiveStep = 1;
 };

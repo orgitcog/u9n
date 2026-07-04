@@ -18,6 +18,7 @@ void UNeuralSymbolicSyncManager::BeginPlay()
 {
     Super::BeginPlay();
     Initialize();
+    Start();
 }
 
 void UNeuralSymbolicSyncManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -37,6 +38,9 @@ void UNeuralSymbolicSyncManager::TickComponent(float DeltaTime, ELevelTick TickT
 
     FrameCounter++;
     Metrics.FramesSinceLastSync = static_cast<int32>(FrameCounter - LastSyncFrame);
+
+    // Accumulate time for batched policy
+    BatchTimeAccumulator += DeltaTime;
 
     // Cache current cognitive step from cycle manager
     if (CycleManager)
@@ -61,6 +65,7 @@ void UNeuralSymbolicSyncManager::TickComponent(float DeltaTime, ELevelTick TickT
     if (ShouldSync(DeltaTime))
     {
         ForceSync();
+        BatchTimeAccumulator = 0.0f;
     }
 }
 
@@ -191,6 +196,12 @@ int32 UNeuralSymbolicSyncManager::SubmitNeuralBatch(const TArray<TArray<float>>&
     WriteBuffer.Count += ToWrite;
     WriteBuffer.FrameNumber = FrameCounter;
 
+    // Immediate policy triggers sync on every write
+    if (Config.SyncPolicy == ESyncPolicy::Immediate && bIsActive && ToWrite > 0)
+    {
+        ForceSync();
+    }
+
     return ToWrite;
 }
 
@@ -255,6 +266,12 @@ int32 UNeuralSymbolicSyncManager::SubmitSymbolicBatch(const TArray<FString>& Sym
     }
     WriteBuffer.Count += ToWrite;
     WriteBuffer.FrameNumber = FrameCounter;
+
+    // Immediate policy triggers sync on every write
+    if (Config.SyncPolicy == ESyncPolicy::Immediate && bIsActive && ToWrite > 0)
+    {
+        ForceSync();
+    }
 
     return ToWrite;
 }
@@ -326,7 +343,8 @@ bool UNeuralSymbolicSyncManager::IsSyncPending() const
         return BatchTimeAccumulator >= Config.BatchIntervalSeconds;
 
     case ESyncPolicy::CycleAligned:
-        return IsAtSyncPoint();
+        // Consistent with ShouldSync: only pending when transitioning into a sync point
+        return (CurrentCognitiveStep != PreviousCognitiveStep) && IsAtSyncPoint();
 
     case ESyncPolicy::OnDemand:
         return false;
@@ -403,7 +421,11 @@ bool UNeuralSymbolicSyncManager::IsBufferPressureHigh() const
 
 void UNeuralSymbolicSyncManager::PerformBufferSwap()
 {
-    // Swap neural buffers
+    // Only swap a buffer pair if the write buffer has data.
+    // Swapping an empty write buffer would clear the read buffer (destroying unconsumed data).
+
+    // Swap neural buffers (only if write buffer has data)
+    if (NeuralBuffers[NeuralWriteIndex].Count > 0)
     {
         NeuralBuffers[NeuralWriteIndex].State = EBufferState::Swapping;
         const int32 OldWrite = NeuralWriteIndex;
@@ -419,7 +441,8 @@ void UNeuralSymbolicSyncManager::PerformBufferSwap()
         NeuralBuffers[OldWrite].State = EBufferState::Reading;
     }
 
-    // Swap symbolic buffers
+    // Swap symbolic buffers (only if write buffer has data)
+    if (SymbolicBuffers[SymbolicWriteIndex].Count > 0)
     {
         SymbolicBuffers[SymbolicWriteIndex].State = EBufferState::Swapping;
         const int32 OldWrite = SymbolicWriteIndex;
@@ -449,7 +472,7 @@ bool UNeuralSymbolicSyncManager::ShouldSync(float DeltaTime) const
         return false;
 
     case ESyncPolicy::Batched:
-        return (BatchTimeAccumulator + DeltaTime) >= Config.BatchIntervalSeconds;
+        return BatchTimeAccumulator >= Config.BatchIntervalSeconds;
 
     case ESyncPolicy::CycleAligned:
         // Sync when entering a triad sync point (step transition)
