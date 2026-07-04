@@ -712,18 +712,23 @@ TEST_F(NeuralToSymbolicTranslatorTest, TranslateActivations_EmptyMap_NoPredicate
 
 TEST_F(NeuralToSymbolicTranslatorTest, TranslateActivations_ConfidenceApplied)
 {
+    // Get baseline predicate confidence without any map-level multiplier
+    auto baselineAtomA = Translator->CreateAtomFromActivation(0.9f, 0, "Test");
+    auto baselineAtomB = Translator->CreateAtomFromActivation(0.85f, 1, "Test");
+    auto baselinePredicate = Translator->CreatePredicateFromAtoms(baselineAtomA, baselineAtomB, "CoActivated");
+    float baseConfidence = baselinePredicate.Confidence;
+    ASSERT_GT(baseConfidence, 0.0f) << "Baseline confidence must be positive";
+
+    // Translate with a 0.5 confidence multiplier applied via activation map
     FTestActivationMap map;
-    map.Activations["Test"] = {0.9f};
+    map.Activations["Test"] = {0.9f, 0.85f};
     map.ConfidenceScores["Test"] = 0.5f;
 
-    Translator->TranslateActivations(map);
+    auto predicates = Translator->TranslateActivations(map);
 
-    // The confidence score should have been applied (we verify through atom factory)
-    auto atom = Translator->CreateAtomFromActivation(0.9f, 0, "Test");
-    float baseConfidence = atom.Confidence;
-
-    // With 0.5 multiplier, result should be lower
-    EXPECT_GT(baseConfidence, 0.0f);
+    ASSERT_FALSE(predicates.empty()) << "Expected co-activation predicate for confidence scaling check";
+    EXPECT_LT(predicates[0].Confidence, baseConfidence);
+    EXPECT_FLOAT_EQ(predicates[0].Confidence, baseConfidence * 0.5f);
 }
 
 // ============================================================================
@@ -1102,7 +1107,7 @@ TEST_F(NeuralToSymbolicTranslatorTest, Performance_BatchTranslation_UnderTarget)
     float totalMs = std::chrono::duration<float, std::milli>(end - start).count();
     float perItemMs = totalMs / BatchCount;
 
-    EXPECT_LT(perItemMs, 0.5f) << "Batch per-item latency exceeded 0.5ms: " << perItemMs << "ms";
+    EXPECT_LT(perItemMs, 0.3f) << "Batch per-item latency exceeded 0.3ms: " << perItemMs << "ms";
 }
 
 TEST_F(NeuralToSymbolicTranslatorTest, Performance_MeetsLatencyTarget)
