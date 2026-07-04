@@ -829,6 +829,7 @@ TEST(MemoryPerformanceTest, EpisodicQueryPerformance) {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     
 #if defined(_WIN32) && !defined(NDEBUG)
+    // The Windows Debug CI run for this test observed ~880ms, so allow headroom for normal variance.
     constexpr auto kEpisodicQueryThresholdMs = 1000;
 #else
     constexpr auto kEpisodicQueryThresholdMs = 500;
