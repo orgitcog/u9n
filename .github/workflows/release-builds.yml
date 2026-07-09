@@ -181,6 +181,8 @@ jobs:
           key: windows-${{ matrix.arch }}-vcpkg-${{ hashFiles('vcpkg.json') }}
 
       - name: Install dependencies
+        env:
+          VCPKG_BINARY_SOURCES: clear
         run: |
           vcpkg install eigen3:${{ matrix.vcpkg_triplet }} boost:${{ matrix.vcpkg_triplet }} gtest:${{ matrix.vcpkg_triplet }}
 
