@@ -84,11 +84,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: '53bef8994c541b6561884a8395ea35715ece75db'  # 2024.01.12
-
       - name: Setup CMake
         uses: lukka/get-cmake@latest
 
@@ -108,7 +103,6 @@ jobs:
         with:
           path: |
             build
-            ~/.cache/vcpkg
           key: ${{ runner.os }}-build-${{ matrix.build_type }}-${{ hashFiles('**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-build-${{ matrix.build_type }}-
