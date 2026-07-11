@@ -267,12 +267,24 @@ enum class AtomType : uint16_t {
     PREDICTION_ERROR_LINK      = 10823,  ///< (PredictionErrorLink <error> <model>)
 };
 
+// NOTE: Bio-cognitive layer (endocrine/nervous/temporal/entelechy/AFI) reserves
+// 10000-10499 for node types and 10500-10899+ for link types (see ranges
+// documented above). The original is_node()/is_link() only recognized the
+// core 0-999 (nodes) / 1000+ (links) split and misclassified every
+// bio-cognitive node type >= 1000 as a link, causing add_node() to reject
+// them with "Type must be a node type". Fixed to recognize both range bands.
 [[nodiscard]] constexpr bool is_node(AtomType t) noexcept {
-    return static_cast<uint16_t>(t) > 0 && static_cast<uint16_t>(t) < 1000;
+    auto v = static_cast<uint16_t>(t);
+    if (v > 0 && v < 1000) return true;          // core nodes
+    if (v >= 10000 && v < 10500) return true;    // bio-cognitive module nodes
+    return false;
 }
 
 [[nodiscard]] constexpr bool is_link(AtomType t) noexcept {
-    return static_cast<uint16_t>(t) >= 1000;
+    auto v = static_cast<uint16_t>(t);
+    if (v >= 1000 && v < 10000) return true;     // core links
+    if (v >= 10500) return true;                 // bio-cognitive module links
+    return false;
 }
 
 // ============================================================================

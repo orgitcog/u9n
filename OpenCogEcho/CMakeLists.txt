@@ -39,6 +39,42 @@ add_library(opencog_echo STATIC
     src/ure/engine.cpp
     src/ure/rule.cpp
     src/atomese/loader.cpp
+
+    # Bio-cognitive modules (layer 2, ported from 9-o9/u9)
+    src/endocrine/types.cpp
+    src/endocrine/hormone_bus.cpp
+    src/endocrine/gland.cpp
+    src/endocrine/valence.cpp
+    src/endocrine/affect.cpp
+    src/endocrine/moral.cpp
+    src/endocrine/connector.cpp
+    src/endocrine/guidance_connector.cpp
+    src/endocrine/marduk_adapter.cpp
+    src/endocrine/npu_adapter.cpp
+    src/endocrine/o9c2_adapter.cpp
+    src/endocrine/touchpad_adapter.cpp
+    src/endocrine/endocrine_system.cpp
+
+    src/nervous/nerve_bus.cpp
+    src/nervous/nucleus.cpp
+    src/nervous/nervous_system.cpp
+
+    src/temporal/crystal_bus.cpp
+    src/temporal/temporal_system.cpp
+
+    src/entelechy/adapter.cpp
+    src/entelechy/civic_angel.cpp
+    src/entelechy/cloninger.cpp
+    src/entelechy/developmental.cpp
+    src/entelechy/district.cpp
+    src/entelechy/interoceptive.cpp
+    src/entelechy/narrative.cpp
+    src/entelechy/social.cpp
+
+    src/afi/adapter.cpp
+    src/afi/blanket.cpp
+    src/afi/free_energy.cpp
+    src/afi/precision.cpp
 )
 
 target_compile_features(opencog_echo PUBLIC ${OPENCOG_ECHO_CXX_STD})
@@ -70,6 +106,24 @@ if(BUILD_TESTING)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/opencog/endocrine/endocrine_system.hpp")
         list(APPEND OPENCOG_ECHO_TEST_SOURCES tests/test_integration.cpp)
         message(STATUS "OpenCogEcho: endocrine headers present, enabling test_integration.cpp")
+
+        # Bio-cognitive module tests (layer 2, ported from 9-o9/u9)
+        list(APPEND OPENCOG_ECHO_TEST_SOURCES
+            tests/test_endocrine.cpp
+            tests/test_nervous.cpp
+            tests/test_neuroendocrine.cpp
+            tests/test_entelechy_integration.cpp
+            tests/test_civic_angel.cpp
+            tests/test_cloninger.cpp
+            tests/test_developmental.cpp
+            tests/test_interoceptive.cpp
+            tests/test_narrative.cpp
+            tests/test_social.cpp
+            tests/test_afi.cpp
+            tests/test_temporal.cpp
+            tests/test_marduk.cpp
+            tests/test_touchpad.cpp
+        )
     else()
         message(STATUS "OpenCogEcho: endocrine headers absent (layer 2), skipping test_integration.cpp")
     endif()
