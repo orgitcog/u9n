@@ -1524,6 +1524,13 @@ TEST_F(MessageProtocolE2ETest, BatchReceive)
 
 TEST_F(MessageProtocolE2ETest, HighThroughputMessaging)
 {
+    // Re-initialize with sufficient queue capacity for high-throughput test.
+    // 10K messages across 4 priority levels requires >2500 per queue.
+    MockBidirectionalMessageProtocol::Config config;
+    config.QueueCapacity = 3000;
+    Protocol = std::make_unique<MockBidirectionalMessageProtocol>();
+    Protocol->Initialize(config);
+
     auto start = std::chrono::high_resolution_clock::now();
     
     int numMessages = 10000;
