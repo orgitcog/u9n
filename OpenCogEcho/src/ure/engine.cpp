@@ -11,6 +11,69 @@
 
 namespace opencog::ure {
 
+namespace {
+
+/// Convert a premise/template atom into a pattern term: VariableNodes become
+/// pattern variables, other nodes match themselves, links recurse.
+PatternTerm pattern_from_atom(const AtomSpace& space, Handle h) {
+    const AtomType type = space.get_type(h);
+
+    if (type == AtomType::VARIABLE_NODE) {
+        return VariableTerm{std::string(space.get_name(h))};
+    }
+    if (is_node(type)) {
+        return GroundedTerm{h.id()};
+    }
+
+    std::vector<PatternTerm> outgoing;
+    for (Handle target : space.get_outgoing(h)) {
+        outgoing.push_back(pattern_from_atom(space, target));
+    }
+    return std::make_shared<LinkPattern>(type, std::move(outgoing));
+}
+
+/// Try to ground a rule's premise against the AtomSpace. A grounding is only
+/// accepted when the matched premise instance is confidently true and does
+/// not contradict the seed bindings from conclusion unification.
+std::optional<BindingSet> ground_premise(
+    const AtomSpace& space,
+    const UREConfig& config,
+    const Rule& rule,
+    const BindingSet& seed
+) {
+    if (!rule.premise.valid()) return std::nullopt;
+
+    Pattern pattern;
+    pattern.body = pattern_from_atom(space, rule.premise);
+
+    PatternMatcher matcher(space);
+    for (auto& match : matcher.match(pattern)) {
+        Handle instance = space.make_handle(match.matched_atom);
+        if (!instance.valid()) continue;
+
+        // Premise must actually hold, not merely exist structurally.
+        if (space.get_tv(instance).confidence < config.min_result_confidence) continue;
+
+        // Reject groundings that conflict with the seed bindings.
+        bool conflict = false;
+        BindingSet grounded = match.bindings;
+        for (const auto& [var, atom] : seed.bindings) {
+            if (grounded.contains(var) && grounded.get(var) != atom) {
+                conflict = true;
+                break;
+            }
+            grounded.bind(var, atom);
+        }
+        if (conflict) continue;
+
+        return grounded;
+    }
+
+    return std::nullopt;
+}
+
+} // namespace
+
 // ============================================================================
 // InferenceTree Implementation
 // ============================================================================
@@ -256,27 +319,24 @@ std::optional<UREResult> UREngine::backward_chain(Handle target) {
         auto step_results = backward_step(current);
 
         for (auto& [rule, bindings] : step_results) {
-            // Try to prove premises
-            // This would recursively call backward_chain on each premise
+            // A rule only proves the target if its premise can be grounded
+            // by a confidently-true instance consistent with the bindings.
+            auto grounding = ground_premise(space_, config_, *rule, bindings);
+            if (!grounding) continue;
 
-            // For now, check if premises are grounded
-            bool all_grounded = true;
-            // ... premise checking logic ...
+            auto app_result = applicator_.apply(*rule, *grounding);
+            if (app_result) {
+                stats_.rules_applied++;
 
-            if (all_grounded) {
-                // Apply rule
-                auto app_result = applicator_.apply(*rule, bindings);
-                if (app_result) {
-                    UREResult result;
-                    result.conclusion = app_result->result;
-                    result.tv = app_result->computed_tv;
-                    result.iterations_used = state.iterations;
+                UREResult result;
+                result.conclusion = app_result->result;
+                result.tv = app_result->computed_tv;
+                result.iterations_used = state.iterations;
 
-                    auto elapsed = std::chrono::steady_clock::now() - start_time;
-                    result.time_taken = std::chrono::duration_cast<std::chrono::microseconds>(elapsed);
+                auto elapsed = std::chrono::steady_clock::now() - start_time;
+                result.time_taken = std::chrono::duration_cast<std::chrono::microseconds>(elapsed);
 
-                    return result;
-                }
+                return result;
             }
         }
 

@@ -5,6 +5,7 @@
 
 #include <opencog/pln/formulas.hpp>
 #include <opencog/pln/inference.hpp>
+#include <opencog/ure/engine.hpp>
 #include <cmath>
 
 namespace test {
@@ -349,5 +350,96 @@ TEST(IncrementalInference_run) {
     auto results = incr.run(10);
 
     // Should complete without error
+    return true;
+}
+
+// ============================================================================
+// Forward Chaining Tests
+// ============================================================================
+
+TEST(PLN_forward_chain_deduction) {
+    AtomSpace space;
+
+    Handle a = space.add_node(AtomType::CONCEPT_NODE, "A", TruthValue{0.8f, 0.9f});
+    Handle b = space.add_node(AtomType::CONCEPT_NODE, "B", TruthValue{0.6f, 0.9f});
+    Handle c = space.add_node(AtomType::CONCEPT_NODE, "C", TruthValue{0.4f, 0.9f});
+    Handle ab = space.add_link(AtomType::IMPLICATION_LINK, {a, b}, TruthValue{0.9f, 0.9f});
+    Handle bc = space.add_link(AtomType::IMPLICATION_LINK, {b, c}, TruthValue{0.8f, 0.9f});
+    ASSERT(bc.valid());
+
+    PLNEngine engine(space);
+    engine.add_rule(rules::make_deduction_rule());
+
+    auto results = engine.forward_chain(ab);
+    ASSERT(!results.empty());
+
+    // Deduction must have produced A->C
+    Handle ac = space.get_link(AtomType::IMPLICATION_LINK, {a, c});
+    ASSERT(ac.valid());
+    ASSERT_GT(space.get_tv(ac).strength, 0.0f);
+    ASSERT_GT(space.get_tv(ac).confidence, 0.0f);
+    return true;
+}
+
+TEST(PLN_forward_chain_modus_ponens) {
+    AtomSpace space;
+
+    Handle a = space.add_node(AtomType::CONCEPT_NODE, "A", TruthValue{0.9f, 0.9f});
+    Handle b = space.add_node(AtomType::CONCEPT_NODE, "B", TruthValue{0.1f, 0.1f});
+    Handle ab = space.add_link(AtomType::IMPLICATION_LINK, {a, b}, TruthValue{0.9f, 0.9f});
+    ASSERT(ab.valid());
+
+    PLNEngine engine(space);
+    engine.add_rule(rules::make_modus_ponens_rule());
+
+    auto results = engine.forward_chain(a);
+    ASSERT(!results.empty());
+    ASSERT_EQ(results[0].conclusion.id(), b.id());
+
+    // B's confidence should have been strengthened by revision
+    ASSERT_GT(space.get_tv(b).confidence, 0.1f);
+    return true;
+}
+
+// ============================================================================
+// URE Backward Chaining Tests
+// ============================================================================
+
+TEST(URE_backward_chain_ungrounded_premise_fails) {
+    AtomSpace space;
+
+    Handle goal = space.add_node(AtomType::CONCEPT_NODE, "Goal", TruthValue{0.0f, 0.0f});
+    Handle premise = space.add_node(AtomType::CONCEPT_NODE, "Premise", TruthValue{0.0f, 0.0f});
+
+    ure::UREngine engine(space);
+    ure::Rule rule;
+    rule.name = "goal-rule";
+    rule.premise = premise;
+    rule.conclusion = goal;
+    engine.rules().add_rule(rule);
+
+    // The premise has no confidence, so the rule must NOT prove the goal.
+    auto result = engine.backward_chain(goal);
+    ASSERT(!result.has_value());
+    return true;
+}
+
+TEST(URE_backward_chain_grounded_premise_succeeds) {
+    AtomSpace space;
+
+    Handle goal = space.add_node(AtomType::CONCEPT_NODE, "Goal", TruthValue{0.0f, 0.0f});
+    Handle premise = space.add_node(AtomType::CONCEPT_NODE, "Premise", TruthValue{0.9f, 0.9f});
+
+    ure::UREngine engine(space);
+    ure::Rule rule;
+    rule.name = "goal-rule";
+    rule.premise = premise;
+    rule.conclusion = goal;
+    engine.rules().add_rule(rule);
+
+    // The premise is confidently true, so the proof must succeed.
+    auto result = engine.backward_chain(goal);
+    ASSERT(result.has_value());
+    ASSERT_EQ(result->conclusion.id(), goal.id());
     return true;
 }

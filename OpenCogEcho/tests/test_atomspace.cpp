@@ -315,3 +315,56 @@ TEST(AtomSpace_clear) {
     ASSERT_EQ(space.size(), 0u);
     return true;
 }
+
+TEST(AtomSpace_duplicate_add_no_duplicate_index_entries) {
+    AtomSpace space;
+
+    Handle a1 = space.add_node(AtomType::CONCEPT_NODE, "A");
+    Handle a2 = space.add_node(AtomType::CONCEPT_NODE, "A");
+    ASSERT_EQ(a1.id(), a2.id());
+    ASSERT_EQ(space.count_atoms(AtomType::CONCEPT_NODE), 1u);
+    ASSERT_EQ(space.get_atoms_by_type(AtomType::CONCEPT_NODE).size(), 1u);
+
+    Handle b = space.add_node(AtomType::CONCEPT_NODE, "B");
+    Handle l1 = space.add_link(AtomType::INHERITANCE_LINK, {a1, b});
+    Handle l2 = space.add_link(AtomType::INHERITANCE_LINK, {a1, b});
+    ASSERT_EQ(l1.id(), l2.id());
+    ASSERT_EQ(space.count_atoms(AtomType::INHERITANCE_LINK), 1u);
+    ASSERT_EQ(space.get_atoms_by_type(AtomType::INHERITANCE_LINK).size(), 1u);
+    return true;
+}
+
+TEST(AtomSpace_failed_remove_keeps_indices) {
+    AtomSpace space;
+
+    Handle cat = space.add_node(AtomType::CONCEPT_NODE, "Cat");
+    Handle animal = space.add_node(AtomType::CONCEPT_NODE, "Animal");
+    Handle inh = space.add_link(AtomType::INHERITANCE_LINK, {cat, animal});
+    ASSERT(inh.valid());
+
+    // Non-recursive removal must fail (cat has an incoming link) and the
+    // atom must remain reachable through the type index.
+    ASSERT(!space.remove(cat.id(), false));
+    ASSERT(space.contains(cat.id()));
+    ASSERT_EQ(space.get_atoms_by_type(AtomType::CONCEPT_NODE).size(), 2u);
+    ASSERT_EQ(space.count_atoms(AtomType::CONCEPT_NODE), 2u);
+    return true;
+}
+
+TEST(AtomSpace_recursive_remove_cleans_link_indices) {
+    AtomSpace space;
+
+    Handle cat = space.add_node(AtomType::CONCEPT_NODE, "Cat");
+    Handle animal = space.add_node(AtomType::CONCEPT_NODE, "Animal");
+    Handle inh = space.add_link(AtomType::INHERITANCE_LINK, {cat, animal});
+
+    ASSERT(space.remove(cat.id(), true));
+    ASSERT(!space.contains(cat.id()));
+    ASSERT(!space.contains(inh.id()));
+
+    // The recursively removed link must leave no stale index entries.
+    ASSERT_EQ(space.count_atoms(AtomType::INHERITANCE_LINK), 0u);
+    ASSERT_EQ(space.get_atoms_by_type(AtomType::INHERITANCE_LINK).size(), 0u);
+    ASSERT_EQ(space.count_atoms(AtomType::CONCEPT_NODE), 1u);  // Animal remains
+    return true;
+}

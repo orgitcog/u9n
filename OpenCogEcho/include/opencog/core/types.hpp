@@ -267,12 +267,19 @@ enum class AtomType : uint16_t {
     PREDICTION_ERROR_LINK      = 10823,  ///< (PredictionErrorLink <error> <model>)
 };
 
+// Type-range layout:
+//   1-999       core node types
+//   1000-9999   core link types
+//   10000-10499 reserved node types (endocrine/nervous/temporal/entelechy/AFI)
+//   10500+      reserved link types
 [[nodiscard]] constexpr bool is_node(AtomType t) noexcept {
-    return static_cast<uint16_t>(t) > 0 && static_cast<uint16_t>(t) < 1000;
+    const auto v = static_cast<uint16_t>(t);
+    return (v > 0 && v < 1000) || (v >= 10000 && v < 10500);
 }
 
 [[nodiscard]] constexpr bool is_link(AtomType t) noexcept {
-    return static_cast<uint16_t>(t) >= 1000;
+    const auto v = static_cast<uint16_t>(t);
+    return (v >= 1000 && v < 10000) || v >= 10500;
 }
 
 // ============================================================================

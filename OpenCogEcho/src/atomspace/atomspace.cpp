@@ -6,6 +6,7 @@
 #include <opencog/atomspace/atomspace.hpp>
 
 #include <sstream>
+#include <vector>
 
 namespace opencog {
 
@@ -17,8 +18,13 @@ AtomSpace::~AtomSpace() = default;
 // ============================================================================
 
 Handle AtomSpace::add_node(AtomType type, std::string_view name, TruthValue tv) {
+    // AtomTable::add_node deduplicates; only index atoms that are actually
+    // new, otherwise repeated adds would accumulate duplicate index entries.
+    const bool existed = table_.get_node(type, name).valid();
     AtomId id = table_.add_node(type, name, tv);
-    indices_.type_index.insert(type, id);
+    if (!existed) {
+        indices_.type_index.insert(type, id);
+    }
     return Handle{id, this};
 }
 
@@ -37,14 +43,19 @@ Handle AtomSpace::add_link(AtomType type, std::span<const Handle> outgoing, Trut
 }
 
 Handle AtomSpace::add_link(AtomType type, std::span<const AtomId> outgoing, TruthValue tv) {
+    // See add_node: skip index inserts when the table deduplicates.
+    const bool existed = table_.get_link(type, outgoing).valid();
     AtomId id = table_.add_link(type, outgoing, tv);
-    indices_.type_index.insert(type, id);
-    indices_.target_type_index.insert(type, id, outgoing);
 
-    // Special indexing for ImplicationLinks (useful for forward chaining)
-    if (type == AtomType::IMPLICATION_LINK && outgoing.size() >= 2) {
-        AtomType premise_type = table_.get_type(outgoing[0]);
-        indices_.implication_index.insert(id, premise_type);
+    if (!existed) {
+        indices_.type_index.insert(type, id);
+        indices_.target_type_index.insert(type, id, outgoing);
+
+        // Special indexing for ImplicationLinks (useful for forward chaining)
+        if (type == AtomType::IMPLICATION_LINK && outgoing.size() >= 2) {
+            AtomType premise_type = table_.get_type(outgoing[0]);
+            indices_.implication_index.insert(id, premise_type);
+        }
     }
 
     return Handle{id, this};
@@ -62,21 +73,35 @@ bool AtomSpace::remove(Handle h, bool recursive) {
 bool AtomSpace::remove(AtomId id, bool recursive) {
     if (!table_.contains(id)) return false;
 
-    AtomType type = table_.get_type(id);
-    auto outgoing = table_.get_outgoing(id);
+    if (recursive) {
+        // Remove incoming links at the AtomSpace level so each link cleans
+        // up its own index entries before this atom goes away.
+        for (AtomId incoming : table_.get_incoming(id)) {
+            remove(incoming, true);
+        }
+    }
 
-    // Remove from indices first
+    // Capture metadata needed for index cleanup before storage is freed.
+    const AtomType type = table_.get_type(id);
+    auto outgoing_view = table_.get_outgoing(id);
+    std::vector<AtomId> outgoing(outgoing_view.begin(), outgoing_view.end());
+
+    // Non-recursive table removal: if the atom still has incoming links this
+    // fails, and the indices must be left intact so the atom stays reachable.
+    if (!table_.remove_atom(id, false)) return false;
+
     indices_.type_index.remove(type, id);
     if (is_link(type)) {
         indices_.target_type_index.remove(type, id, outgoing);
 
         if (type == AtomType::IMPLICATION_LINK && outgoing.size() >= 2) {
+            // Outgoing targets still exist (only the link was removed).
             AtomType premise_type = table_.get_type(outgoing[0]);
             indices_.implication_index.remove(id, premise_type);
         }
     }
 
-    return table_.remove_atom(id, recursive);
+    return true;
 }
 
 // ============================================================================

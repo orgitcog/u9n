@@ -243,6 +243,11 @@ private:
         const std::string& rule_name,
         const std::vector<Handle>& premises
     ) const;
+
+    // Rule application helpers used by forward_step
+    void apply_deduction(Handle source, std::vector<InferenceResult>& results);
+    void apply_inversion(Handle source, std::vector<InferenceResult>& results);
+    void apply_modus_ponens(Handle source, std::vector<InferenceResult>& results);
 };
 
 // ============================================================================

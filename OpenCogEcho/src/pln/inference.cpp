@@ -121,24 +121,20 @@ std::vector<InferenceResult> PLNEngine::forward_chain(Handle source) {
         if (visited.contains(hash)) continue;
         visited.insert(hash);
 
-        // Try each rule
-        for (const auto& rule : rules_) {
-            // Skip if rule doesn't meet confidence threshold
-            // Full implementation would check rule applicability
+        // forward_step already tries every registered rule against the
+        // current atom, so it must be called exactly once per atom.
+        auto step_results = forward_step(current);
+        for (auto& result : step_results) {
+            results.push_back(std::move(result));
 
-            auto step_results = forward_step(current);
-            for (auto& result : step_results) {
-                results.push_back(std::move(result));
+            // Check if target reached
+            if (config_.target_reached && config_.target_reached(results.back().conclusion)) {
+                return results;
+            }
 
-                // Check if target reached
-                if (config_.target_reached && config_.target_reached(results.back().conclusion)) {
-                    return results;
-                }
-
-                // Add conclusion to frontier
-                if (results.size() < config_.max_results) {
-                    frontier.push_back(results.back().conclusion);
-                }
+            // Add conclusion to frontier
+            if (results.size() < config_.max_results) {
+                frontier.push_back(results.back().conclusion);
             }
         }
 
@@ -165,20 +161,117 @@ std::vector<InferenceResult> PLNEngine::forward_chain(std::span<const Handle> so
 std::vector<InferenceResult> PLNEngine::forward_step(Handle source) {
     std::vector<InferenceResult> results;
 
-    // For each rule, try to apply it
+    if (!source.valid()) return results;
+
+    const AtomType source_type = space_.get_type(source);
+
     for (const auto& rule : rules_) {
-        // Pattern match to find applicable instances
-        // This is a simplified implementation
-
-        // For example, for deduction:
-        // Find all A->B where A = source
-        // Then find all B->C for those B
-        // Compute A->C
-
-        // Placeholder - would need full pattern matching
+        if (rule.name == "deduction" && source_type == AtomType::IMPLICATION_LINK) {
+            apply_deduction(source, results);
+        } else if (rule.name == "inversion" && source_type == AtomType::IMPLICATION_LINK) {
+            apply_inversion(source, results);
+        } else if (rule.name == "modus-ponens") {
+            apply_modus_ponens(source, results);
+        }
     }
 
     return results;
+}
+
+// Given source A->B, find every B->C and derive A->C via deduction.
+void PLNEngine::apply_deduction(Handle source, std::vector<InferenceResult>& results) {
+    auto out = space_.get_outgoing(source);
+    if (out.size() != 2) return;
+    Handle a = out[0];
+    Handle b = out[1];
+
+    for (Handle bc : space_.get_incoming_by_type(b, AtomType::IMPLICATION_LINK)) {
+        if (bc.id() == source.id()) continue;
+        auto bc_out = space_.get_outgoing(bc);
+        if (bc_out.size() != 2 || bc_out[0].id() != b.id()) continue;
+        Handle c = bc_out[1];
+        if (c.id() == a.id()) continue;
+
+        TruthValue tv_ac = deduction(
+            space_.get_tv(source), space_.get_tv(bc),
+            space_.get_tv(b).strength, space_.get_tv(c).strength);
+        if (tv_ac.confidence < config_.min_confidence) continue;
+
+        Handle ac = space_.get_link(AtomType::IMPLICATION_LINK, {a, c});
+        if (ac.valid()) {
+            tv_ac = revision(space_.get_tv(ac), tv_ac);
+            space_.set_tv(ac, tv_ac);
+        } else {
+            ac = space_.add_link(AtomType::IMPLICATION_LINK, {a, c}, tv_ac);
+        }
+
+        InferenceResult result;
+        result.conclusion = ac;
+        result.truth_value = tv_ac;
+        result.iterations_used = 1;
+        if (config_.record_proof) {
+            result.proof.push_back(InferenceStep{"deduction", {source, bc}, ac, tv_ac});
+        }
+        results.push_back(std::move(result));
+    }
+}
+
+// Given source A->B, derive B->A via Bayes inversion.
+void PLNEngine::apply_inversion(Handle source, std::vector<InferenceResult>& results) {
+    auto out = space_.get_outgoing(source);
+    if (out.size() != 2) return;
+    Handle a = out[0];
+    Handle b = out[1];
+    if (a.id() == b.id()) return;
+
+    TruthValue tv_ba = inversion(
+        space_.get_tv(source),
+        space_.get_tv(a).strength, space_.get_tv(b).strength);
+    if (tv_ba.confidence < config_.min_confidence) return;
+
+    Handle ba = space_.get_link(AtomType::IMPLICATION_LINK, {b, a});
+    if (ba.valid()) {
+        tv_ba = revision(space_.get_tv(ba), tv_ba);
+        space_.set_tv(ba, tv_ba);
+    } else {
+        ba = space_.add_link(AtomType::IMPLICATION_LINK, {b, a}, tv_ba);
+    }
+
+    InferenceResult result;
+    result.conclusion = ba;
+    result.truth_value = tv_ba;
+    result.iterations_used = 1;
+    if (config_.record_proof) {
+        result.proof.push_back(InferenceStep{"inversion", {source}, ba, tv_ba});
+    }
+    results.push_back(std::move(result));
+}
+
+// Given source A and links A->B, strengthen each B via modus ponens.
+void PLNEngine::apply_modus_ponens(Handle source, std::vector<InferenceResult>& results) {
+    TruthValue tv_a = space_.get_tv(source);
+    if (tv_a.confidence < config_.min_confidence) return;
+
+    for (Handle ab : space_.get_incoming_by_type(source, AtomType::IMPLICATION_LINK)) {
+        auto ab_out = space_.get_outgoing(ab);
+        if (ab_out.size() != 2 || ab_out[0].id() != source.id()) continue;
+        Handle b = ab_out[1];
+
+        TruthValue tv_b = modus_ponens(tv_a, space_.get_tv(ab));
+        if (tv_b.confidence < config_.min_confidence) continue;
+
+        TruthValue merged = revision(space_.get_tv(b), tv_b);
+        space_.set_tv(b, merged);
+
+        InferenceResult result;
+        result.conclusion = b;
+        result.truth_value = merged;
+        result.iterations_used = 1;
+        if (config_.record_proof) {
+            result.proof.push_back(InferenceStep{"modus-ponens", {source, ab}, b, merged});
+        }
+        results.push_back(std::move(result));
+    }
 }
 
 std::optional<InferenceResult> PLNEngine::backward_chain(Handle target) {

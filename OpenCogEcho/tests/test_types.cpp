@@ -182,3 +182,22 @@ TEST(sizes_are_correct) {
     ASSERT_EQ(sizeof(Handle), 16u);
     return true;
 }
+
+TEST(layer2_reserved_type_ranges) {
+    // Reserved layer-2 node types (10000-10499) must classify as nodes
+    ASSERT(is_node(AtomType::HORMONE_NODE));
+    ASSERT(!is_link(AtomType::HORMONE_NODE));
+    ASSERT(is_node(AtomType::PREDICTION_ERROR_NODE));
+    ASSERT(!is_link(AtomType::PREDICTION_ERROR_NODE));
+
+    // Reserved layer-2 link types (10500+) must classify as links
+    ASSERT(is_link(AtomType::VALENCE_LINK));
+    ASSERT(!is_node(AtomType::VALENCE_LINK));
+    ASSERT(is_link(AtomType::PREDICTION_ERROR_LINK));
+    ASSERT(!is_node(AtomType::PREDICTION_ERROR_LINK));
+
+    // Core ranges unchanged
+    ASSERT(is_node(AtomType::CONCEPT_NODE));
+    ASSERT(is_link(AtomType::INHERITANCE_LINK));
+    return true;
+}
