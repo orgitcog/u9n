@@ -65,7 +65,19 @@ class CrystalEndocrineAdapter {
 public:
     explicit CrystalEndocrineAdapter(CrystalBus& crystal_bus,
                                       CrystalEndocrineConfig config = {}) noexcept
-        : bus_(crystal_bus), config_(config) {}
+        : bus_(crystal_bus), config_(config) {
+        // Capture the unmodulated baseline coupling/amplitudes once at
+        // construction so apply_endocrine_modulation() can recompute from
+        // a fixed reference each tick (matching the base_config_ pattern
+        // used by the ECAN/Marduk/o9c2 adapters), instead of treating the
+        // already-modulated live values as this tick's baseline — which
+        // would compound hormone deltas indefinitely under sustained
+        // hormone levels.
+        base_coupling_ = bus_.config().global_coupling;
+        base_ultra_slow_amplitude_ = bus_.phase(TemporalScaleId::ULTRA_SLOW).amplitude;
+        base_fast_amplitude_ = bus_.phase(TemporalScaleId::FAST).amplitude;
+        base_slowest_amplitude_ = bus_.phase(TemporalScaleId::SLOWEST).amplitude;
+    }
 
     /**
      * @brief VES → TCS: Hormones modulate crystal oscillations
@@ -94,23 +106,27 @@ public:
         coupling_delta += oxytocin * config_.oxytocin_coupling_boost;
 
         // Apply coupling modulation
-        float base_coupling = bus_.config().global_coupling;
-        float new_coupling = std::clamp(base_coupling + coupling_delta, 0.0f, 1.0f);
+        // Recompute from the stored base coupling each tick rather than
+        // reading bus_.config().global_coupling (which already reflects
+        // last tick's modulation) — otherwise sustained cortisol/NE/
+        // oxytocin would compound the delta every tick instead of tracking
+        // current hormone levels.
+        float new_coupling = std::clamp(base_coupling_ + coupling_delta, 0.0f, 1.0f);
         bus_.set_global_coupling(new_coupling);
 
         // Serotonin boosts slow oscillators (patience → sustained rhythm)
         bus_.set_amplitude(TemporalScaleId::ULTRA_SLOW,
-            std::clamp(bus_.phase(TemporalScaleId::ULTRA_SLOW).amplitude +
+            std::clamp(base_ultra_slow_amplitude_ +
                        serotonin * config_.serotonin_slow_boost, -1.0f, 1.0f));
 
         // DA_tonic boosts fast oscillators (motivation → processing speed)
         bus_.set_amplitude(TemporalScaleId::FAST,
-            std::clamp(bus_.phase(TemporalScaleId::FAST).amplitude +
+            std::clamp(base_fast_amplitude_ +
                        da_tonic * config_.dopamine_fast_boost, -1.0f, 1.0f));
 
         // Melatonin boosts slowest (maintenance → consolidation rhythm)
         bus_.set_amplitude(TemporalScaleId::SLOWEST,
-            std::clamp(bus_.phase(TemporalScaleId::SLOWEST).amplitude +
+            std::clamp(base_slowest_amplitude_ +
                        melatonin * config_.melatonin_slowest_boost, -1.0f, 1.0f));
 
         prev_coherence_ = bus_.global_coherence();
@@ -181,6 +197,13 @@ private:
     CrystalBus& bus_;
     CrystalEndocrineConfig config_;
     float prev_coherence_{0.0f};
+
+    // Immutable baselines captured at construction; recomputed-from-base
+    // each tick in apply_endocrine_modulation() to avoid compounding drift.
+    float base_coupling_{0.0f};
+    float base_ultra_slow_amplitude_{0.0f};
+    float base_fast_amplitude_{0.0f};
+    float base_slowest_amplitude_{0.0f};
 };
 
 } // namespace opencog::temporal

@@ -181,6 +181,19 @@ private:
      * 9. Update developmental stage and narrative from sub-systems
      */
     void observe(uint64_t /*current_tick*/) {
+        // Refresh each active district's metrics from its generative model
+        // before aggregating. Previously only AFIEndocrineAdapter::
+        // update_districts() called update_metrics(), so entelechy-only
+        // setups (or districts registered solely on the Angel, not also on
+        // an AFI adapter) never saw fresh free-energy/coherence/fairness
+        // data here. update_metrics() is idempotent, so refreshing again
+        // is harmless even when an AFI adapter already ran this tick.
+        for (auto* d : districts_) {
+            if (d && d->is_active()) {
+                d->update_metrics();
+            }
+        }
+
         // --- 1. Total free energy ---
         state_.total_free_energy = compute_total_free_energy();
 

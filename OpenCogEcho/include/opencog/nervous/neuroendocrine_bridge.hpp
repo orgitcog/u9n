@@ -63,63 +63,75 @@ public:
     /// Called every VES tick (100ms) — flush accumulated signals to hormone bus
     /// and read hormones back into neural bus
     void sync() {
-        if (accumulation_count_ == 0) return;
-
-        float scale = 1.0f / static_cast<float>(accumulation_count_);
-
         // ============================================================
         // VNS → VES: Neural firing → Hormone production
         // ============================================================
+        // Only meaningful when at least one neural sample was
+        // accumulated this window (division by accumulation_count_
+        // below requires it); the VES → VNS block further down does
+        // not depend on accumulation and must run every sync() call
+        // regardless, otherwise hormone-driven neural modulation
+        // (cortisol → arousal, serotonin → calming, etc.) is silently
+        // dropped whenever accumulate() wasn't called during this
+        // VES tick period.
+        if (accumulation_count_ > 0) {
+            float scale = 1.0f / static_cast<float>(accumulation_count_);
 
-        // Sympathetic → CRH + NE (stress cascade)
-        float symp = acc_sympathetic_ * scale;
-        if (symp > sympathetic_threshold_) {
-            hormone_bus_.produce(endo::HormoneId::CRH, symp * 0.15f);
-            hormone_bus_.produce(endo::HormoneId::NOREPINEPHRINE, symp * 0.1f);
-        }
+            // Sympathetic → CRH + NE (stress cascade)
+            float symp = acc_sympathetic_ * scale;
+            if (symp > sympathetic_threshold_) {
+                hormone_bus_.produce(endo::HormoneId::CRH, symp * 0.15f);
+                hormone_bus_.produce(endo::HormoneId::NOREPINEPHRINE, symp * 0.1f);
+            }
 
-        // Parasympathetic → serotonin + anandamide (calming)
-        float para = acc_parasympathetic_ * scale;
-        if (para > parasympathetic_threshold_) {
-            hormone_bus_.produce(endo::HormoneId::SEROTONIN, para * 0.1f);
-            hormone_bus_.produce(endo::HormoneId::ANANDAMIDE, para * 0.08f);
-        }
+            // Parasympathetic → serotonin + anandamide (calming)
+            float para = acc_parasympathetic_ * scale;
+            if (para > parasympathetic_threshold_) {
+                hormone_bus_.produce(endo::HormoneId::SEROTONIN, para * 0.1f);
+                hormone_bus_.produce(endo::HormoneId::ANANDAMIDE, para * 0.08f);
+            }
 
-        // Amygdala negative valence → cortisol burst
-        float amyg_neg = acc_amygdala_neg_ * scale;
-        if (amyg_neg > amygdala_threshold_) {
-            hormone_bus_.produce(endo::HormoneId::CORTISOL, amyg_neg * 0.12f);
-        }
+            // Amygdala negative valence → cortisol burst
+            float amyg_neg = acc_amygdala_neg_ * scale;
+            if (amyg_neg > amygdala_threshold_) {
+                hormone_bus_.produce(endo::HormoneId::CORTISOL, amyg_neg * 0.12f);
+            }
 
-        // Reward prediction → DA_phasic
-        float reward = acc_reward_ * scale;
-        if (reward > reward_threshold_) {
-            hormone_bus_.produce(endo::HormoneId::DOPAMINE_PHASIC, reward * 0.1f);
-        }
+            // Reward prediction → DA_phasic
+            float reward = acc_reward_ * scale;
+            if (reward > reward_threshold_) {
+                hormone_bus_.produce(endo::HormoneId::DOPAMINE_PHASIC, reward * 0.1f);
+            }
 
-        // Pain → IL6 + cortisol
-        float pain = acc_pain_ * scale;
-        if (pain > pain_threshold_) {
-            hormone_bus_.produce(endo::HormoneId::IL6, pain * 0.08f);
-            hormone_bus_.produce(endo::HormoneId::CORTISOL, pain * 0.06f);
-        }
+            // Pain → IL6 + cortisol
+            float pain = acc_pain_ * scale;
+            if (pain > pain_threshold_) {
+                hormone_bus_.produce(endo::HormoneId::IL6, pain * 0.08f);
+                hormone_bus_.produce(endo::HormoneId::CORTISOL, pain * 0.06f);
+            }
 
-        // Social → oxytocin
-        float social = acc_social_ * scale;
-        if (social > social_threshold_) {
-            hormone_bus_.produce(endo::HormoneId::OXYTOCIN, social * 0.1f);
-        }
+            // Social → oxytocin
+            float social = acc_social_ * scale;
+            if (social > social_threshold_) {
+                hormone_bus_.produce(endo::HormoneId::OXYTOCIN, social * 0.1f);
+            }
 
-        // Endocrine nudge → direct hormone modulation (from hypothalamus/insula)
-        float nudge = acc_endocrine_nudge_ * scale;
-        if (nudge > 0.1f) {
-            // Nudge broadly modulates calming hormones
-            hormone_bus_.produce(endo::HormoneId::SEROTONIN, nudge * 0.05f);
+            // Endocrine nudge → direct hormone modulation (from hypothalamus/insula)
+            float nudge = acc_endocrine_nudge_ * scale;
+            if (nudge > 0.1f) {
+                // Nudge broadly modulates calming hormones
+                hormone_bus_.produce(endo::HormoneId::SEROTONIN, nudge * 0.05f);
+            }
+
+            // Reset accumulators
+            reset_accumulators();
         }
 
         // ============================================================
         // VES → VNS: Hormone concentration → Neural baseline
         // ============================================================
+        // Runs unconditionally every sync() — hormone concentrations
+        // persist across ticks independent of neural accumulation.
 
         float cortisol = hormone_bus_.concentration(endo::HormoneId::CORTISOL);
         float serotonin = hormone_bus_.concentration(endo::HormoneId::SEROTONIN);
@@ -168,9 +180,6 @@ public:
         float homeostatic_summary = (cortisol + ne + serotonin) / 3.0f;
         nerve_bus_.set_activation(NeuralChannelId::HOMEOSTATIC_SIGNAL,
                                   std::clamp(homeostatic_summary, -1.0f, 1.0f));
-
-        // Reset accumulators
-        reset_accumulators();
     }
 
     // === Configuration ===

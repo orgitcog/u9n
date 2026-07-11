@@ -33,7 +33,7 @@ public:
     }
 
     /// Set the circadian phase directly [0, 1) where 0.5 = peak melatonin
-    void set_phase(float phase) { phase_ = std::fmod(phase, 1.0f); }
+    void set_phase(float phase) { phase_ = wrap_phase(phase); }
 
     /// Get current phase
     [[nodiscard]] float phase() const noexcept { return phase_; }
@@ -57,7 +57,7 @@ public:
     void update(float dt) override {
         // Advance phase
         phase_ += dt / period_;
-        phase_ = std::fmod(phase_, 1.0f);
+        phase_ = wrap_phase(phase_);
 
         current_rate_ = compute_production_rate();
         emit(current_rate_ * dt);
@@ -67,6 +67,16 @@ public:
     }
 
 private:
+    /// Normalize a phase value into [0, 1). std::fmod preserves the sign of
+    /// its first argument, so a negative phase (e.g. from a negative
+    /// set_phase() call or a negative dt) would otherwise leave phase_
+    /// negative, breaking the [0,1) cycle assumed by compute_production_rate().
+    [[nodiscard]] static float wrap_phase(float phase) noexcept {
+        float wrapped = std::fmod(phase, 1.0f);
+        if (wrapped < 0.0f) wrapped += 1.0f;
+        return wrapped;
+    }
+
     float phase_{0.0f};      // [0, 1) circadian phase
     float period_{1000.0f};  // Ticks per full cycle
     float light_input_{0.0f};

@@ -309,17 +309,16 @@ public:
         if (touchpad_adapter_) {
             touchpad_adapter_->apply_feedback();
         }
-        if (entelechy_adapter_) {
-            entelechy_adapter_->apply_feedback();
-        }
         if (afi_adapter_) {
             afi_adapter_->apply_feedback();
         }
 
         // Phase 5: Guidance check (async trigger/receive/apply cycle)
         if (guidance_connector_) {
-            // Feed moral novelty from moral engine's last perception
-            // (moral perception runs as part of affect computation)
+            // Feed moral novelty from the moral engine's last perception
+            // (moral perception runs on-demand, not every tick, so this
+            // reflects the most recent evaluate() call).
+            guidance_connector_->set_moral_novelty(moral_.last_novel_moral_signal());
             guidance_connector_->tick(bus_);
         }
 
@@ -336,6 +335,17 @@ public:
         // Phase 8: Civic Angel self-observation (self-throttled)
         if (entelechy_adapter_) {
             entelechy_adapter_->observe(tick_count_);
+        }
+
+        // Phase 9: Entelechy feedback (WRITE self-coherence/free-energy
+        // back to bus). Run *after* Phase 8's observe() rather than in the
+        // generic Phase 4 loop above: observe() self-throttles to roughly
+        // every 10 ticks, so reading angel_ state in Phase 4 (before Phase
+        // 8 runs) meant apply_feedback() always saw the *previous*
+        // observation cycle -- up to one full throttle period stale.
+        // Running it here lets it react to this tick's fresh observation.
+        if (entelechy_adapter_) {
+            entelechy_adapter_->apply_feedback();
         }
 
         tick_count_++;

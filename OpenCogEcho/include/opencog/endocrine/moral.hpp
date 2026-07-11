@@ -86,7 +86,22 @@ public:
         // Modulate endocrine system based on moral perception
         apply_moral_modulation(result);
 
+        // Remember the novelty signal so EndocrineSystem::tick() can feed it
+        // to the GuidanceConnector's MORAL_NOVELTY trigger (Phase 5).
+        last_novel_moral_signal_ = result.novel_moral_signal;
+
         return result;
+    }
+
+    /**
+     * @brief Novelty signal from the most recent evaluate() call
+     *
+     * Used by EndocrineSystem::tick() to feed GuidanceConnector::set_moral_novelty()
+     * every tick, since moral perception itself is only evaluated on-demand
+     * (when a situation is presented), not automatically every tick.
+     */
+    [[nodiscard]] float last_novel_moral_signal() const noexcept {
+        return last_novel_moral_signal_;
     }
 
     // ========================================================================
@@ -200,6 +215,7 @@ private:
     HormoneBus& bus_;
     AtomSpace& space_;
     MoralConfig config_;
+    float last_novel_moral_signal_{0.0f};
 
     // Step 1: Raw signal from felt-sense
     [[nodiscard]] ValenceSignature compute_raw_signal(
@@ -286,7 +302,15 @@ private:
             best = std::max(best, match.similarity);
         }
 
-        return (1.0f - best) * config_.novelty_weight + config_.novelty_weight;
+        // Rescaled so novelty approaches 1.0 as best -> 0 (fully novel),
+        // consistent with the associations.empty() early-return of 1.0f.
+        // The previous formula ((1-best)*w + w) topped out at exactly 2*w
+        // (0.6 with the default novelty_weight=0.3), which could never
+        // exceed the `> 0.6f` thresholds used by compute_action_bias() and
+        // GuidanceConfig::moral_novelty_threshold, so REFLECTIVE mode and
+        // MORAL_NOVELTY guidance triggers could never fire from partial
+        // matches.
+        return std::clamp((1.0f - best) * (1.0f + config_.novelty_weight), 0.0f, 1.0f);
     }
 
     // Determine action bias from integrated moral signal

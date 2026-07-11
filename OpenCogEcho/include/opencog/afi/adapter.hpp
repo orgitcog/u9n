@@ -162,21 +162,29 @@ public:
      *      -> DA_PHASIC +0.05 (model improvement reward)
      */
     void apply_feedback() {
-        // --- 1. City free energy spike → prediction crisis ---
-        if (city_free_energy_ > prev_city_free_energy_ * 1.5f &&
-            city_free_energy_ > 3.0f) {
-            bus_.produce(HormoneId::CORTISOL, 0.05f);
-            bus_.produce(HormoneId::NOREPINEPHRINE, 0.05f);
-        }
+        // Skip edge-detection on the very first call: prev_city_free_energy_
+        // starts at 0.0, which would otherwise make the spike condition
+        // (current > prev * 1.5 && current > 3.0) trivially satisfied by
+        // any city_free_energy_ > 3.0 on tick one — a false "spike" against
+        // a baseline that was never actually observed.
+        if (has_prev_city_free_energy_) {
+            // --- 1. City free energy spike → prediction crisis ---
+            if (city_free_energy_ > prev_city_free_energy_ * 1.5f &&
+                city_free_energy_ > 3.0f) {
+                bus_.produce(HormoneId::CORTISOL, 0.05f);
+                bus_.produce(HormoneId::NOREPINEPHRINE, 0.05f);
+            }
 
-        // --- 2. City free energy drop → model improvement reward ---
-        if (city_free_energy_ < prev_city_free_energy_ * 0.7f &&
-            prev_city_free_energy_ > 2.0f) {
-            bus_.produce(HormoneId::DOPAMINE_PHASIC, 0.05f);
+            // --- 2. City free energy drop → model improvement reward ---
+            if (city_free_energy_ < prev_city_free_energy_ * 0.7f &&
+                prev_city_free_energy_ > 2.0f) {
+                bus_.produce(HormoneId::DOPAMINE_PHASIC, 0.05f);
+            }
         }
 
         // Update previous state for next tick's edge detection
         prev_city_free_energy_ = city_free_energy_;
+        has_prev_city_free_energy_ = true;
     }
 
     // ========================================================================
@@ -195,6 +203,7 @@ private:
     float city_free_energy_{0.0f};
     float inter_district_divergence_{0.0f};
     float prev_city_free_energy_{0.0f};
+    bool has_prev_city_free_energy_{false};
 };
 
 } // namespace opencog::endo

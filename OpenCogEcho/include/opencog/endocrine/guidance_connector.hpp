@@ -78,6 +78,19 @@ public:
         ++tick_count_;
         ++ticks_since_last_request_;
 
+        // Track consecutive sustained-stress ticks so HIGH_STRESS only
+        // fires after config_.stress_persist_ticks consecutive ticks of
+        // elevated cortisol in a stressed/threatened mode, not a single
+        // transient sample.
+        float cortisol_now = bus.concentration(HormoneId::CORTISOL);
+        CognitiveMode mode_now = bus.current_mode();
+        if (cortisol_now > config_.stress_threshold &&
+            (mode_now == CognitiveMode::STRESSED || mode_now == CognitiveMode::THREAT)) {
+            ++stressed_ticks_;
+        } else {
+            stressed_ticks_ = 0;
+        }
+
         // First: check if a pending response has arrived
         apply_pending_response();
 
@@ -152,19 +165,20 @@ private:
         }
 
         // Priority 2: Sustained high stress
-        float cortisol = bus.concentration(HormoneId::CORTISOL);
-        if (cortisol > config_.stress_threshold) {
-            CognitiveMode mode = bus.current_mode();
-            if (mode == CognitiveMode::STRESSED || mode == CognitiveMode::THREAT) {
-                // Check if we've been stressed for a while
-                // (We use a simpler check: current cortisol above threshold)
-                return GuidanceReason::HIGH_STRESS;
-            }
+        // Requires stress_persist_ticks consecutive ticks of elevated
+        // cortisol while in a STRESSED/THREAT mode (tracked in tick()),
+        // rather than firing on a single transient cortisol sample.
+        if (stressed_ticks_ >= config_.stress_persist_ticks) {
+            return GuidanceReason::HIGH_STRESS;
         }
 
         // Priority 3: Coherence drop
+        // Guarded on has_reported_emergence() so we don't trigger from the
+        // o9c2 adapter's zero-initialized/default COG_COHERENCE baseline
+        // before it has ever reported real emergence data.
         float coherence = bus.concentration(HormoneId::COG_COHERENCE);
-        if (coherence < config_.coherence_floor && o9c2_adapter_) {
+        if (coherence < config_.coherence_floor && o9c2_adapter_ &&
+            o9c2_adapter_->has_reported_emergence()) {
             return GuidanceReason::EMERGENCE_DROP;
         }
 

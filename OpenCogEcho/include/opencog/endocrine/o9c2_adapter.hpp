@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace opencog::endo {
 
@@ -168,6 +169,14 @@ public:
         }
 
         prev_emergence_ = em;
+        ++feedback_tick_count_;
+    }
+
+    /// True once apply_feedback() has run at least once, i.e. COG_COHERENCE
+    /// (and other emergence-derived hormones) reflect real reported
+    /// emergence data rather than the channel's zero-initialized baseline.
+    [[nodiscard]] bool has_reported_emergence() const noexcept {
+        return feedback_tick_count_ > 0;
     }
 
     // === Configuration ===
@@ -209,6 +218,7 @@ private:
     // Feedback thresholds
     float wisdom_gain_threshold_{0.05f};
     float stability_floor_{0.3f};
+    uint64_t feedback_tick_count_{0};
 
     /**
      * @brief Check if cognitive mode has persisted long enough to trigger

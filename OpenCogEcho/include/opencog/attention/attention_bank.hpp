@@ -158,7 +158,16 @@ public:
     // ========================================================================
 
     [[nodiscard]] const ECANConfig& config() const noexcept { return config_; }
-    void set_config(ECANConfig config) { config_ = config; }
+    void set_config(ECANConfig config) {
+        config_ = config;
+        // Also update the live af_boundary_ atomic used by all attentional
+        // focus queries — update_af_boundary() only nudges it incrementally
+        // (+/-1.0f/tick), so without this a caller (e.g. the endocrine
+        // ECAN adapter) setting a new config's af_boundary would silently
+        // have no effect on AF membership until many ticks of incremental
+        // drift caught up.
+        af_boundary_.store(config_.af_boundary, std::memory_order_relaxed);
+    }
 
     // ========================================================================
     // Forgetting
