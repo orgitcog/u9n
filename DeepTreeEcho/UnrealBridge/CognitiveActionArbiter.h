@@ -54,7 +54,11 @@ struct ArbiterConfig
     /** Salience level above which movement is triggered. */
     float movement_threshold = 0.6f;
 
-    /** Salience level above which focus is re-acquired. */
+    /**
+     * Salience level above which focus is re-acquired.  Focus urgency below
+     * this threshold is suppressed to zero in the action vector so consumers
+     * see an unambiguous "no focus" signal.
+     */
     float focus_threshold = 0.4f;
 
     /**
@@ -120,9 +124,12 @@ public:
         const float raw_movement = peak_salience * bias;
         action[0] = std::min(std::max(raw_movement, 0.0f), 1.0f);
 
-        // Focus urgency: slightly lower than movement so focus shifts first
+        // Focus urgency: slightly lower than movement so focus shifts first.
+        // Suppressed to zero below the configured focus threshold.
         const float focus_gain = 0.9f;  // Focus response is slightly softer
-        action[1] = std::min(std::max(peak_salience * focus_gain, 0.0f), 1.0f);
+        const float raw_focus =
+            std::min(std::max(peak_salience * focus_gain, 0.0f), 1.0f);
+        action[1] = (raw_focus >= config_.focus_threshold) ? raw_focus : 0.0f;
 
         // Target index (float-encoded); -1 when below movement threshold
         action[2] = (action[0] >= config_.movement_threshold)

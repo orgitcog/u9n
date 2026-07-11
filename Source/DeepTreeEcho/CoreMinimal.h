@@ -564,6 +564,16 @@ public:
     template<typename T>
     bool IsA() const { return false; }
     
+    // Default-subobject creation (UE creates CDO-owned components this way).
+    // The stub simply heap-allocates; ownership semantics are not modelled.
+    template<typename TReturnType>
+    TReturnType* CreateDefaultSubobject(FName SubobjectName, bool bTransient = false)
+    {
+        (void)SubobjectName;
+        (void)bTransient;
+        return new TReturnType();
+    }
+    
     // Lifecycle methods (for Super:: calls)
     virtual void BeginPlay() {}
     virtual void TickComponent(float DeltaTime, ELevelTick TickType, struct FActorComponentTickFunction* ThisTickFunction) {}

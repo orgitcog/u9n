@@ -1,6 +1,24 @@
 // Copyright Deep Tree Echo. All Rights Reserved.
 
 #include "DeepTreeEchoAIController.h"
+#include "UnrealBridge/CognitiveActionArbiter.h"
+
+namespace
+{
+/** Map the UE-facing cognitive mode enum onto the arbiter's standalone enum. */
+DeepTreeEcho::CognitiveMode ToArbiterMode(ECognitiveMode Mode)
+{
+    switch (Mode)
+    {
+        case ECognitiveMode::Reactive:      return DeepTreeEcho::CognitiveMode::Reactive;
+        case ECognitiveMode::Deliberative:  return DeepTreeEcho::CognitiveMode::Deliberative;
+        case ECognitiveMode::Reflective:    return DeepTreeEcho::CognitiveMode::Reflective;
+        case ECognitiveMode::Creative:      return DeepTreeEcho::CognitiveMode::Creative;
+        case ECognitiveMode::Integrative:   return DeepTreeEcho::CognitiveMode::Integrative;
+        default:                            return DeepTreeEcho::CognitiveMode::Reactive;
+    }
+}
+} // namespace
 
 // ============================================================================
 // Constructor
@@ -13,8 +31,9 @@ ADeepTreeEchoAIController::ADeepTreeEchoAIController()
     PrimaryActorTick.bCanEverTick = true;
     PrimaryActorTick.bStartWithTickEnabled = true;
 
-    // Create a perception component so the controller can receive AI stimuli
-    PerceptionComponent = new UAIPerceptionComponent();
+    // Create the perception component through the subobject system so it is
+    // owned, GC-tracked, and serialized like any other default component.
+    PerceptionComponent = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("DeepTreeEchoPerception"));
 }
 
 // ============================================================================
@@ -23,7 +42,7 @@ ADeepTreeEchoAIController::ADeepTreeEchoAIController()
 
 void ADeepTreeEchoAIController::BeginPlay()
 {
-    AController::BeginPlay();
+    AAIController::BeginPlay();
 }
 
 void ADeepTreeEchoAIController::OnPossess(APawn* InPawn)
@@ -36,7 +55,13 @@ void ADeepTreeEchoAIController::OnPossess(APawn* InPawn)
 
         if (CognitiveCore)
         {
-            CognitiveCore->InitializeSystem();
+            // The core initializes itself in BeginPlay.  Only initialize here
+            // when possession happens first (e.g. dynamically spawned pawns);
+            // re-possession must not reset accumulated cognitive state.
+            if (!CognitiveCore->IsSystemInitialized())
+            {
+                CognitiveCore->InitializeSystem();
+            }
 
             UE_LOG(LogTemp, Log,
                 TEXT("DeepTreeEchoAIController: Possessed pawn - cognitive core acquired and initialized"));
@@ -59,6 +84,8 @@ void ADeepTreeEchoAIController::OnUnPossess()
 {
     CognitiveCore = nullptr;
     CurrentMoveTarget = nullptr;
+    bManualMoveTargetOverride = false;
+    LastPerceivedActors.Empty();
     LastSalienceVector.Empty();
     LastActionVector.Empty();
     CognitiveTickAccumulator = 0.0f;
@@ -72,7 +99,7 @@ void ADeepTreeEchoAIController::OnUnPossess()
 
 void ADeepTreeEchoAIController::Tick(float DeltaTime)
 {
-    AActor::Tick(DeltaTime);
+    AAIController::Tick(DeltaTime);
 
     if (!CognitiveCore)
     {
@@ -104,6 +131,9 @@ void ADeepTreeEchoAIController::InjectPerceptionStimulus(
 
 void ADeepTreeEchoAIController::SetMoveTarget(AActor* NewTarget)
 {
+    // A non-null target pins manual control; nullptr resumes autonomous
+    // (arbiter-driven) target selection on the next cognitive tick.
+    bManualMoveTargetOverride = (NewTarget != nullptr);
     CurrentMoveTarget = NewTarget;
 
     if (NewTarget)
@@ -123,22 +153,43 @@ void ADeepTreeEchoAIController::ForceCognitiveTick()
         return;
     }
 
-    // 1. Gather and feed perception
+    // 1. Gather and feed perception.  This refreshes LastSalienceVector and
+    //    LastPerceivedActors (index-aligned) for the arbiter below.
     FeedPerceptionToCognition();
 
-    // 2. Generate action vector from the cognitive core
-    TArray<float> ActionVector = CognitiveCore->GenerateActionOutput();
-    LastActionVector = ActionVector;
+    // 2. Run the decision arbiter: salience + cognitive mode → compact action
+    //    vector [movement_urgency, focus_urgency, target_index].  Raw
+    //    reservoir activations from GenerateActionOutput() have no such
+    //    layout, so the arbiter owns the salience→action mapping.
+    DeepTreeEcho::ArbiterConfig ArbiterCfg;
+    ArbiterCfg.movement_threshold = MovementSalienceThreshold;
+    ArbiterCfg.focus_threshold = FocusSalienceThreshold;
+    const DeepTreeEcho::CognitiveActionArbiter Arbiter(ArbiterCfg);
 
-    // 3. Translate action vector to world-level commands
-    ApplyCognitiveActionsToWorld(ActionVector);
+    std::vector<float> Salience(static_cast<size_t>(LastSalienceVector.Num()));
+    for (int32 i = 0; i < LastSalienceVector.Num(); ++i)
+    {
+        Salience[static_cast<size_t>(i)] = LastSalienceVector[i];
+    }
+
+    const Eigen::VectorXf Action =
+        Arbiter.compute(Salience, ToArbiterMode(CognitiveCore->CurrentMode));
+
+    LastActionVector.Empty();
+    for (int i = 0; i < Action.size(); ++i)
+    {
+        LastActionVector.Add(Action[i]);
+    }
+
+    // 3. Translate the arbiter's action vector into world-level commands
+    ApplyCognitiveActionsToWorld(LastActionVector);
 
     if (bDebugLogging)
     {
         UE_LOG(LogTemp, Log,
             TEXT("DeepTreeEchoAI: Cycle step=%d  action_dim=%d"),
             CognitiveCore->GetCurrentCycleStep(),
-            ActionVector.Num());
+            LastActionVector.Num());
     }
 }
 
@@ -198,9 +249,13 @@ void ADeepTreeEchoAIController::FeedPerceptionToCognition()
     PerceptionComponent->GetCurrentlyPerceivedActors(nullptr, PerceivedActors);
 
     // Build a simple salience vector: one float per perceived actor
-    // representing approximate threat / interest level.
+    // representing approximate threat / interest level.  Cache the actors
+    // index-aligned with the salience values so the arbiter's target index
+    // can be resolved back to an actor.
     TArray<float> SalienceData;
-    SalienceData.Reserve(PerceivedActors.Num() * 3); // x, y, salience per actor
+    SalienceData.Reserve(PerceivedActors.Num());
+    LastPerceivedActors.Empty();
+    LastPerceivedActors.Reserve(PerceivedActors.Num());
 
     APawn* ControlledPawn = GetPawn();
     FVector PawnLocation = ControlledPawn ? ControlledPawn->GetActorLocation() : FVector();
@@ -217,6 +272,7 @@ void ADeepTreeEchoAIController::FeedPerceptionToCognition()
         float Salience = FMath::Clamp(1.0f - Distance / 5000.0f, 0.0f, 1.0f);
 
         SalienceData.Add(Salience);
+        LastPerceivedActors.Add(Actor);
 
         if (Salience > HighestSalience)
         {
@@ -254,19 +310,31 @@ void ADeepTreeEchoAIController::FeedPerceptionToCognition()
 void ADeepTreeEchoAIController::ApplyCognitiveActionsToWorld(
     const TArray<float>& ActionVector)
 {
-    if (ActionVector.Num() < 2)
+    if (ActionVector.Num() < 3)
     {
-        return;  // Need at least [movement_salience, focus_salience]
+        return;  // Expect [movement_urgency, focus_urgency, target_index]
     }
 
     // Convention for the action vector layout (matches CognitiveActionArbiter):
     //   [0] = movement salience / urgency
-    //   [1] = focus shift salience
-    //   [2] = target index in LastSalienceVector (float-encoded int)
+    //   [1] = focus shift salience (0 when below the focus threshold)
+    //   [2] = target index in LastPerceivedActors (float-encoded int, -1 = none)
     //   [3..] = reserved for future subsystem outputs
 
     const float MovementUrgency = ActionVector[0];
-    const float FocusUrgency    = ActionVector.Num() > 1 ? ActionVector[1] : 0.0f;
+    const float FocusUrgency    = ActionVector[1];
+    const int32 TargetIndex     = FMath::RoundToInt(ActionVector[2]);
+
+    // --- Autonomous target selection ---
+    // Unless a Blueprint pinned a manual target via SetMoveTarget, resolve the
+    // arbiter-selected index against the perception cache (index-aligned with
+    // LastSalienceVector).  An out-of-range / -1 index clears the target.
+    if (!bManualMoveTargetOverride)
+    {
+        CurrentMoveTarget = LastPerceivedActors.IsValidIndex(TargetIndex)
+                                ? LastPerceivedActors[TargetIndex]
+                                : nullptr;
+    }
 
     // --- Movement ---
     if (MovementUrgency >= MovementSalienceThreshold && CurrentMoveTarget)

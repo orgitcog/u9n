@@ -138,13 +138,17 @@ Open the `ADeepTreeEchoAIController` defaults (or use a child blueprint):
 
 Drag the character into the level.  Press **Play** — the controller will:
 
-1. Possess the pawn → find or warn about `UDeepTreeEchoCore`.
+1. Possess the pawn → find or warn about `UDeepTreeEchoCore` (initializing it
+   only if its own `BeginPlay` has not already done so).
 2. On each cognitive tick, gather perceived actors via
-   `UAIPerceptionComponent`, build a salience vector, and call
-   `CognitiveCore->ProcessSensoryInput(...)`.
-3. Call `CognitiveCore->GenerateActionOutput()` to obtain the action vector.
-4. Pass the action vector to `CognitiveActionArbiter` to decide whether to
-   call `MoveToActor` and/or `SetFocus`.
+   `UAIPerceptionComponent`, build a salience vector (caching the perceived
+   actors index-aligned), and call `CognitiveCore->ProcessSensoryInput(...)`.
+3. Run `CognitiveActionArbiter` over the salience vector and current cognitive
+   mode to obtain `[movement_urgency, focus_urgency, best_target_index]`.
+4. Resolve the target index against the perceived-actor cache and call
+   `MoveToActor` / `SetFocus` when the urgencies exceed the configured
+   thresholds.  A manual `SetMoveTarget(...)` call pins the target until
+   cleared with `SetMoveTarget(nullptr)`.
 
 ---
 
@@ -159,7 +163,7 @@ the standalone CMake build (see [Quality Gate](#quality-gate)).
 | Index | Name | Range | Meaning |
 |---|---|---|---|
 | 0 | `movement_urgency` | [0, 1] | ≥ threshold → call `MoveToActor` |
-| 1 | `focus_urgency` | [0, 1] | ≥ threshold → call `SetFocus` |
+| 1 | `focus_urgency` | [0, 1] | ≥ threshold → call `SetFocus`; suppressed to 0 below `focus_threshold` |
 | 2 | `best_target_index` | int or -1 | Index into salience vector of peak actor |
 
 ### Cognitive Mode Bias

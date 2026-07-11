@@ -15,6 +15,8 @@ public class DeepTreeEchoAvatar : ModuleRules
 
 		// Avatar module source roots
 		string UnrealEchoRoot = Path.GetFullPath(Path.Combine(ModuleDirectory, "../../UnrealEcho"));
+		string DeepTreeEchoRoot = Path.GetFullPath(Path.Combine(ModuleDirectory, "../../DeepTreeEcho"));
+		string ReservoirEchoRoot = Path.GetFullPath(Path.Combine(ModuleDirectory, "../../ReservoirEcho"));
 
 		// Public API surface: DeepTreeEchoAvatar headers
 		PublicIncludePaths.AddRange(
@@ -27,6 +29,12 @@ public class DeepTreeEchoAvatar : ModuleRules
 		PrivateIncludePaths.AddRange(
 			new string[] {
 				Path.Combine(UnrealEchoRoot, "DeepTreeEchoAvatar/Private"),
+				// DeepTreeEcho-root-relative includes used by the AI controller
+				// (e.g. "UnrealBridge/CognitiveActionArbiter.h", "Core/DeepTreeEchoCore.h")
+				DeepTreeEchoRoot,
+				// Eigen — required by CognitiveActionArbiter.h; DeepTreeEcho keeps
+				// it in PrivateIncludePaths, which does not propagate here.
+				Path.Combine(ReservoirEchoRoot, "external/eigen-3.4.0"),
 			}
 		);
 
@@ -65,6 +73,9 @@ public class DeepTreeEchoAvatar : ModuleRules
 
 		// Disable unity builds for better debugging
 		bUseUnity = false;
+
+		// Eigen requires exception support
+		bEnableExceptions = true;
 
 		// Compiler definitions
 		PublicDefinitions.Add("DEEPTREEECHOAVATAR_API=");

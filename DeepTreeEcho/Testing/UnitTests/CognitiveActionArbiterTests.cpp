@@ -242,3 +242,41 @@ TEST(CognitiveActionArbiterTest, DeliberativeModeModerateResponse)
     EXPECT_GE(reactive[0],     deliberative[0]);
     EXPECT_GE(deliberative[0], reflective[0]);
 }
+
+// ===========================================================================
+// Focus threshold gating (config_.focus_threshold)
+// ===========================================================================
+
+TEST(CognitiveActionArbiterTest, FocusBelowThresholdSuppressedToZero)
+{
+    CognitiveActionArbiter arb;  // default focus_threshold = 0.4
+    // Peak salience 0.4 → raw focus urgency 0.36 < 0.4 → suppressed to zero
+    auto action = arb.compute(make_salience({0.4f}));
+    EXPECT_FLOAT_EQ(action[1], 0.0f);
+    EXPECT_FALSE(CognitiveActionArbiter::should_focus(action));
+}
+
+TEST(CognitiveActionArbiterTest, FocusAboveThresholdPassesThrough)
+{
+    CognitiveActionArbiter arb;
+    // Peak salience 0.8 → raw focus urgency 0.72 >= 0.4 → passes through
+    auto action = arb.compute(make_salience({0.8f}));
+    EXPECT_NEAR(action[1], 0.72f, 1e-5f);
+    EXPECT_TRUE(CognitiveActionArbiter::should_focus(action));
+}
+
+TEST(CognitiveActionArbiterTest, CustomFocusThresholdRespected)
+{
+    ArbiterConfig cfg;
+    cfg.focus_threshold = 0.8f;
+    CognitiveActionArbiter arb(cfg);
+
+    // Raw focus urgency = 0.85 * 0.9 = 0.765 < 0.8 → suppressed by strict config
+    auto strict_action = arb.compute(make_salience({0.85f}));
+    EXPECT_FLOAT_EQ(strict_action[1], 0.0f);
+
+    // The default config (0.4) lets the same salience through
+    CognitiveActionArbiter default_arb;
+    auto default_action = default_arb.compute(make_salience({0.85f}));
+    EXPECT_GT(default_action[1], 0.0f);
+}
