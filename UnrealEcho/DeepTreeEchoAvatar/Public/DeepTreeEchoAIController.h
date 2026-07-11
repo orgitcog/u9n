@@ -80,9 +80,9 @@ public:
     TArray<float> LastActionVector;
 
     /**
-     * Actor currently targeted by movement (may be null).  Selected
-     * autonomously from perception each cognitive tick unless a manual
-     * override is active (see SetMoveTarget).
+     * Actor currently targeted by movement (null when movement is not
+     * warranted).  Selected autonomously from perception each cognitive tick
+     * unless a manual override is active (see SetMoveTarget).
      */
     UPROPERTY(BlueprintReadOnly, Category = "DeepTreeEcho|AI|State")
     AActor* CurrentMoveTarget = nullptr;
@@ -100,9 +100,10 @@ public:
     void InjectPerceptionStimulus(const TArray<float>& SensoryData, const FString& Modality);
 
     /**
-     * Manually override the movement target, pinning it against autonomous
-     * (arbiter-driven) target selection.  Passing nullptr clears the override
-     * and resumes autonomous selection on the next cognitive tick.
+     * Manually pin the movement target, taking over both movement and gaze
+     * from autonomous (arbiter-driven) control.  Passing nullptr releases the
+     * pin, stops movement, and resumes autonomous control on the next
+     * cognitive tick.
      */
     UFUNCTION(BlueprintCallable, Category = "DeepTreeEcho|AI")
     void SetMoveTarget(AActor* NewTarget);

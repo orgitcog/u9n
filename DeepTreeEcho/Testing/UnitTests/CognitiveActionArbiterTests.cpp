@@ -280,3 +280,26 @@ TEST(CognitiveActionArbiterTest, CustomFocusThresholdRespected)
     auto default_action = default_arb.compute(make_salience({0.85f}));
     EXPECT_GT(default_action[1], 0.0f);
 }
+
+// ===========================================================================
+// Target reporting: warranted by movement OR focus
+// ===========================================================================
+
+TEST(CognitiveActionArbiterTest, TargetReportedWhenOnlyFocusWarranted)
+{
+    CognitiveActionArbiter arb;
+    // Peak salience 0.5: movement 0.5 < 0.6 (no move) but focus 0.45 >= 0.4,
+    // so the target index must still be reported for gaze tracking.
+    auto action = arb.compute(make_salience({0.2f, 0.5f}));
+    EXPECT_FALSE(CognitiveActionArbiter::should_move(action));
+    EXPECT_TRUE(CognitiveActionArbiter::should_focus(action));
+    EXPECT_EQ(CognitiveActionArbiter::target_index(action), 1);
+}
+
+TEST(CognitiveActionArbiterTest, TargetMinus1WhenNeitherWarranted)
+{
+    CognitiveActionArbiter arb;
+    // Peak 0.35: movement 0.35 < 0.6 and focus 0.315 < 0.4 → no target
+    auto action = arb.compute(make_salience({0.35f}));
+    EXPECT_EQ(CognitiveActionArbiter::target_index(action), -1);
+}

@@ -131,18 +131,21 @@ void ADeepTreeEchoAIController::InjectPerceptionStimulus(
 
 void ADeepTreeEchoAIController::SetMoveTarget(AActor* NewTarget)
 {
-    // A non-null target pins manual control; nullptr resumes autonomous
-    // (arbiter-driven) target selection on the next cognitive tick.
+    // A non-null target pins manual control of movement AND gaze; nullptr
+    // releases the pin and resumes autonomous (arbiter-driven) control on the
+    // next cognitive tick.
     bManualMoveTargetOverride = (NewTarget != nullptr);
     CurrentMoveTarget = NewTarget;
 
     if (NewTarget)
     {
         MoveToActor(NewTarget, NavigationAcceptanceRadius);
+        SetFocus(NewTarget);
     }
     else
     {
         StopMovement();
+        ClearFocus();
     }
 }
 
@@ -289,21 +292,13 @@ void ADeepTreeEchoAIController::FeedPerceptionToCognition()
         CognitiveCore->ProcessSensoryInput(SalienceData, FString("Visual"));
     }
 
-    // Update relevance frame with the highest-salience target
+    // Update relevance frame with the highest-salience target.  Gaze focus is
+    // intentionally NOT set here: ApplyCognitiveActionsToWorld is the single
+    // authority for SetFocus/ClearFocus so perception and the arbiter cannot
+    // issue conflicting focus commands.
     if (MostSalientActor && HighestSalience >= FocusSalienceThreshold)
     {
         CognitiveCore->AllocateAttention(FString("PerceivedActor"), HighestSalience);
-
-        // Focus gaze on the most salient actor
-        if (HighestSalience >= FocusSalienceThreshold)
-        {
-            SetFocus(MostSalientActor);
-        }
-    }
-    else
-    {
-        // Nothing salient — clear focus
-        ClearFocus();
     }
 }
 
@@ -318,37 +313,53 @@ void ADeepTreeEchoAIController::ApplyCognitiveActionsToWorld(
     // Convention for the action vector layout (matches CognitiveActionArbiter):
     //   [0] = movement salience / urgency
     //   [1] = focus shift salience (0 when below the focus threshold)
-    //   [2] = target index in LastPerceivedActors (float-encoded int, -1 = none)
+    //   [2] = target index in LastPerceivedActors (float-encoded int, -1 = none;
+    //         reported when either movement or focus is warranted)
     //   [3..] = reserved for future subsystem outputs
 
     const float MovementUrgency = ActionVector[0];
     const float FocusUrgency    = ActionVector[1];
     const int32 TargetIndex     = FMath::RoundToInt(ActionVector[2]);
 
-    // --- Autonomous target selection ---
-    // Unless a Blueprint pinned a manual target via SetMoveTarget, resolve the
-    // arbiter-selected index against the perception cache (index-aligned with
-    // LastSalienceVector).  An out-of-range / -1 index clears the target.
-    if (!bManualMoveTargetOverride)
+    // A Blueprint-pinned target owns both movement and gaze (see
+    // SetMoveTarget); suppress autonomous commands so they cannot fight it.
+    if (bManualMoveTargetOverride)
     {
-        CurrentMoveTarget = LastPerceivedActors.IsValidIndex(TargetIndex)
-                                ? LastPerceivedActors[TargetIndex]
-                                : nullptr;
+        return;
     }
 
+    // Resolve the arbiter-selected target against the perception cache
+    // (index-aligned with LastSalienceVector).
+    AActor* ArbiterTarget = LastPerceivedActors.IsValidIndex(TargetIndex)
+                                ? LastPerceivedActors[TargetIndex]
+                                : nullptr;
+
     // --- Movement ---
-    if (MovementUrgency >= MovementSalienceThreshold && CurrentMoveTarget)
+    // Stop whenever movement is no longer warranted so stale navigation
+    // cannot persist below the threshold (no hidden deadband).
+    const bool bMovementWarranted =
+        (MovementUrgency >= MovementSalienceThreshold) && ArbiterTarget;
+
+    CurrentMoveTarget = bMovementWarranted ? ArbiterTarget : nullptr;
+
+    if (bMovementWarranted)
     {
         MoveToActor(CurrentMoveTarget, NavigationAcceptanceRadius);
     }
-    else if (MovementUrgency < 0.1f)
+    else
     {
         StopMovement();
     }
 
     // --- Focus ---
-    if (FocusUrgency >= FocusSalienceThreshold && CurrentMoveTarget)
+    // Focus is independent of movement: the arbiter reports a target when
+    // either urgency is warranted, so gaze can track without locomotion.
+    if (FocusUrgency >= FocusSalienceThreshold && ArbiterTarget)
     {
-        SetFocus(CurrentMoveTarget);
+        SetFocus(ArbiterTarget);
+    }
+    else
+    {
+        ClearFocus();
     }
 }

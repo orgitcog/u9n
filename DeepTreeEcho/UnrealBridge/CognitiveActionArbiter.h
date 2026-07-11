@@ -12,7 +12,8 @@
  *   [0] movement_urgency  — 0..1, drives MoveToActor when above threshold
  *   [1] focus_urgency     — 0..1, drives SetFocus when above threshold
  *   [2] best_target_index — float-encoded index into the salience vector of the
- *                           most salient perceived actor (-1 = none)
+ *                           most salient perceived actor; reported when either
+ *                           movement or focus is warranted (-1 = none)
  *
  * The arbiter is intentionally stateless and side-effect-free so it is trivial
  * to test in isolation.
@@ -131,10 +132,13 @@ public:
             std::min(std::max(peak_salience * focus_gain, 0.0f), 1.0f);
         action[1] = (raw_focus >= config_.focus_threshold) ? raw_focus : 0.0f;
 
-        // Target index (float-encoded); -1 when below movement threshold
-        action[2] = (action[0] >= config_.movement_threshold)
-                    ? static_cast<float>(best_idx)
-                    : -1.0f;
+        // Target index (float-encoded); reported when either movement or focus
+        // is warranted so gaze can acquire a target even when movement urgency
+        // is low.  -1 when neither action is warranted.
+        const bool target_warranted =
+            (action[0] >= config_.movement_threshold) ||
+            (action[1] >= config_.focus_threshold);
+        action[2] = target_warranted ? static_cast<float>(best_idx) : -1.0f;
 
         return action;
     }

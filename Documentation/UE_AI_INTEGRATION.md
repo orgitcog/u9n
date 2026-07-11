@@ -147,8 +147,10 @@ Drag the character into the level.  Press **Play** — the controller will:
    mode to obtain `[movement_urgency, focus_urgency, best_target_index]`.
 4. Resolve the target index against the perceived-actor cache and call
    `MoveToActor` / `SetFocus` when the urgencies exceed the configured
-   thresholds.  A manual `SetMoveTarget(...)` call pins the target until
-   cleared with `SetMoveTarget(nullptr)`.
+   thresholds (movement stops and focus clears as soon as they are no longer
+   warranted).  A manual `SetMoveTarget(...)` call pins both movement and
+   gaze to that target — suspending autonomous commands — until cleared with
+   `SetMoveTarget(nullptr)`.
 
 ---
 
@@ -164,7 +166,7 @@ the standalone CMake build (see [Quality Gate](#quality-gate)).
 |---|---|---|---|
 | 0 | `movement_urgency` | [0, 1] | ≥ threshold → call `MoveToActor` |
 | 1 | `focus_urgency` | [0, 1] | ≥ threshold → call `SetFocus`; suppressed to 0 below `focus_threshold` |
-| 2 | `best_target_index` | int or -1 | Index into salience vector of peak actor |
+| 2 | `best_target_index` | int or -1 | Index of peak-salience actor when movement **or** focus is warranted |
 
 ### Cognitive Mode Bias
 
