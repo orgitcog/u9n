@@ -307,6 +307,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "DeepTreeEcho")
     void InitializeSystem();
 
+    /** Has InitializeSystem() completed? Guards against redundant re-initialization. */
+    UFUNCTION(BlueprintCallable, Category = "DeepTreeEcho")
+    bool IsSystemInitialized() const { return bIsInitialized; }
+
     /** Process sensory input through the cognitive architecture */
     UFUNCTION(BlueprintCallable, Category = "DeepTreeEcho")
     void ProcessSensoryInput(const TArray<float>& SensoryData, const FString& Modality);

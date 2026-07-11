@@ -80,6 +80,32 @@ else()
     add_compile_options(-Wno-deprecated-copy)
 endif()
 
+# ============================================================================
+# Windows + non-MSVC (MinGW GCC or Clang targeting MinGW ABI):
+#   static C++ runtime — prevents STATUS_DLL_NOT_FOUND (0xC0000135)
+# ============================================================================
+# libstdc++-6.dll / libgcc_s_seh-1.dll / libwinpthread-1.dll ship with
+# MinGW/MSYS2 but are NOT on PATH in a clean shell.  Without this block
+# every test executable exits immediately with exit code 0xC0000135.
+#
+# Fix: force all libraries to static archives (BUILD_SHARED_LIBS=OFF) and
+# embed the MinGW C++ / GCC / pthreads runtime into each executable.
+# --whole-archive is required for winpthread because a plain -Bstatic link
+# leaves the archive weakly referenced and the DLL import is preserved.
+#
+# Guard: WIN32 + NOT MSVC — covers MinGW GCC (compiler ID "GNU") and
+# LLVM Clang targeting MinGW ABI (compiler ID "Clang", MSVC=FALSE).
+# Has NO effect on Linux / macOS CI, nor on MSVC / clang-cl Windows builds.
+if(WIN32 AND NOT MSVC)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+    add_link_options(
+        -static-libstdc++
+        -static-libgcc
+        "-Wl,-Bstatic,--whole-archive,-lwinpthread,--no-whole-archive,-Bdynamic"
+    )
+    message(STATUS "Windows/non-MSVC: BUILD_SHARED_LIBS=OFF; libstdc++/libgcc/winpthread linked statically (no MinGW DLLs at runtime)")
+endif()
+
 # Add ReservoirCpp subdirectory
 add_subdirectory(ReservoirEcho/reservoircpp_cpp)
 
