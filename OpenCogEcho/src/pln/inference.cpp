@@ -170,7 +170,9 @@ std::vector<InferenceResult> PLNEngine::forward_step(Handle source) {
             apply_deduction(source, results);
         } else if (rule.name == "inversion" && source_type == AtomType::IMPLICATION_LINK) {
             apply_inversion(source, results);
-        } else if (rule.name == "modus-ponens") {
+        } else if (rule.name == "modus-ponens" && is_node(source_type)) {
+            // Modus ponens takes a premise atom A plus A->B; links (e.g.
+            // implications on the frontier) are not valid premise atoms.
             apply_modus_ponens(source, results);
         }
     }

@@ -326,6 +326,10 @@ std::optional<UREResult> UREngine::backward_chain(Handle target) {
 
             auto app_result = applicator_.apply(*rule, *grounding);
             if (app_result) {
+                // The instantiated conclusion must be the atom we are trying
+                // to prove; otherwise the rule proved something else.
+                if (app_result->result.id() != current.id()) continue;
+
                 stats_.rules_applied++;
 
                 UREResult result;

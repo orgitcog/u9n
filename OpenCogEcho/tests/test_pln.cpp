@@ -401,6 +401,23 @@ TEST(PLN_forward_chain_modus_ponens) {
     return true;
 }
 
+TEST(PLN_modus_ponens_skips_link_sources) {
+    AtomSpace space;
+
+    Handle a = space.add_node(AtomType::CONCEPT_NODE, "A", TruthValue{0.9f, 0.9f});
+    Handle b = space.add_node(AtomType::CONCEPT_NODE, "B", TruthValue{0.1f, 0.1f});
+    Handle ab = space.add_link(AtomType::IMPLICATION_LINK, {a, b}, TruthValue{0.9f, 0.9f});
+
+    PLNEngine engine(space);
+    engine.add_rule(rules::make_modus_ponens_rule());
+
+    // An implication link is not a valid premise atom for modus ponens.
+    auto results = engine.forward_step(ab);
+    ASSERT(results.empty());
+    ASSERT_NEAR(space.get_tv(b).confidence, 0.1f, 0.001f);
+    return true;
+}
+
 // ============================================================================
 // URE Backward Chaining Tests
 // ============================================================================
@@ -441,5 +458,25 @@ TEST(URE_backward_chain_grounded_premise_succeeds) {
     auto result = engine.backward_chain(goal);
     ASSERT(result.has_value());
     ASSERT_EQ(result->conclusion.id(), goal.id());
+    return true;
+}
+
+TEST(URE_backward_chain_wrong_conclusion_rejected) {
+    AtomSpace space;
+
+    Handle goal = space.add_node(AtomType::CONCEPT_NODE, "Goal", TruthValue{0.0f, 0.0f});
+    Handle other = space.add_node(AtomType::CONCEPT_NODE, "Other", TruthValue{0.0f, 0.0f});
+    Handle premise = space.add_node(AtomType::CONCEPT_NODE, "Premise", TruthValue{0.9f, 0.9f});
+
+    ure::UREngine engine(space);
+    ure::Rule rule;
+    rule.name = "other-rule";
+    rule.premise = premise;
+    rule.conclusion = other;  // Same type as goal, but a different atom
+    engine.rules().add_rule(rule);
+
+    // The rule proves "Other", not "Goal" — it must not count as a proof.
+    auto result = engine.backward_chain(goal);
+    ASSERT(!result.has_value());
     return true;
 }
