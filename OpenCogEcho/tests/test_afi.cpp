@@ -8,9 +8,11 @@
  */
 
 #include <opencog/afi/types.hpp>
+#include <opencog/afi/adapter.hpp>
 #include <opencog/afi/blanket.hpp>
 #include <opencog/afi/free_energy.hpp>
 #include <opencog/afi/precision.hpp>
+#include <opencog/endocrine/endocrine_system.hpp>
 
 #include <cmath>
 #include <functional>
@@ -32,6 +34,10 @@ extern bool register_test(const std::string& name, std::function<bool()> func);
 
 using namespace opencog::afi;
 using namespace opencog;
+
+static void set_district_free_energy(entelechy::CognitiveDistrict& district, float free_energy) {
+    district.update_observations({0.5f + std::sqrt(free_energy)});
+}
 
 // ============================================================================
 // MarkovBlanket Tests
@@ -370,5 +376,64 @@ TEST(afi_model_weighted_prediction_error) {
     float wpe = model.weighted_prediction_error();
     // Weighted: (2*1 + 0.5*1) / (2 + 0.5) = 2.5 / 2.5 = 1.0
     ASSERT(wpe > 0.0f);
+    return true;
+}
+
+// ============================================================================
+// AFI Endocrine Adapter Tests
+// ============================================================================
+
+TEST(afi_endocrine_feedback_uses_mean_free_energy_not_district_count) {
+    endo::HormoneBus bus;
+    endo::AFIEndocrineAdapter adapter(bus);
+
+    entelechy::CognitiveDistrict academy(entelechy::DistrictId::ACADEMY);
+    set_district_free_energy(academy, 2.1f);
+    adapter.register_district(&academy);
+
+    adapter.apply_endocrine_modulation(bus);
+    adapter.apply_feedback();
+    const float cortisol_before = bus.concentration(endo::HormoneId::CORTISOL);
+
+    entelechy::CognitiveDistrict market(entelechy::DistrictId::MARKETPLACE);
+    entelechy::CognitiveDistrict observatory(entelechy::DistrictId::OBSERVATORY);
+    entelechy::CognitiveDistrict courthouse(entelechy::DistrictId::COURTHOUSE);
+    set_district_free_energy(market, 2.1f);
+    set_district_free_energy(observatory, 2.1f);
+    set_district_free_energy(courthouse, 2.1f);
+    adapter.register_district(&market);
+    adapter.register_district(&observatory);
+    adapter.register_district(&courthouse);
+
+    adapter.apply_endocrine_modulation(bus);
+    ASSERT_NEAR(adapter.city_free_energy(), 8.4f, 0.001f);
+    ASSERT_NEAR(adapter.mean_district_free_energy(), 2.1f, 0.001f);
+    adapter.apply_feedback();
+
+    ASSERT_NEAR(bus.concentration(endo::HormoneId::CORTISOL), cortisol_before, 0.001f);
+    return true;
+}
+
+TEST(afi_endocrine_system_tick_applies_precision_sti_to_attention_bank) {
+    AtomSpace space;
+    AttentionBank bank(space);
+    endo::EndocrineSystem system(space);
+    system.connect_attention(bank);
+    system.connect_afi();
+
+    Handle signal = space.add_node(AtomType::CONCEPT_NODE, "AFI precision signal");
+    entelechy::CognitiveDistrict district(entelechy::DistrictId::MARKETPLACE);
+    district.update_observations({0.5f});
+    auto& model = const_cast<GenerativeModelState&>(district.model());
+    model.predictions = {0.5f};
+    model.observations = {0.5f};
+    model.weights = {PrecisionWeight(signal.id(), 1.0f)};
+
+    system.afi_adapter()->register_district(&district);
+    const float sti_before = space.get_av(signal).sti;
+    system.tick();
+    const float sti_after = space.get_av(signal).sti;
+
+    ASSERT(sti_after > sti_before);
     return true;
 }

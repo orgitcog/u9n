@@ -83,6 +83,7 @@ public:
     // === Core Connectors (ECAN + PLN) ===
 
     void connect_attention(AttentionBank& bank) {
+        attention_bank_ = &bank;
         ecan_adapter_ = std::make_unique<ECANEndocrineAdapter>(bus_, bank);
     }
 
@@ -101,6 +102,9 @@ public:
      */
     void connect_npu(NPUInterface& npu) {
         npu_adapter_ = std::make_unique<NPUEndocrineAdapter>(bus_, npu);
+        if (guidance_connector_) {
+            guidance_connector_->set_npu_source(npu_adapter_.get());
+        }
     }
 
     /**
@@ -113,6 +117,9 @@ public:
      */
     void connect_o9c2(O9C2Interface& o9c2) {
         o9c2_adapter_ = std::make_unique<O9C2EndocrineAdapter>(bus_, o9c2);
+        if (guidance_connector_) {
+            guidance_connector_->set_o9c2_source(o9c2_adapter_.get());
+        }
     }
 
     /**
@@ -126,6 +133,9 @@ public:
      */
     void connect_marduk(MardukInterface& marduk) {
         marduk_adapter_ = std::make_unique<MardukEndocrineAdapter>(bus_, marduk);
+        if (guidance_connector_) {
+            guidance_connector_->set_marduk_source(marduk_adapter_.get());
+        }
     }
 
     /**
@@ -139,6 +149,9 @@ public:
      */
     void connect_touchpad(TouchpadInterface& touchpad) {
         touchpad_adapter_ = std::make_unique<TouchpadEndocrineAdapter>(bus_, touchpad);
+        if (guidance_connector_) {
+            guidance_connector_->set_touchpad_source(touchpad_adapter_.get());
+        }
     }
 
     /**
@@ -294,6 +307,11 @@ public:
         }
         if (afi_adapter_) {
             afi_adapter_->apply_endocrine_modulation(bus_);
+            if (attention_bank_) {
+                for (const auto& [atom, sti_adjustment] : afi_adapter_->compute_sti_adjustments()) {
+                    attention_bank_->stimulate(atom, sti_adjustment);
+                }
+            }
         }
 
         // Phase 4: Bidirectional feedback (WRITE target state back to bus)
@@ -795,6 +813,7 @@ private:
     MoralPerceptionEngine moral_;
 
     // Core adapters
+    AttentionBank* attention_bank_{nullptr};
     std::unique_ptr<ECANEndocrineAdapter> ecan_adapter_;
     std::unique_ptr<PLNEndocrineAdapter> pln_adapter_;
 

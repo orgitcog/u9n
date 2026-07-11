@@ -391,6 +391,21 @@ TEST(Marduk_WRITE_organization_to_ORG_COHERENCE) {
     return true;
 }
 
+TEST(Marduk_WRITE_telemetry_channels_are_current_levels) {
+    HormoneBus bus;
+    MockMarduk marduk;
+    MardukEndocrineAdapter adapter(bus, marduk);
+
+    marduk.tel.task_queue_depth = 0.6f;
+    marduk.ex.organization = 0.8f;
+    adapter.apply_feedback();
+    adapter.apply_feedback();
+
+    ASSERT_NEAR(bus.concentration(HormoneId::MARDUK_LOAD), 0.6f, 0.01f);
+    ASSERT_NEAR(bus.concentration(HormoneId::ORG_COHERENCE), 0.8f, 0.01f);
+    return true;
+}
+
 TEST(Marduk_WRITE_consolidation_success_to_serotonin) {
     HormoneBus bus;
     MockMarduk marduk;
