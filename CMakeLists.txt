@@ -146,6 +146,14 @@ if(BUILD_TESTING OR BUILD_E2E_TESTS)
     enable_testing()
 endif()
 
+# ============================================================================
+# OpenCogEcho - Modern OpenCog core (ported from 9-o9/u9)
+# ============================================================================
+# Builds the opencog_echo library (C++23, C++20 fallback) plus its tests
+# and benchmarks. Added after the testing infrastructure so enable_testing()
+# is active when its tests register.
+add_subdirectory(OpenCogEcho)
+
 # Coverage flags
 if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(--coverage -fprofile-arcs -ftest-coverage)

@@ -221,7 +221,7 @@ Comprehensive architectural documentation for the E1 Foundation layer.
 | 4E Cognition | ✅ Complete | All 4 dimensions |
 | Avatar Evolution | ✅ Complete | Full implementation |
 | Memory Integration | 🚧 In Progress | Hypergraph partial |
-| OpenCog Integration | 📝 Planned | Future milestone |
+| OpenCog Integration | 🚧 In Progress (core landed) | OpenCogEcho/ module (AtomSpace, ECAN, PLN, URE, pattern matcher) |
 
 ### Component Overview
 
@@ -232,6 +232,7 @@ Comprehensive architectural documentation for the E1 Foundation layer.
 | 4E Cognition | DeepTreeEcho/4ECognition/ | 2 | Embodied cognition |
 | Avatar Evolution | DeepTreeEcho/Avatar/ | 2 | Evolution system |
 | Reservoir Library | ReservoirEcho/ | 1,531 | ESN implementation |
+| Modern OpenCog Core | OpenCogEcho/ | 38 | AtomSpace, ECAN, PLN, URE, pattern matcher |
 | Unreal Integration | UnrealEcho/ | 106 | Runtime & sensors |
 
 ### Documentation Files

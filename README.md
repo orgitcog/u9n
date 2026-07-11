@@ -151,14 +151,18 @@ Dynamic personality trait systems:
 
 ### OpenCog Integration
 
-Neural-symbolic reasoning capabilities:
+Neural-symbolic reasoning capabilities. The Modern OpenCog core (ported from
+9-o9/u9) now lives in `OpenCogEcho/` — a C++23 library with a SoA AtomSpace,
+8-byte TruthValues, lock-free ECAN, a coroutine-friendly pattern matcher,
+SIMD-ready PLN formulas, and URE forward/backward chaining:
 
-* **AtomSpace** - Hypergraph-based knowledge representation
-* **Unified Rule Engine (URE)** - Forward/backward chaining inference
-* **Probabilistic Logic Networks (PLN)** - Reasoning under uncertainty
-* **Pattern Mining** - Discovery of implicit patterns
-* **Attention Allocation (ECAN)** - Economic focus management
-* **Unsupervised Language Learning** - Natural language acquisition
+* **AtomSpace** - Hypergraph-based knowledge representation (`OpenCogEcho/include/opencog/atomspace/`)
+* **Unified Rule Engine (URE)** - Forward/backward chaining inference (`OpenCogEcho/include/opencog/ure/`)
+* **Probabilistic Logic Networks (PLN)** - Reasoning under uncertainty (`OpenCogEcho/include/opencog/pln/`)
+* **Pattern Mining** - Discovery of implicit patterns (`OpenCogEcho/include/opencog/pattern/`)
+* **Attention Allocation (ECAN)** - Economic focus management (`OpenCogEcho/include/opencog/attention/`)
+* **Atomese Loader** - S-expression knowledge import (`OpenCogEcho/include/opencog/atomese/`)
+* **Unsupervised Language Learning** - Natural language acquisition (planned)
 
 ### Getting Started with Deep Tree Echo Development
 
