@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <numeric>
 #include <functional>
+#include <algorithm>  // std::reverse, std::accumulate (GCC 16+ compatibility)
 
 namespace reservoircpp {
 namespace type {
