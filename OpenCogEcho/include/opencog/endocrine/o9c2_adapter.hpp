@@ -133,6 +133,19 @@ public:
     void apply_feedback() {
         EmergenceMetrics em = o9c2_.emergence();
 
+        // Track whether o9c2_ has ever reported a non-default-zero
+        // emergence snapshot. A tick-count guard alone is insufficient
+        // (as flagged by review): since apply_feedback() runs before the
+        // guidance check within the same tick, "ran at least once" would
+        // still be true on the very first call, even though em is still
+        // all-zero defaults at that point — the exact false-baseline case
+        // this guard is meant to prevent.
+        if (!has_reported_emergence_ &&
+            (em.wisdom != 0.0f || em.complexity != 0.0f || em.coherence != 0.0f ||
+             em.stability != 0.0f || em.adaptability != 0.0f)) {
+            has_reported_emergence_ = true;
+        }
+
         // --- Coherence → COG_COHERENCE channel (15) ---
         bus_.produce(HormoneId::COG_COHERENCE, em.coherence * 0.1f);
 
@@ -169,14 +182,14 @@ public:
         }
 
         prev_emergence_ = em;
-        ++feedback_tick_count_;
     }
 
-    /// True once apply_feedback() has run at least once, i.e. COG_COHERENCE
-    /// (and other emergence-derived hormones) reflect real reported
-    /// emergence data rather than the channel's zero-initialized baseline.
+    /// True once o9c2_ has reported at least one non-default-zero emergence
+    /// snapshot, i.e. COG_COHERENCE (and other emergence-derived hormones)
+    /// reflect real reported data rather than EmergenceMetrics' all-zero
+    /// default-constructed baseline.
     [[nodiscard]] bool has_reported_emergence() const noexcept {
-        return feedback_tick_count_ > 0;
+        return has_reported_emergence_;
     }
 
     // === Configuration ===
@@ -218,7 +231,7 @@ private:
     // Feedback thresholds
     float wisdom_gain_threshold_{0.05f};
     float stability_floor_{0.3f};
-    uint64_t feedback_tick_count_{0};
+    bool has_reported_emergence_{false};
 
     /**
      * @brief Check if cognitive mode has persisted long enough to trigger
