@@ -190,7 +190,9 @@ int  idx   = DeepTreeEcho::CognitiveActionArbiter::target_index(action);  // 1
 
 ## Quality Gate
 
-Run the standalone CMake + GTest build before submitting changes:
+Run the standalone CMake + GTest build before submitting changes.
+
+### Linux / macOS (system g++ in PATH)
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -198,6 +200,51 @@ cmake --build build --config Release -j
 cd build
 ctest --output-on-failure --parallel 2 -L unit -C Release
 ```
+
+### Windows (LLVM clang++ + MSYS2 mingw64)
+
+On Windows no C++ compiler is on `PATH` in a clean shell, so the build
+requires a toolchain file that locates LLVM and the MSYS2 sysroot:
+
+```powershell
+cmake -S . -B build `
+      -DCMAKE_BUILD_TYPE=Release `
+      -DBUILD_TESTING=ON `
+      -G Ninja `
+      -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-windows-clang-mingw.cmake
+cmake --build build --config Release -j
+cd build
+ctest --output-on-failure --parallel 2 -L unit -C Release
+```
+
+**Prerequisites** (both installed by WinGet):
+
+| Tool | WinGet ID | Default install path |
+|------|-----------|----------------------|
+| LLVM / Clang 22+ | `LLVM.LLVM` | `C:\Program Files\LLVM` |
+| MSYS2 | `MSYS2.MSYS2` | `C:\msys64` |
+| Ninja | `Ninja-build.Ninja` | on PATH via WinGet links |
+
+After installing MSYS2, open an MSYS2 MinGW64 shell and run:
+```bash
+pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-winpthreads-git
+```
+
+**Why the toolchain file is needed**:
+MinGW's `g++.exe` invokes sub-tools (`cc1plus.exe`, `as.exe`, etc.) that
+themselves depend on `libgcc_s_seh-1.dll`, `libgmp-10.dll`, and other MinGW
+DLLs.  Without MinGW on `PATH`, those sub-tools fail even if the compiler
+path is specified explicitly.  LLVM's `clang++.exe` has no such problem — it
+only links against standard Windows system DLLs — so it can compile directly
+from a clean shell when given a `--sysroot` pointing at the MSYS2 mingw64
+tree.
+
+**Why `BUILD_SHARED_LIBS=OFF` is forced on Windows/non-MSVC**:
+`CMakeLists.txt` detects `WIN32 AND NOT MSVC` and forces
+`BUILD_SHARED_LIBS=OFF` and static linking of `libstdc++`, `libgcc`, and
+`libwinpthread`.  This makes every test executable fully self-contained
+(only `KERNEL32.dll` and `msvcrt.dll` at runtime), preventing the
+`STATUS_DLL_NOT_FOUND` (0xC0000135) error that occurred in prior builds.
 
 All tests under `DeepTreeEcho/Testing/UnitTests/` are included automatically
 by the root `CMakeLists.txt` glob.  Tests that require UE headers are excluded
