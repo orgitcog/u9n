@@ -35,6 +35,19 @@ un9n/
 │   ├── examples/           # Python usage examples
 │   └── lib/                # Pre-compiled Maya libraries
 │
+├── OpenCogEcho/            # Modern OpenCog core (C++23, ported from 9-o9/u9)
+│   ├── include/opencog/    # Public headers
+│   │   ├── core/           # AtomId, TruthValue, arena memory
+│   │   ├── atomspace/      # SoA AtomSpace, atom table, indices
+│   │   ├── attention/      # ECAN attention bank & agents
+│   │   ├── pattern/        # Pattern matcher & query DSL
+│   │   ├── pln/            # Probabilistic Logic Networks
+│   │   ├── ure/            # Unified Rule Engine
+│   │   └── atomese/        # Atomese S-expression loader
+│   ├── src/                # Implementations
+│   ├── tests/              # Self-registering unit tests (125)
+│   └── benchmarks/         # Performance benchmarks
+│
 ├── ReservoirEcho/          # Echo State Network library (~1,531 C++ files)
 │   ├── reservoircpp_cpp/   # Core ESN implementation
 │   │   ├── include/        # Headers
@@ -136,7 +149,7 @@ Execution contexts follow rooted tree enumeration:
 | MetaHuman DNA Integration | Complete |
 | DNA → Body Schema Binding | In Progress |
 | Memory Integration | In Progress |
-| OpenCog Integration | Planned |
+| OpenCog Integration | In Progress (core + bio-cognitive modules landed) |
 
 ## Documentation
 

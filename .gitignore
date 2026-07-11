@@ -357,3 +357,6 @@ ReservoirEcho/reservoircpp_cpp/build/
 MetaHuman-DNA-Calibration/dnacalib/build/
 build_test/
 build_bench/
+
+# OpenCogEcho local build directory
+/build-opencog/
