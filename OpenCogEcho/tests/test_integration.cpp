@@ -50,6 +50,12 @@ using namespace opencog::endo;
 // ============================================================================
 // Mock Implementations
 // ============================================================================
+// Anonymous namespace: gives these mock types internal linkage so they don't
+// collide (ODR violation via weak-symbol vtable/typeinfo coalescing) with the
+// identically-named but differently-laid-out Mock* types defined in the
+// other bio-cognitive test files (test_marduk.cpp, test_touchpad.cpp) once
+// all files are linked into the single opencog_echo_tests executable.
+namespace {
 
 /// Mock NPU for testing — records calls and returns configurable state
 struct MockNPU : public NPUInterface {
@@ -96,6 +102,8 @@ struct MockO9C2 : public O9C2Interface {
         ++transition_count;
     }
 };
+
+} // namespace
 
 // ============================================================================
 // Foundation Type Tests

@@ -149,7 +149,7 @@ Execution contexts follow rooted tree enumeration:
 | MetaHuman DNA Integration | Complete |
 | DNA → Body Schema Binding | In Progress |
 | Memory Integration | In Progress |
-| OpenCog Integration | In Progress (core landed) |
+| OpenCog Integration | In Progress (core + bio-cognitive modules landed) |
 
 ## Documentation
 
