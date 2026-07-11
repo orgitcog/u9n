@@ -12,7 +12,9 @@
 #include <opencog/attention/attention_bank.hpp>
 #include <opencog/pln/inference.hpp>
 
+#include <algorithm>
 #include <concepts>
+#include <cmath>
 #include <functional>
 #include <vector>
 
@@ -82,11 +84,15 @@ protected:
 /**
  * @brief Maps hormone concentrations to ECAN configuration parameters
  *
+ * Endocrine modulation owns the absolute hormonal baseline for ECAN. Neural
+ * adapters should compose their transient deltas on top of this current
+ * configuration rather than restoring their own full ECAN baseline.
+ *
  * Mappings:
  *  - Norepinephrine → af_boundary (arousal widens/narrows focus)
  *  - Cortisol → spreading_rate (stress reduces diffuse spreading)
  *  - Dopamine(tonic) → stimulus_wage (reward state increases stimulus value)
- *  - Melatonin → forgetting_threshold (maintenance mode relaxes forgetting)
+ *  - Melatonin → forgetting_threshold (maintenance mode lowers cutoff)
  *  - Serotonin → lti_decay_rate (patience preserves long-term importance)
  */
 class ECANEndocrineAdapter : public EndocrineConnector {
@@ -117,8 +123,9 @@ public:
         // High tonic dopamine → higher stimulus wages (reward amplification)
         cfg.stimulus_wage = base_config_.stimulus_wage * (1.0f + da_tonic * 0.5f);
 
-        // High melatonin → relaxed forgetting (maintenance mode preserves more)
-        cfg.forgetting_threshold = base_config_.forgetting_threshold * (1.0f - melatonin * 0.5f);
+        // High melatonin → lower forgetting cutoff (maintenance mode preserves more)
+        cfg.forgetting_threshold = base_config_.forgetting_threshold
+            - std::abs(base_config_.forgetting_threshold) * melatonin * 0.5f;
 
         // High serotonin → slower LTI decay (patience preserves long-term importance)
         cfg.lti_decay_rate = base_config_.lti_decay_rate * std::max(0.1f, 1.0f - serotonin * 0.5f);
@@ -168,7 +175,8 @@ public:
             static_cast<float>(base_config_.max_iterations) * (0.5f + serotonin));
 
         // Cortisol → demand higher confidence (conservative under stress)
-        cfg.min_confidence = base_config_.min_confidence + cortisol * 0.4f;
+        cfg.min_confidence = std::clamp(
+            base_config_.min_confidence + cortisol * 0.4f, 0.0f, 0.95f);
 
         // Thyroid → attention threshold (processing rate governor)
         cfg.attention_threshold = base_config_.attention_threshold * (1.5f - thyroid);

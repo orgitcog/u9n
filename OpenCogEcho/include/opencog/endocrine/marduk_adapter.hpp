@@ -49,8 +49,8 @@ namespace opencog::endo {
  *   COG_COHERENCE   → validation_threshold↑ (HEMISPHERIC: o9c2 coherence → quality bar)
  *
  * WRITE path (apply_feedback):
- *   Task queue depth           → MARDUK_LOAD (ch16)
- *   Organization metric        → ORG_COHERENCE (ch17)
+ *   Task queue depth           → MARDUK_LOAD (ch16, direct level)
+ *   Organization metric        → ORG_COHERENCE (ch17, direct level)
  *   Consolidation success (Δ)  → serotonin
  *   Optimization complete      → DA_phasic
  *   High cognitive load        → IL6
@@ -173,10 +173,10 @@ public:
         ExecutionMetrics ex = marduk_.execution();
 
         // --- Task queue depth → MARDUK_LOAD channel (16) ---
-        bus_.produce(HormoneId::MARDUK_LOAD, tel.task_queue_depth * 0.1f);
+        bus_.set_concentration(HormoneId::MARDUK_LOAD, tel.task_queue_depth);
 
         // --- Organization metric → ORG_COHERENCE channel (17) ---
-        bus_.produce(HormoneId::ORG_COHERENCE, ex.organization * 0.1f);
+        bus_.set_concentration(HormoneId::ORG_COHERENCE, ex.organization);
 
         // --- Consolidation success (Δ > threshold) → serotonin ---
         float delta_consolidation = tel.consolidation_progress - prev_telemetry_.consolidation_progress;
