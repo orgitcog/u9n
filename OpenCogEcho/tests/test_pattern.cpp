@@ -286,3 +286,99 @@ TEST(GlobTerm_creation) {
     ASSERT_EQ(glob.max_count, 5u);
     return true;
 }
+
+TEST(PatternMatcher_glob_in_link) {
+    AtomSpace space;
+
+    Handle a = space.add_node(AtomType::CONCEPT_NODE, "A");
+    Handle b = space.add_node(AtomType::CONCEPT_NODE, "B");
+    Handle c = space.add_node(AtomType::CONCEPT_NODE, "C");
+    Handle lst = space.add_link(AtomType::LIST_LINK, {a, b, c});
+
+    PatternMatcher matcher(space);
+
+    // (List A <glob>) — the glob absorbs the remaining two atoms.
+    Pattern pattern;
+    pattern.body = link(AtomType::LIST_LINK, {ground(a.id()), GlobTerm("REST", 1, 10)});
+
+    auto result = matcher.find_first(pattern);
+    ASSERT(result.has_value());
+    ASSERT_EQ(result->matched_atom, lst.id());
+
+    // A glob whose range cannot cover the remainder must not match.
+    Pattern bad;
+    bad.body = link(AtomType::LIST_LINK, {ground(a.id()), GlobTerm("REST", 3, 10)});
+    ASSERT(!matcher.find_first(bad).has_value());
+    return true;
+}
+
+TEST(PatternMatcher_glob_single_atom_binds) {
+    AtomSpace space;
+
+    Handle a = space.add_node(AtomType::CONCEPT_NODE, "A");
+    Handle b = space.add_node(AtomType::CONCEPT_NODE, "B");
+    space.add_link(AtomType::LIST_LINK, {a, b});
+
+    PatternMatcher matcher(space);
+
+    Pattern pattern;
+    pattern.body = link(AtomType::LIST_LINK, {ground(a.id()), GlobTerm("X", 1, 1)});
+
+    auto result = matcher.find_first(pattern);
+    ASSERT(result.has_value());
+    ASSERT(result->bindings.contains("X"));
+    ASSERT_EQ(result->bindings.get("X"), b.id());
+    return true;
+}
+
+TEST(Query_where_predicate_filters) {
+    AtomSpace space;
+
+    Handle cat = space.add_node(AtomType::CONCEPT_NODE, "Cat");
+    Handle dog = space.add_node(AtomType::CONCEPT_NODE, "Dog");
+    Handle animal = space.add_node(AtomType::CONCEPT_NODE, "Animal");
+    Handle strong = space.add_link(AtomType::INHERITANCE_LINK, {cat, animal}, TruthValue{0.9f, 0.9f});
+    space.add_link(AtomType::INHERITANCE_LINK, {dog, animal}, TruthValue{0.2f, 0.9f});
+
+    auto strength_filter = [](const AtomSpace& as, Handle h) {
+        return as.get_tv(h).strength > 0.5f;
+    };
+
+    auto results = Query(space)
+        .match(AtomType::INHERITANCE_LINK, {var("X"), ground(animal.id())})
+        .where(strength_filter)
+        .collect();
+    ASSERT_EQ(results.size(), 1u);
+    ASSERT_EQ(results[0].matched_atom, strong.id());
+
+    size_t n = Query(space)
+        .match(AtomType::INHERITANCE_LINK, {var("X"), ground(animal.id())})
+        .where(strength_filter)
+        .count();
+    ASSERT_EQ(n, 1u);
+
+    ASSERT(!Query(space)
+        .match(AtomType::INHERITANCE_LINK, {var("X"), ground(animal.id())})
+        .where([](const AtomSpace& as, Handle h) { return as.get_tv(h).strength > 0.95f; })
+        .exists());
+    return true;
+}
+
+TEST(PatternMatcher_filter_yields_matches) {
+    AtomSpace space;
+
+    space.add_node(AtomType::CONCEPT_NODE, "A");
+    space.add_node(AtomType::CONCEPT_NODE, "B");
+    space.add_node(AtomType::PREDICATE_NODE, "P");
+
+    PatternMatcher matcher(space);
+
+    size_t count = 0;
+    for ([[maybe_unused]] AtomId id : matcher.filter([](const AtomSpace& as, Handle h) {
+             return as.get_type(h) == AtomType::CONCEPT_NODE;
+         })) {
+        ++count;
+    }
+    ASSERT_EQ(count, 2u);
+    return true;
+}

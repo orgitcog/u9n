@@ -5,6 +5,9 @@
 
 #include <opencog/pattern/matcher.hpp>
 
+#include <algorithm>
+#include <vector>
+
 namespace opencog {
 
 PatternMatcher::PatternMatcher(const AtomSpace& space, MatcherConfig config)
@@ -89,13 +92,18 @@ bool PatternMatcher::any_match(const Pattern& pattern) {
 generator<AtomId> PatternMatcher::filter(
     std::function<bool(const AtomSpace&, Handle)> predicate
 ) {
+    // for_each_atom takes a plain callback, so matches are collected first
+    // and yielded afterwards (co_yield cannot appear inside the lambda).
+    std::vector<AtomId> matches;
     space_.for_each_atom([&](Handle h) {
-        if (predicate(space_, h)) {
-            // Note: Can't co_yield from a lambda, would need restructuring
+        if (!predicate || predicate(space_, h)) {
+            matches.push_back(h.id());
         }
     });
-    // Placeholder - would need to refactor to use coroutines properly
-    co_return;
+
+    for (AtomId id : matches) {
+        co_yield id;
+    }
 }
 
 generator<AtomId> PatternMatcher::filter_by_type(
@@ -139,7 +147,19 @@ generator<MatchResult> PatternMatcher::match_term(
             }
         }
     }
-    // Handle other term types...
+    else if (auto* glob = std::get_if<GlobTerm>(&term)) {
+        // A top-level glob matches a single atom, so it only applies when
+        // its count range admits exactly one element.
+        if (glob->min_count <= 1 && 1 <= glob->max_count) {
+            std::vector<AtomId> ids;
+            space_.for_each_atom([&](Handle h) { ids.push_back(h.id()); });
+            for (AtomId id : ids) {
+                BindingSet new_bindings = bindings;
+                new_bindings.bind(glob->name, id);
+                co_yield MatchResult{new_bindings, id, 1.0f};
+            }
+        }
+    }
 }
 
 generator<MatchResult> PatternMatcher::match_grounded(
@@ -177,10 +197,15 @@ generator<MatchResult> PatternMatcher::match_variable(
             co_yield MatchResult{new_bindings, h.id(), 1.0f};
         }
     } else {
-        // Search all atoms (expensive!)
-        space_.for_each_atom([&](Handle h) {
-            // Would need to restructure to use coroutines
-        });
+        // Search all atoms (expensive!) — collect first, since co_yield
+        // cannot be used inside the for_each_atom callback.
+        std::vector<AtomId> ids;
+        space_.for_each_atom([&](Handle h) { ids.push_back(h.id()); });
+        for (AtomId id : ids) {
+            BindingSet new_bindings = bindings;
+            new_bindings.bind(term.name, id);
+            co_yield MatchResult{new_bindings, id, 1.0f};
+        }
     }
 }
 
@@ -264,6 +289,14 @@ std::optional<BindingSet> PatternMatcher::unify_outgoing(
     std::span<const AtomId> atom_outgoing,
     BindingSet bindings
 ) {
+    const bool has_glob = std::any_of(
+        pattern_outgoing.begin(), pattern_outgoing.end(),
+        [](const PatternTerm& t) { return std::holds_alternative<GlobTerm>(t); });
+
+    if (has_glob) {
+        return unify_outgoing_glob(pattern_outgoing, atom_outgoing, 0, 0, std::move(bindings));
+    }
+
     if (pattern_outgoing.size() != atom_outgoing.size()) {
         return std::nullopt;
     }
@@ -277,6 +310,55 @@ std::optional<BindingSet> PatternMatcher::unify_outgoing(
     }
 
     return bindings;
+}
+
+std::optional<BindingSet> PatternMatcher::unify_outgoing_glob(
+    std::span<const PatternTerm> pattern_outgoing,
+    std::span<const AtomId> atom_outgoing,
+    size_t pattern_index,
+    size_t atom_index,
+    BindingSet bindings
+) {
+    if (pattern_index == pattern_outgoing.size()) {
+        if (atom_index == atom_outgoing.size()) {
+            return bindings;
+        }
+        return std::nullopt;
+    }
+
+    const PatternTerm& term = pattern_outgoing[pattern_index];
+
+    if (auto* glob = std::get_if<GlobTerm>(&term)) {
+        const size_t remaining = atom_outgoing.size() - atom_index;
+        const size_t max_take = std::min(glob->max_count, remaining);
+        for (size_t take = glob->min_count; take <= max_take; ++take) {
+            BindingSet branch = bindings;
+            // BindingSet maps a name to a single AtomId, so record the
+            // binding only for single-atom captures.
+            if (take == 1) {
+                branch.bind(glob->name, atom_outgoing[atom_index]);
+            }
+            auto result = unify_outgoing_glob(
+                pattern_outgoing, atom_outgoing,
+                pattern_index + 1, atom_index + take, std::move(branch));
+            if (result) {
+                return result;
+            }
+        }
+        return std::nullopt;
+    }
+
+    if (atom_index >= atom_outgoing.size()) {
+        return std::nullopt;
+    }
+
+    auto result = unify_term(term, atom_outgoing[atom_index], std::move(bindings));
+    if (!result) {
+        return std::nullopt;
+    }
+    return unify_outgoing_glob(
+        pattern_outgoing, atom_outgoing,
+        pattern_index + 1, atom_index + 1, std::move(*result));
 }
 
 std::optional<BindingSet> PatternMatcher::unify_term(
@@ -333,6 +415,21 @@ std::optional<BindingSet> PatternMatcher::unify_term(
 
         auto outgoing = space_.atom_table().get_outgoing(atom);
         return unify_outgoing(pattern.outgoing, outgoing, bindings);
+    }
+
+    if (auto* glob = std::get_if<GlobTerm>(&term)) {
+        // Unifying against exactly one atom.
+        if (glob->min_count <= 1 && 1 <= glob->max_count) {
+            if (bindings.contains(glob->name)) {
+                if (bindings.get(glob->name) == atom) {
+                    return bindings;
+                }
+                return std::nullopt;
+            }
+            bindings.bind(glob->name, atom);
+            return bindings;
+        }
+        return std::nullopt;
     }
 
     return std::nullopt;

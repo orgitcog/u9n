@@ -214,6 +214,14 @@ private:
         BindingSet bindings
     );
 
+    [[nodiscard]] std::optional<BindingSet> unify_outgoing_glob(
+        std::span<const PatternTerm> pattern_outgoing,
+        std::span<const AtomId> atom_outgoing,
+        size_t pattern_index,
+        size_t atom_index,
+        BindingSet bindings
+    );
+
     // Type checking
     [[nodiscard]] bool type_matches(AtomType pattern_type, AtomType atom_type) const;
 };
@@ -234,7 +242,7 @@ private:
  */
 class Query {
 public:
-    explicit Query(const AtomSpace& space) : matcher_(space) {}
+    explicit Query(const AtomSpace& space) : matcher_(space), space_(&space) {}
 
     Query& variable(std::string name, std::optional<AtomType> type = std::nullopt) {
         builder_.variable(std::move(name), type);
@@ -263,27 +271,71 @@ public:
 
     [[nodiscard]] generator<MatchResult> execute() {
         matcher_.set_config(config_);
-        return matcher_.match(builder_.build());
+        return filtered_execute(matcher_, builder_.build(), space_, predicate_);
     }
 
     [[nodiscard]] std::vector<MatchResult> collect() {
-        return matcher_.find_all(builder_.build(), config_.max_results);
+        matcher_.set_config(config_);
+        std::vector<MatchResult> results;
+        for (auto&& result : matcher_.match(builder_.build())) {
+            if (!passes(result)) continue;
+            results.push_back(std::move(result));
+            if (results.size() >= config_.max_results) break;
+        }
+        return results;
     }
 
     [[nodiscard]] std::optional<MatchResult> first() {
-        return matcher_.find_first(builder_.build());
+        matcher_.set_config(config_);
+        for (auto&& result : matcher_.match(builder_.build())) {
+            if (passes(result)) return std::move(result);
+        }
+        return std::nullopt;
     }
 
     [[nodiscard]] size_t count() {
-        return matcher_.count_matches(builder_.build());
+        matcher_.set_config(config_);
+        size_t n = 0;
+        for (auto&& result : matcher_.match(builder_.build())) {
+            if (passes(result)) ++n;
+        }
+        return n;
     }
 
     [[nodiscard]] bool exists() {
-        return matcher_.any_match(builder_.build());
+        matcher_.set_config(config_);
+        for (auto&& result : matcher_.match(builder_.build())) {
+            if (passes(result)) return true;
+        }
+        return false;
     }
 
 private:
+    [[nodiscard]] bool passes(const MatchResult& result) const {
+        if (!predicate_) return true;
+        if (!result.matched_atom.valid()) return false;
+        return predicate_(*space_, Handle{result.matched_atom, const_cast<AtomSpace*>(space_)});
+    }
+
+    // Takes the pattern by value: PatternMatcher::match holds a reference,
+    // so a caller-side temporary would dangle inside the coroutine.
+    [[nodiscard]] static generator<MatchResult> filtered_execute(
+        PatternMatcher& matcher,
+        Pattern pattern,
+        const AtomSpace* space,
+        std::function<bool(const AtomSpace&, Handle)> predicate
+    ) {
+        for (auto&& result : matcher.match(pattern)) {
+            if (!predicate ||
+                (result.matched_atom.valid() &&
+                 predicate(*space, Handle{result.matched_atom, const_cast<AtomSpace*>(space)}))) {
+                co_yield result;
+            }
+        }
+    }
+
     PatternMatcher matcher_;
+    const AtomSpace* space_;
     PatternBuilder builder_;
     MatcherConfig config_;
     std::function<bool(const AtomSpace&, Handle)> predicate_;
