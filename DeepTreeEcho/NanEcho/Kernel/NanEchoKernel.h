@@ -477,8 +477,13 @@ public:
         {
             return false;
         }
+        // A fresh start (from Configured) begins a new cycle interval; resuming
+        // from Stopped preserves partial elapsed time toward the next cycle.
+        if (State == EKernelState::Configured)
+        {
+            HoursSinceLastCycle = 0.0f;
+        }
         State = EKernelState::Running;
-        HoursSinceLastCycle = 0.0f;
         return true;
     }
 
@@ -515,16 +520,7 @@ public:
             ++CyclesRun;
         }
 
-        // Cognitive load rises with phase complexity; recent activity spikes
-        // right after cycles and relaxes between them.
-        const float PhaseLoad =
-            static_cast<float>(FTrainingPhaseSchedule::ActivePhase(TrainingProgress))
-            / static_cast<float>(FTrainingPhaseSchedule::NumPhases - 1);
-        const float Activity = CyclesRun > 0
-            ? 1.0f
-            : std::clamp(1.0f - HoursSinceLastCycle / Config.TrainingCycleIntervalHours,
-                         0.0f, 1.0f);
-        Attention.Update(PhaseLoad, Activity);
+        UpdateAttention(/*bCycleJustRan=*/CyclesRun > 0);
 
         ObserveSelf();
         return CyclesRun;
@@ -558,6 +554,7 @@ public:
                 Config.HuggingFaceRepo + "/checkpoint-" + std::to_string(CompletedCycles);
         }
 
+        UpdateAttention(/*bCycleJustRan=*/true);
         ObserveSelf();
         return true;
     }
@@ -583,6 +580,20 @@ public:
     const FQualityGates& GetQualityGates() const { return Gates; }
 
 private:
+    // Cognitive load rises with phase complexity; recent activity spikes
+    // right after a cycle and relaxes between cycles.
+    void UpdateAttention(bool bCycleJustRan)
+    {
+        const float PhaseLoad =
+            static_cast<float>(FTrainingPhaseSchedule::ActivePhase(TrainingProgress))
+            / static_cast<float>(FTrainingPhaseSchedule::NumPhases - 1);
+        const float Activity = bCycleJustRan
+            ? 1.0f
+            : std::clamp(1.0f - HoursSinceLastCycle / Config.TrainingCycleIntervalHours,
+                         0.0f, 1.0f);
+        Attention.Update(PhaseLoad, Activity);
+    }
+
     void ObserveSelf()
     {
         FSelfImageL0 Snapshot;

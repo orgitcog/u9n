@@ -633,6 +633,68 @@ TEST(NanEchoKernelDaemon, TickUpdatesAttentionAndAutognosis)
     EXPECT_GT(Kernel.GetAutognosis().GetObservationCount(), Before);
 }
 
+TEST(NanEchoKernelDaemon, ResumeFromStoppedPreservesCycleTimer)
+{
+    FNanEchoKernel Kernel;
+    Kernel.Configure(FNanEchoKernelConfig{});  // 4h interval
+    Kernel.Start();
+
+    // Accumulate partial progress toward the next cycle, then pause.
+    EXPECT_EQ(Kernel.TickHours(3.0f), 0);
+    Kernel.Stop();
+
+    // Resume: the 3h already accumulated must survive the pause.
+    EXPECT_TRUE(Kernel.Start());
+    EXPECT_EQ(Kernel.TickHours(1.0f), 1);
+    EXPECT_EQ(Kernel.GetCompletedCycles(), 1u);
+}
+
+TEST(NanEchoKernelDaemon, ReconfigureResetsCycleTimer)
+{
+    FNanEchoKernel Kernel;
+    Kernel.Configure(FNanEchoKernelConfig{});  // 4h interval
+    Kernel.Start();
+    EXPECT_EQ(Kernel.TickHours(3.0f), 0);
+    Kernel.Stop();
+
+    // A fresh Configure + Start begins a new interval from zero.
+    EXPECT_TRUE(Kernel.Configure(FNanEchoKernelConfig{}));
+    EXPECT_TRUE(Kernel.Start());
+    EXPECT_EQ(Kernel.TickHours(1.0f), 0);
+    EXPECT_EQ(Kernel.TickHours(3.0f), 1);
+}
+
+TEST(NanEchoKernelDaemon, ManualCycleRefreshesAttention)
+{
+    FNanEchoKernel Kernel;
+    Kernel.Configure(FNanEchoKernelConfig{});
+    Kernel.Start();
+
+    // Manual trigger (no TickHours involved) must spike recent activity and
+    // recompute the threshold from the post-cycle phase load.
+    EXPECT_TRUE(Kernel.RunTrainingCycle());
+    EXPECT_FLOAT_EQ(Kernel.GetAttention().GetRecentActivity(), 1.0f);
+
+    const float ExpectedLoad =
+        static_cast<float>(Kernel.GetActivePhase())
+        / static_cast<float>(FTrainingPhaseSchedule::NumPhases - 1);
+    EXPECT_FLOAT_EQ(Kernel.GetAttention().GetThreshold(),
+                    FAdaptiveAttention::ComputeThreshold(ExpectedLoad, 1.0f));
+
+    // Drive progress to completion: cognitive load follows the active phase.
+    Kernel.SetCycleExecutor([](const FNanEchoKernelConfig&, float) {
+        FCycleResult R;
+        R.FinalLoss = 0.5f;
+        R.ProgressDelta = 1.0f;
+        return R;
+    });
+    Kernel.RunTrainingCycle();
+    EXPECT_EQ(Kernel.GetActivePhase(), ETrainingPhase::AdaptiveMastery);
+    // Load 1.0, activity 1.0 → 0.5 + 0.3 - 0.2 = 0.6
+    EXPECT_FLOAT_EQ(Kernel.GetAttention().GetThreshold(), 0.6f);
+    EXPECT_FLOAT_EQ(Kernel.GetAttention().GetCognitiveLoad(), 1.0f);
+}
+
 TEST(NanEchoKernelDaemon, IntrospectionReflectsConfiguredState)
 {
     FNanEchoKernelConfig Config;
