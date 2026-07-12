@@ -222,9 +222,28 @@ state_to_atom(AtomSpace& space,
 
     // Remove any previous StateLink for this anchor so we don't accumulate
     // stale state atoms (StateLink semantics expect one state per key).
+    // Also clean up orphaned ListLink/NumberNode children to prevent memory leaks.
     auto incoming = space.get_incoming_by_type(anchor, AtomType::STATE_LINK);
     for (auto& old_link : incoming) {
+        // Collect the old ListLink (second outgoing) and its NumberNode children
+        auto outgoing = space.get_outgoing(old_link);
         space.remove(old_link, false);
+
+        // Clean up the old ListLink and its orphaned NumberNode elements
+        if (outgoing.size() >= 2) {
+            Handle old_list = outgoing[1];
+            auto old_nums = space.get_outgoing(old_list);
+            // Remove ListLink if it has no other incoming references
+            if (space.get_incoming(old_list).empty()) {
+                space.remove(old_list, false);
+            }
+            // Remove NumberNodes that are no longer referenced
+            for (auto& num : old_nums) {
+                if (space.get_incoming(num).empty()) {
+                    space.remove(num, false);
+                }
+            }
+        }
     }
 
     // StateLink: (StateLink anchor list)
