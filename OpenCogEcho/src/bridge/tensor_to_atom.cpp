@@ -220,24 +220,28 @@ state_to_atom(AtomSpace& space,
     // Anchor for the state
     Handle anchor = space.add_node(AtomType::ANCHOR_NODE, label);
 
-    // Remove any previous StateLink for this anchor so we don't accumulate
-    // stale state atoms (StateLink semantics expect one state per key).
-    // Also clean up orphaned ListLink/NumberNode children to prevent memory leaks.
-    auto incoming = space.get_incoming_by_type(anchor, AtomType::STATE_LINK);
-    for (auto& old_link : incoming) {
-        // Collect the old ListLink (second outgoing) and its NumberNode children
+    // Collect old StateLinks BEFORE creating the new one (so we know which to remove)
+    auto old_state_links = space.get_incoming_by_type(anchor, AtomType::STATE_LINK);
+
+    // Create the new StateLink first — this ensures that shared ListLink/NumberNode
+    // atoms (from deduplication when the same state is written twice) remain referenced
+    // and won't be incorrectly deleted during orphan cleanup.
+    Handle state_link = space.add_link(AtomType::STATE_LINK, {anchor, list});
+
+    // Now remove old StateLinks and clean up truly orphaned children
+    for (auto& old_link : old_state_links) {
+        if (old_link.id() == state_link.id()) continue;  // skip the new one if deduplicated
+
         auto outgoing = space.get_outgoing(old_link);
         space.remove(old_link, false);
 
-        // Clean up the old ListLink and its orphaned NumberNode elements
+        // Clean up orphaned ListLink and NumberNode elements
         if (outgoing.size() >= 2) {
             Handle old_list = outgoing[1];
             auto old_nums = space.get_outgoing(old_list);
-            // Remove ListLink if it has no other incoming references
             if (space.get_incoming(old_list).empty()) {
                 space.remove(old_list, false);
             }
-            // Remove NumberNodes that are no longer referenced
             for (auto& num : old_nums) {
                 if (space.get_incoming(num).empty()) {
                     space.remove(num, false);
@@ -245,9 +249,6 @@ state_to_atom(AtomSpace& space,
             }
         }
     }
-
-    // StateLink: (StateLink anchor list)
-    Handle state_link = space.add_link(AtomType::STATE_LINK, {anchor, list});
 
     // Set truth value encoding the vector's L2 norm (normalized to [0,1])
     float norm = state.norm();
