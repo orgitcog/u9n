@@ -628,11 +628,53 @@ gtest_discover_tests(NeuralToSymbolicTranslatorTests
 )
 
 # ============================================================================
+# Lock-Free Message Queue Tests (Feature F1.1.2)
+# ============================================================================
+add_executable(LockFreeMessageQueueTests
+    LockFreeMessageQueueTests.cpp
+)
+
+target_link_libraries(LockFreeMessageQueueTests ${GTEST_LIBS})
+
+target_include_directories(LockFreeMessageQueueTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(LockFreeMessageQueueTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;message-protocol;lock-free-queue;F1.1.2"
+        TIMEOUT 60
+)
+
+# ============================================================================
+# Bidirectional Message Protocol Tests (Feature F1.1.2)
+# ============================================================================
+add_executable(MessageProtocolTests
+    MessageProtocolTests.cpp
+)
+
+target_link_libraries(MessageProtocolTests ${GTEST_LIBS})
+
+target_include_directories(MessageProtocolTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(MessageProtocolTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;message-protocol;bidirectional;F1.1.2"
+        TIMEOUT 60
+)
+
+# ============================================================================
 # All Tests Target
 # ============================================================================
 add_custom_target(run_all_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 4
-    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests
+    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests LockFreeMessageQueueTests MessageProtocolTests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running all DeepTreeEcho unit tests"
 )
@@ -662,10 +704,10 @@ endif()
 # ============================================================================
 # Installation
 # ============================================================================
-install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests
+install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests LockFreeMessageQueueTests MessageProtocolTests
     RUNTIME DESTINATION bin/tests
 )
 
 message(STATUS "DeepTreeEcho Tests configured")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
-message(STATUS "  Tests: CoreTests, MemoryTests, AvatarCognitionTests, ReservoirIntegrationTests, EchoStateNetworkTests, ActiveInferenceTests, CortisolDynamicsTests, DNAIntegrationTests, CognitiveLoopTests, WisdomEntelechyTests, Sys6OperadTests, BehavioralFrameworkTests, TensorLogicTests, ReservoirTopologyGeneratorTests, MembraneCommChannelsTests, MembraneLifecycleTests, ObjectTransportRulesTests, HypergraphPatternMatcherTests, FutureStatePredictionTests, VirtualControllerDriverTests, GamingMasterySystemTests, DTEAvatarAgentTests, EmbodiedAutonomyPipelineTests, DopaminergicRewardSystemTests, LiquidStateMachineTests, SymbolicToNeuralEncoderTests, NeuralToSymbolicTranslatorTests")
+message(STATUS "  Tests: CoreTests, MemoryTests, AvatarCognitionTests, ReservoirIntegrationTests, EchoStateNetworkTests, ActiveInferenceTests, CortisolDynamicsTests, DNAIntegrationTests, CognitiveLoopTests, WisdomEntelechyTests, Sys6OperadTests, BehavioralFrameworkTests, TensorLogicTests, ReservoirTopologyGeneratorTests, MembraneCommChannelsTests, MembraneLifecycleTests, ObjectTransportRulesTests, HypergraphPatternMatcherTests, FutureStatePredictionTests, VirtualControllerDriverTests, GamingMasterySystemTests, DTEAvatarAgentTests, EmbodiedAutonomyPipelineTests, DopaminergicRewardSystemTests, LiquidStateMachineTests, SymbolicToNeuralEncoderTests, NeuralToSymbolicTranslatorTests, LockFreeMessageQueueTests, MessageProtocolTests")
