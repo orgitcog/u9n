@@ -11,6 +11,7 @@
 #include <opencog/core/types.hpp>
 #include <opencog/core/memory.hpp>
 
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <shared_mutex>
