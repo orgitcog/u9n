@@ -14,9 +14,9 @@
  *   compute_sti_adjustments() returns recommended STI changes for ECAN.
  *
  * FEEDBACK SIGNALS (edge-triggered):
- *   City free energy spike (current > prev * 1.5 AND current > 3.0)
+ *   Mean district free energy spike (current > prev * 1.5 AND current > 3.0)
  *     -> CORTISOL +0.05, NE +0.05  (prediction crisis)
- *   City free energy drop (current < prev * 0.7 AND prev > 2.0)
+ *   Mean district free energy drop (current < prev * 0.7 AND prev > 2.0)
  *     -> DA_PHASIC +0.05  (model improvement reward)
  *
  * The AFI adapter does NOT own districts. Districts are registered externally
@@ -67,7 +67,8 @@ public:
      * For each registered active district:
      * 1. Call district->update_metrics() to refresh from generative model
      * 2. Sum free energies for city_free_energy_
-     * 3. Compute variance of free energies for inter_district_divergence_
+     * 3. Compute mean free energy for scale-invariant edge detection
+     * 4. Compute variance of free energies for inter_district_divergence_
      */
     void update_districts() {
         float sum_fe = 0.0f;
@@ -83,7 +84,9 @@ public:
             }
         }
 
+        active_district_count_ = energies.size();
         city_free_energy_ = sum_fe;
+        mean_district_free_energy_ = sum_fe / static_cast<float>(std::max<size_t>(1, active_district_count_));
 
         // Compute variance of district free energies
         if (energies.size() >= 2) {
@@ -152,39 +155,42 @@ public:
     /**
      * @brief Write edge-triggered feedback signals to the bus
      *
-     * Follows the Marduk adapter pattern: compare city free energy to
-     * previous state and emit hormonal signals on significant changes.
+     * Follows the Marduk adapter pattern: compare mean per-district free
+     * energy to previous state and emit hormonal signals on significant changes.
+     * The public city_free_energy() remains the city-wide sum for consumers
+     * that need aggregate load; edge triggers use the mean so registering more
+     * active districts does not create false spikes by count alone.
      *
      * Edge triggers:
-     *   1. City FE spike (current > prev * 1.5 AND current > 3.0)
+     *   1. Mean district FE spike (current > prev * 1.5 AND current > 3.0)
      *      -> CORTISOL +0.05, NE +0.05 (prediction crisis)
-     *   2. City FE drop (current < prev * 0.7 AND prev > 2.0)
+     *   2. Mean district FE drop (current < prev * 0.7 AND prev > 2.0)
      *      -> DA_PHASIC +0.05 (model improvement reward)
      */
     void apply_feedback() {
-        // Skip edge-detection on the very first call: prev_city_free_energy_
-        // starts at 0.0, which would otherwise make the spike condition
+        // Skip edge-detection on the very first call: previous mean district
+        // free energy starts at 0.0, which would otherwise make the spike condition
         // (current > prev * 1.5 && current > 3.0) trivially satisfied by
-        // any city_free_energy_ > 3.0 on tick one — a false "spike" against
+        // any mean_district_free_energy_ > 3.0 on tick one — a false "spike" against
         // a baseline that was never actually observed.
-        if (has_prev_city_free_energy_) {
-            // --- 1. City free energy spike → prediction crisis ---
-            if (city_free_energy_ > prev_city_free_energy_ * 1.5f &&
-                city_free_energy_ > 3.0f) {
+        if (has_prev_mean_district_free_energy_) {
+            // --- 1. Mean district free energy spike → prediction crisis ---
+            if (mean_district_free_energy_ > prev_mean_district_free_energy_ * 1.5f &&
+                mean_district_free_energy_ > 3.0f) {
                 bus_.produce(HormoneId::CORTISOL, 0.05f);
                 bus_.produce(HormoneId::NOREPINEPHRINE, 0.05f);
             }
 
-            // --- 2. City free energy drop → model improvement reward ---
-            if (city_free_energy_ < prev_city_free_energy_ * 0.7f &&
-                prev_city_free_energy_ > 2.0f) {
+            // --- 2. Mean district free energy drop → model improvement reward ---
+            if (mean_district_free_energy_ < prev_mean_district_free_energy_ * 0.7f &&
+                prev_mean_district_free_energy_ > 2.0f) {
                 bus_.produce(HormoneId::DOPAMINE_PHASIC, 0.05f);
             }
         }
 
         // Update previous state for next tick's edge detection
-        prev_city_free_energy_ = city_free_energy_;
-        has_prev_city_free_energy_ = true;
+        prev_mean_district_free_energy_ = mean_district_free_energy_;
+        has_prev_mean_district_free_energy_ = true;
     }
 
     // ========================================================================
@@ -196,14 +202,17 @@ public:
     }
 
     [[nodiscard]] float city_free_energy() const noexcept { return city_free_energy_; }
+    [[nodiscard]] float mean_district_free_energy() const noexcept { return mean_district_free_energy_; }
     [[nodiscard]] float inter_district_divergence() const noexcept { return inter_district_divergence_; }
 
 private:
     std::vector<entelechy::CognitiveDistrict*> districts_;
+    size_t active_district_count_{0};
     float city_free_energy_{0.0f};
+    float mean_district_free_energy_{0.0f};
     float inter_district_divergence_{0.0f};
-    float prev_city_free_energy_{0.0f};
-    bool has_prev_city_free_energy_{false};
+    float prev_mean_district_free_energy_{0.0f};
+    bool has_prev_mean_district_free_energy_{false};
 };
 
 } // namespace opencog::endo

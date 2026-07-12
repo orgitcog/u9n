@@ -8,9 +8,12 @@
 
 #include <opencog/nervous/neuroendocrine_bridge.hpp>
 #include <opencog/nervous/nerve_bus.hpp>
+#include <opencog/nervous/thalamic_adapter.hpp>
+#include <opencog/endocrine/connector.hpp>
 #include <opencog/endocrine/hormone_bus.hpp>
 #include <opencog/endocrine/types.hpp>
 #include <opencog/nervous/types.hpp>
+#include <opencog/atomspace/atomspace.hpp>
 
 #include <cmath>
 
@@ -317,6 +320,87 @@ TEST(NeuroEndocrine_homeostatic_summary) {
     // Homeostatic signal should reflect the summary
     float homeostatic = nerve_bus.activation(NeuralChannelId::HOMEOSTATIC_SIGNAL);
     ASSERT_GT(std::abs(homeostatic), 0.0f);
+    return true;
+}
+
+// ============================================================================
+// ECAN/PLN Adapter Regression Tests
+// ============================================================================
+
+TEST(NeuroEndocrine_melatonin_lowers_forgetting_cutoff) {
+    AtomSpace space;
+    ECANConfig config;
+    config.forgetting_threshold = -100.0f;
+    AttentionBank bank(space, config);
+    endo::HormoneBus hormone_bus;
+    endo::ECANEndocrineAdapter adapter(hormone_bus, bank);
+
+    hormone_bus.produce(endo::HormoneId::MELATONIN, 1.0f);
+    adapter.apply_endocrine_modulation(hormone_bus);
+
+    ASSERT_LT(bank.config().forgetting_threshold, config.forgetting_threshold);
+    ASSERT_NEAR(bank.config().forgetting_threshold, -150.0f, 0.001f);
+    return true;
+}
+
+TEST(NeuroEndocrine_cortisol_clamps_pln_min_confidence) {
+    AtomSpace space;
+    pln::InferenceConfig config;
+    config.min_confidence = 0.8f;
+    pln::PLNEngine engine(space, config);
+    endo::HormoneBus hormone_bus;
+    endo::PLNEndocrineAdapter adapter(hormone_bus, engine);
+
+    hormone_bus.produce(endo::HormoneId::CORTISOL, 1.0f);
+    adapter.apply_endocrine_modulation(hormone_bus);
+
+    ASSERT_LE(engine.config().min_confidence, 0.95f);
+    ASSERT_NEAR(engine.config().min_confidence, 0.95f, 0.001f);
+    return true;
+}
+
+TEST(NeuroEndocrine_thalamic_adapter_composes_over_endocrine_config) {
+    AtomSpace space;
+    ECANConfig config;
+    config.af_boundary = 0.0f;
+    config.spreading_rate = 0.1f;
+    config.stimulus_wage = 10.0f;
+    config.forgetting_threshold = -100.0f;
+    config.lti_decay_rate = 0.01f;
+    AttentionBank bank(space, config);
+
+    endo::HormoneBus hormone_bus;
+    hormone_bus.produce(endo::HormoneId::NOREPINEPHRINE, 0.5f);
+    hormone_bus.produce(endo::HormoneId::CORTISOL, 0.5f);
+    hormone_bus.produce(endo::HormoneId::DOPAMINE_TONIC, 0.5f);
+    hormone_bus.produce(endo::HormoneId::MELATONIN, 0.8f);
+    hormone_bus.produce(endo::HormoneId::SEROTONIN, 0.4f);
+    endo::ECANEndocrineAdapter endocrine_adapter(hormone_bus, bank);
+    endocrine_adapter.apply_endocrine_modulation(hormone_bus);
+
+    ECANConfig endocrine_config = bank.config();
+    ASSERT_LT(endocrine_config.af_boundary, config.af_boundary);
+    ASSERT_LT(endocrine_config.forgetting_threshold, config.forgetting_threshold);
+
+    NerveBusConfig nerve_config;
+    nerve_config.enable_propagation = false;
+    nerve_config.global_decay_rate = 0.0f;
+    NerveBus nerve_bus(nerve_config);
+    ThalamicECANAdapter thalamic_adapter(nerve_bus, bank);
+    nerve_bus.set_activation(NeuralChannelId::THALAMIC_GATE, 0.5f);
+    nerve_bus.set_activation(NeuralChannelId::RETICULAR_ACTIVATION, 0.5f);
+    nerve_bus.set_activation(NeuralChannelId::MOTOR_ATTENTION, 0.5f);
+
+    thalamic_adapter.read_signals(nerve_bus);
+    ECANConfig composed_config = bank.config();
+
+    ASSERT_LT(composed_config.af_boundary, endocrine_config.af_boundary);
+    ASSERT_GT(composed_config.spreading_rate, endocrine_config.spreading_rate);
+    ASSERT_GT(composed_config.stimulus_wage, endocrine_config.stimulus_wage);
+    ASSERT_NEAR(composed_config.forgetting_threshold,
+                endocrine_config.forgetting_threshold, 0.001f);
+    ASSERT_NEAR(composed_config.lti_decay_rate,
+                endocrine_config.lti_decay_rate, 0.001f);
     return true;
 }
 

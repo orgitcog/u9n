@@ -9,6 +9,7 @@
  * mode suggestions, and parameter overrides.
  *
  * Uses async futures so guidance requests never block the tick pipeline.
+ * Stale in-flight requests are abandoned after a configurable timeout.
  * Supports pluggable backends (stub, HTTP, MMIO) via GuidanceBackend.
  */
 
@@ -20,10 +21,12 @@
 #include <opencog/endocrine/touchpad_adapter.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <future>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace opencog::endo {
 
@@ -61,6 +64,11 @@ public:
     void set_o9c2_source(O9C2EndocrineAdapter* o9c2) noexcept { o9c2_adapter_ = o9c2; }
     void set_marduk_source(MardukEndocrineAdapter* marduk) noexcept { marduk_adapter_ = marduk; }
     void set_touchpad_source(TouchpadEndocrineAdapter* tp) noexcept { touchpad_adapter_ = tp; }
+
+    [[nodiscard]] bool has_npu_source() const noexcept { return npu_adapter_ != nullptr; }
+    [[nodiscard]] bool has_o9c2_source() const noexcept { return o9c2_adapter_ != nullptr; }
+    [[nodiscard]] bool has_marduk_source() const noexcept { return marduk_adapter_ != nullptr; }
+    [[nodiscard]] bool has_touchpad_source() const noexcept { return touchpad_adapter_ != nullptr; }
 
     // === Moral perception source ===
 
@@ -116,7 +124,7 @@ public:
     // === State queries ===
 
     [[nodiscard]] bool has_pending_request() const noexcept {
-        return pending_response_.valid();
+        return pending_response_.valid() && !pending_request_timed_out();
     }
 
     [[nodiscard]] uint64_t total_requests() const noexcept { return total_requests_; }
@@ -140,6 +148,8 @@ private:
 
     // Async response tracking
     std::future<GuidanceResponse> pending_response_;
+    std::chrono::steady_clock::time_point request_issued_at_{};
+    std::vector<std::future<GuidanceResponse>> abandoned_futures_;
 
     // State tracking
     uint64_t tick_count_{0};
@@ -269,7 +279,9 @@ private:
         req.context_description = build_context(reason, bus);
 
         // Send async
+        abandon_timed_out_request();
         pending_response_ = backend_->request(req);
+        request_issued_at_ = std::chrono::steady_clock::now();
         ticks_since_last_request_ = 0;
         ++total_requests_;
     }
@@ -307,7 +319,13 @@ private:
     // ================================================================
 
     void apply_pending_response() {
+        cleanup_abandoned_responses();
         if (!pending_response_.valid()) return;
+
+        if (pending_request_timed_out()) {
+            abandon_pending_request();
+            return;
+        }
 
         // Check if ready without blocking
         auto status = pending_response_.wait_for(std::chrono::milliseconds(0));
@@ -318,6 +336,39 @@ private:
 
         ++total_responses_;
         apply_response(resp);
+    }
+
+    [[nodiscard]] bool pending_request_timed_out() const noexcept {
+        if (!pending_response_.valid()) return false;
+        return std::chrono::steady_clock::now() - request_issued_at_ >= config_.request_timeout;
+    }
+
+    void abandon_timed_out_request() {
+        if (pending_request_timed_out()) {
+            abandon_pending_request();
+        }
+    }
+
+    void abandon_pending_request() {
+        abandoned_futures_.push_back(std::move(pending_response_));
+        pending_response_ = {};
+        cleanup_abandoned_responses();
+    }
+
+    void cleanup_abandoned_responses() {
+        auto ready = [](std::future<GuidanceResponse>& f) {
+            return f.valid() &&
+                   f.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+        };
+
+        for (auto it = abandoned_futures_.begin(); it != abandoned_futures_.end();) {
+            if (ready(*it)) {
+                (void)it->get();
+                it = abandoned_futures_.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     void apply_response(const GuidanceResponse& resp) {

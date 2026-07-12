@@ -13,12 +13,14 @@
 #include <opencog/endocrine/glands/hpa_axis.hpp>
 #include <opencog/endocrine/glands/dopaminergic.hpp>
 #include <opencog/endocrine/glands/circadian.hpp>
+#include <opencog/endocrine/guidance_backends/stub_backend.hpp>
 #include <opencog/endocrine/valence.hpp>
 #include <opencog/endocrine/affect.hpp>
 #include <opencog/endocrine/moral.hpp>
 #include <opencog/core/types.hpp>
 
 #include <cmath>
+#include <future>
 #include <thread>
 #include <vector>
 
@@ -42,6 +44,93 @@ extern bool register_test(const std::string& name, std::function<bool()> func);
 
 using namespace opencog;
 using namespace opencog::endo;
+
+namespace {
+
+struct EndocrineGuidanceMockMarduk : public MardukInterface {
+    MardukEndocrineConfig cfg{MARDUK_MODE_PRESETS[0]};
+    MardukTelemetry tel;
+    ExecutionMetrics ex{0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
+
+    MardukOperationalMode active_mode() const noexcept override {
+        return cfg.active_mode;
+    }
+
+    MardukEndocrineConfig current_config() const noexcept override {
+        return cfg;
+    }
+
+    MardukTelemetry telemetry() const noexcept override {
+        return tel;
+    }
+
+    ExecutionMetrics execution() const noexcept override {
+        return ex;
+    }
+
+    void apply_config(const MardukEndocrineConfig& c) override {
+        cfg = c;
+    }
+
+    void transition_mode(MardukOperationalMode target) override {
+        cfg.active_mode = target;
+    }
+};
+
+struct EndocrineGuidanceMockO9C2 : public O9C2Interface {
+    O9C2PersonaConfig cfg{PERSONA_PRESETS[0]};
+    EmergenceMetrics em{0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
+    O9C2Persona persona{O9C2Persona::CONTEMPLATIVE_SCHOLAR};
+
+    O9C2Persona active_persona() const noexcept override {
+        return persona;
+    }
+
+    O9C2PersonaConfig current_config() const noexcept override {
+        return cfg;
+    }
+
+    EmergenceMetrics emergence() const noexcept override {
+        return em;
+    }
+
+    void apply_config(const O9C2PersonaConfig& c) override {
+        cfg = c;
+    }
+
+    void transition_persona(O9C2Persona target) override {
+        persona = target;
+    }
+};
+
+class NeverCompletingGuidanceBackend : public GuidanceBackend {
+public:
+    std::future<GuidanceResponse> request(const GuidanceRequest& req) override {
+        ++request_count_;
+        last_request_ = req;
+        promises_.emplace_back();
+        return promises_.back().get_future();
+    }
+
+    [[nodiscard]] bool is_available() const noexcept override {
+        return true;
+    }
+
+    [[nodiscard]] std::string_view name() const noexcept override {
+        return "NeverCompletingGuidanceBackend";
+    }
+
+    [[nodiscard]] size_t request_count() const noexcept {
+        return request_count_;
+    }
+
+private:
+    size_t request_count_{0};
+    GuidanceRequest last_request_;
+    std::vector<std::promise<GuidanceResponse>> promises_;
+};
+
+} // namespace
 
 // ============================================================================
 // Type Tests
@@ -705,6 +794,48 @@ TEST(EndocrineSystem_mode_transitions) {
     // Mode should have changed from resting (exact mode depends on dynamics)
     // At minimum, cortisol and NE should be elevated
     ASSERT_GT(sys.bus().concentration(HormoneId::CORTISOL), 0.1f);
+    return true;
+}
+
+TEST(EndocrineSystem_guidance_links_late_sources) {
+    AtomSpace space;
+    EndocrineSystem sys(space);
+    EndocrineGuidanceMockMarduk marduk;
+    EndocrineGuidanceMockO9C2 o9c2;
+
+    sys.connect_guidance(std::make_unique<StubGuidanceBackend>());
+    sys.connect_marduk(marduk);
+    sys.connect_o9c2(o9c2);
+
+    ASSERT(sys.guidance() != nullptr);
+    ASSERT(sys.guidance()->has_marduk_source());
+    ASSERT(sys.guidance()->has_o9c2_source());
+    return true;
+}
+
+TEST(GuidanceConnector_timed_out_request_allows_new_request) {
+    HormoneBus bus;
+    auto backend_ptr = new NeverCompletingGuidanceBackend();
+
+    GuidanceConfig cfg;
+    cfg.cooldown_ticks = 0;
+    cfg.periodic_interval = 1;
+    cfg.request_timeout = std::chrono::hours(1);
+
+    GuidanceConnector connector(bus, std::unique_ptr<GuidanceBackend>(backend_ptr), cfg);
+    connector.tick(bus);
+    ASSERT_EQ(backend_ptr->request_count(), 1u);
+    ASSERT(connector.has_pending_request());
+
+    connector.tick(bus);
+    ASSERT_EQ(backend_ptr->request_count(), 1u);
+
+    cfg.request_timeout = std::chrono::milliseconds(0);
+    connector.set_config(cfg);
+    connector.tick(bus);
+
+    ASSERT_EQ(backend_ptr->request_count(), 2u);
+    ASSERT_EQ(connector.total_requests(), 2u);
     return true;
 }
 

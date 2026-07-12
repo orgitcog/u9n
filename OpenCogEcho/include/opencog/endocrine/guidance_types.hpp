@@ -20,6 +20,7 @@
 #include <opencog/endocrine/touchpad_types.hpp>
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <future>
@@ -230,6 +231,8 @@ struct GuidanceConfig {
 
     // Touchpad-specific thresholds
     float touchpad_overload_threshold{0.85f};          ///< Touchpad load triggering overload
+
+    std::chrono::milliseconds request_timeout{30000};  ///< Abandon stale in-flight requests after this duration
 };
 
 } // namespace opencog::endo
