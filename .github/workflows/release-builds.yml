@@ -184,7 +184,7 @@ jobs:
         env:
           VCPKG_BINARY_SOURCES: clear
         run: |
-          vcpkg install eigen3:${{ matrix.vcpkg_triplet }} boost:${{ matrix.vcpkg_triplet }} gtest:${{ matrix.vcpkg_triplet }}
+          vcpkg install eigen3:${{ matrix.vcpkg_triplet }}
 
       - name: Configure CMake
         run: |
