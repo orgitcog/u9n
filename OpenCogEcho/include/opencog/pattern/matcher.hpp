@@ -276,8 +276,11 @@ public:
 
     [[nodiscard]] std::vector<MatchResult> collect() {
         matcher_.set_config(config_);
+        // Pattern must outlive the coroutine generator: match() holds a
+        // reference, so a caller-side temporary would dangle.
+        auto pattern = builder_.build();
         std::vector<MatchResult> results;
-        for (auto&& result : matcher_.match(builder_.build())) {
+        for (auto&& result : matcher_.match(pattern)) {
             if (!passes(result)) continue;
             results.push_back(std::move(result));
             if (results.size() >= config_.max_results) break;
@@ -287,7 +290,10 @@ public:
 
     [[nodiscard]] std::optional<MatchResult> first() {
         matcher_.set_config(config_);
-        for (auto&& result : matcher_.match(builder_.build())) {
+        // Pattern must outlive the coroutine generator: match() holds a
+        // reference, so a caller-side temporary would dangle.
+        auto pattern = builder_.build();
+        for (auto&& result : matcher_.match(pattern)) {
             if (passes(result)) return std::move(result);
         }
         return std::nullopt;
@@ -296,7 +302,10 @@ public:
     [[nodiscard]] size_t count() {
         matcher_.set_config(config_);
         size_t n = 0;
-        for (auto&& result : matcher_.match(builder_.build())) {
+        // Pattern must outlive the coroutine generator: match() holds a
+        // reference, so a caller-side temporary would dangle.
+        auto pattern = builder_.build();
+        for (auto&& result : matcher_.match(pattern)) {
             if (passes(result)) ++n;
         }
         return n;
@@ -304,7 +313,10 @@ public:
 
     [[nodiscard]] bool exists() {
         matcher_.set_config(config_);
-        for (auto&& result : matcher_.match(builder_.build())) {
+        // Pattern must outlive the coroutine generator: match() holds a
+        // reference, so a caller-side temporary would dangle.
+        auto pattern = builder_.build();
+        for (auto&& result : matcher_.match(pattern)) {
             if (passes(result)) return true;
         }
         return false;
