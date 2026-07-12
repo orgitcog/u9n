@@ -332,7 +332,7 @@ TEST(atom_to_state_roundtrip) {
     ASSERT_EQ(rev.value.size(), 4);
 
     for (int i = 0; i < 4; ++i) {
-        ASSERT_NEAR(rev.value[i], original[i], 1e-4f);
+        ASSERT_NEAR(rev.value[i], original[i], 1e-6f);
     }
     return true;
 }
@@ -477,7 +477,7 @@ TEST(roundtrip_state) {
     ASSERT_EQ(rev.value.size(), 4);
 
     for (int i = 0; i < 4; ++i) {
-        ASSERT_NEAR(rev.value[i], state[i], 1e-4f);
+        ASSERT_NEAR(rev.value[i], state[i], 1e-6f);
     }
     return true;
 }

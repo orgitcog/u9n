@@ -191,8 +191,12 @@ TypeConversionBridge::batch_convert_activations(
     std::vector<ConversionResult<std::vector<Handle>>> results;
     results.reserve(activations.size());
 
-    for (auto& vec : activations) {
-        results.push_back(convert_activation(vec));
+    for (size_t i = 0; i < activations.size(); ++i) {
+        // Use a unique prefix per batch entry to avoid AtomTable name collisions
+        auto saved_prefix = policy_.name_prefix;
+        policy_.name_prefix = saved_prefix + "_batch" + std::to_string(i);
+        results.push_back(convert_activation(activations[i]));
+        policy_.name_prefix = saved_prefix;
     }
     return results;
 }

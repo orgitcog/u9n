@@ -7,6 +7,8 @@
 
 #include <opencog/bridge/tensor_to_atom.hpp>
 
+#include <array>
+#include <charconv>
 #include <cmath>
 #include <sstream>
 #include <string>
@@ -22,6 +24,16 @@ namespace {
 /// Build a node name like "neuron_42"
 [[nodiscard]] std::string make_name(const std::string& prefix, int index) {
     return prefix + "_" + std::to_string(index);
+}
+
+/// Convert float to string with full precision via std::to_chars
+[[nodiscard]] std::string float_to_string(float val) {
+    std::array<char, 32> buf{};
+    auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), val);
+    if (ec == std::errc{})
+        return std::string(buf.data(), ptr);
+    // Fallback (should never happen for finite floats)
+    return std::to_string(val);
 }
 
 /// Compute confidence from activation magnitude when policy requests it
@@ -97,6 +109,9 @@ activation_to_nodes(AtomSpace& space,
 
         Handle h = space.add_node(AtomType::CONCEPT_NODE, name,
                                   TruthValue{strength, confidence});
+        // Ensure TV is updated even if the atom already existed (AtomTable
+        // deduplicates by type+name and returns the existing atom unchanged)
+        space.set_tv(h, TruthValue{strength, confidence});
 
         if (policy.map_activation_to_sti) {
             AttentionValue av{val * policy.sti_scale, 0, 0};
@@ -156,6 +171,8 @@ matrix_to_links(AtomSpace& space,
             float confidence = derive_confidence(w, policy);
             Handle eval = space.add_link(AtomType::EVALUATION_LINK, {pred, list},
                                          TruthValue{strength, confidence});
+            // Ensure TV is updated for pre-existing links
+            space.set_tv(eval, TruthValue{strength, confidence});
             links.push_back(eval);
         }
     }
@@ -189,7 +206,7 @@ state_to_atom(AtomSpace& space,
     std::vector<Handle> elements;
     elements.reserve(static_cast<size_t>(state.size()));
     for (int i = 0; i < state.size(); ++i) {
-        std::string num_name = std::to_string(state[i]);
+        std::string num_name = float_to_string(state[i]);
         Handle num = space.add_node(AtomType::NUMBER_NODE, num_name);
         elements.push_back(num);
     }
@@ -202,6 +219,13 @@ state_to_atom(AtomSpace& space,
 
     // Anchor for the state
     Handle anchor = space.add_node(AtomType::ANCHOR_NODE, label);
+
+    // Remove any previous StateLink for this anchor so we don't accumulate
+    // stale state atoms (StateLink semantics expect one state per key).
+    auto incoming = space.get_incoming_by_type(anchor, AtomType::STATE_LINK);
+    for (auto& old_link : incoming) {
+        space.remove(old_link, false);
+    }
 
     // StateLink: (StateLink anchor list)
     Handle state_link = space.add_link(AtomType::STATE_LINK, {anchor, list});
@@ -258,6 +282,8 @@ temporal_pattern_to_atoms(AtomSpace& space,
             float strength = std::clamp(val, 0.0f, 1.0f);
             Handle h = space.add_node(AtomType::CONCEPT_NODE, name,
                                       TruthValue{strength, policy.default_confidence});
+            // Ensure TV is updated for pre-existing atoms
+            space.set_tv(h, TruthValue{strength, policy.default_confidence});
             feature_handles.push_back(h);
         }
         total_skipped += skipped_this_step;
