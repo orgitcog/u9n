@@ -1,0 +1,213 @@
+/**
+ * @file synchronization_manager.cpp
+ * @brief Implementation of the SynchronizationManager facade (F1.1.4)
+ *
+ * Feature F1.1.4: Synchronization Manager
+ *
+ * Implements the 6-phase tick pipeline with phase-coherence barriers,
+ * multi-rate scheduling, and cross-system coherence monitoring.
+ */
+
+#include <opencog/sync/synchronization_manager.hpp>
+
+#include <algorithm>
+
+namespace opencog::sync {
+
+// ============================================================================
+// Construction
+// ============================================================================
+
+SynchronizationManager::SynchronizationManager(
+    temporal::CrystalBus& bus, SyncConfig config) noexcept
+    : bus_(bus)
+    , config_(config)
+    , scheduler_(config)
+    , barrier_(bus, config.barrier_coherence_threshold, config.barrier_max_wait)
+    , monitor_(bus, config.resync_coherence_threshold, config.max_history) {
+
+    events_.reserve(config.max_history);
+
+    // Wire barrier events into the event history
+    barrier_.set_callback([this](SyncEventType type, SyncPhase phase, float coherence) {
+        record_event(type, phase, SubsystemId::COUNT, coherence);
+    });
+
+    // Wire coherence monitor resync callback
+    monitor_.set_resync_callback([this](CoherenceLevel level, float coherence) {
+        record_event(SyncEventType::COHERENCE_DROP, current_phase_,
+                     SubsystemId::COUNT, coherence);
+    });
+}
+
+// ============================================================================
+// Primary tick
+// ============================================================================
+
+void SynchronizationManager::tick(float dt) noexcept {
+    running_ = true;
+
+    // Advance epoch
+    epoch_.number++;
+    epoch_.dt = dt;
+    epoch_.wall_elapsed = dt;  // Caller may override for real wall-clock
+
+    record_event(SyncEventType::EPOCH_START, SyncPhase::PRODUCE);
+
+    // Execute each pipeline phase in order
+    for (uint8_t p = 0; p < SYNC_PHASE_COUNT; ++p) {
+        auto phase = static_cast<SyncPhase>(p);
+        execute_phase(phase, dt);
+    }
+
+    // Update coherence monitor
+    monitor_.update(epoch_, scheduler_.states(), config_.rates);
+
+    // Update aggregate metrics
+    float coherence = bus_.global_coherence();
+    metrics_.update_coherence(coherence);
+    metrics_.total_epochs = epoch_.number;
+    if (metrics_.total_epochs > 0) {
+        metrics_.mean_epoch_dt =
+            metrics_.mean_epoch_dt * 0.99f + dt * 0.01f;
+    } else {
+        metrics_.mean_epoch_dt = dt;
+    }
+
+    // Check for resync
+    if (monitor_.needs_resync()) {
+        force_resync();
+        monitor_.acknowledge_resync();
+    }
+
+    running_ = false;
+}
+
+// ============================================================================
+// Pipeline phase execution
+// ============================================================================
+
+void SynchronizationManager::execute_phase(SyncPhase phase, float dt) noexcept {
+    current_phase_ = phase;
+    record_event(SyncEventType::PHASE_ENTER, phase);
+
+    // Enter barrier for this phase transition
+    barrier_.enter(phase, epoch_.number);
+
+    // Check barrier (uses CrystalBus coherence)
+    auto result = barrier_.check();
+
+    if (result == BarrierResult::WAITING) {
+        metrics_.barrier_waits++;
+        // In the single-threaded pipeline, WAITING means coherence is low
+        // but we still proceed (the barrier tracks the wait for diagnostics).
+        // A true multi-threaded implementation would spin here.
+    }
+
+    if (result == BarrierResult::FORCE_RELEASED) {
+        metrics_.resync_count++;
+    }
+
+    metrics_.total_barriers++;
+
+    // Dispatch subsystem ticks for this phase
+    dispatch_phase_ticks(phase, dt);
+}
+
+void SynchronizationManager::dispatch_phase_ticks(SyncPhase phase, float dt) noexcept {
+    if (!tick_callback_) return;
+
+    auto subsystems = scheduler_.subsystems_for_phase(phase);
+    auto scheduled = scheduler_.schedule(epoch_);
+
+    for (auto id : subsystems) {
+        // Check if this subsystem is in the schedule
+        bool in_schedule = false;
+        float effective_dt = dt;
+
+        for (const auto& entry : scheduled) {
+            if (entry.id == id) {
+                in_schedule = true;
+                effective_dt = entry.dt;
+                break;
+            }
+        }
+
+        if (in_schedule) {
+            tick_callback_(id, effective_dt, phase);
+            scheduler_.record_tick(id, epoch_);
+            metrics_.subsystem_ticks[static_cast<size_t>(id)]++;
+            record_event(SyncEventType::SUBSYSTEM_TICK, phase, id, effective_dt);
+        }
+    }
+}
+
+// ============================================================================
+// Force resynchronization
+// ============================================================================
+
+void SynchronizationManager::force_resync() noexcept {
+    record_event(SyncEventType::RESYNC_TRIGGERED, current_phase_);
+
+    // Boost crystal bus coupling to encourage phase locking
+    float current_coupling = bus_.config().global_coupling;
+    bus_.set_global_coupling(std::min(current_coupling + 0.2f, 1.0f));
+
+    // Reset all subsystem timing to current epoch
+    for (size_t i = 0; i < SUBSYSTEM_COUNT; ++i) {
+        auto id = static_cast<SubsystemId>(i);
+        scheduler_.record_tick(id, epoch_);
+    }
+
+    metrics_.resync_count++;
+}
+
+// ============================================================================
+// Subsystem control
+// ============================================================================
+
+void SynchronizationManager::set_tick_callback(SubsystemTickFn callback) noexcept {
+    tick_callback_ = std::move(callback);
+}
+
+void SynchronizationManager::set_subsystem_enabled(SubsystemId id, bool enabled) noexcept {
+    scheduler_.set_enabled(id, enabled);
+}
+
+void SynchronizationManager::set_rate_divisor(SubsystemId id, uint32_t divisor) noexcept {
+    scheduler_.set_rate_divisor(id, divisor);
+    config_.rates[static_cast<size_t>(id)].divisor = std::max(divisor, 1u);
+}
+
+// ============================================================================
+// Metrics & History
+// ============================================================================
+
+void SynchronizationManager::reset_metrics() noexcept {
+    metrics_.reset();
+}
+
+void SynchronizationManager::clear_history() noexcept {
+    events_.clear();
+}
+
+void SynchronizationManager::set_config(const SyncConfig& config) noexcept {
+    config_ = config;
+    barrier_.set_threshold(config.barrier_coherence_threshold);
+    barrier_.set_max_wait(config.barrier_max_wait);
+    monitor_.set_resync_threshold(config.resync_coherence_threshold);
+}
+
+void SynchronizationManager::record_event(SyncEventType type, SyncPhase phase,
+                                            SubsystemId subsystem, float value) noexcept {
+    if (events_.size() >= config_.max_history) {
+        // Ring buffer: overwrite oldest
+        events_.erase(events_.begin());
+    }
+    events_.push_back(SyncEvent{
+        type, epoch_.number, phase, subsystem,
+        bus_.global_coherence(), value
+    });
+}
+
+} // namespace opencog::sync
