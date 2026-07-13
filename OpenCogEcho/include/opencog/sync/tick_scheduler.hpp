@@ -92,9 +92,14 @@ public:
             if (should_tick || forced) {
                 // Compute effective dt: accumulated time since last tick
                 float effective_dt = epoch.dt;
-                if (states_[i].last_tick_epoch > 0) {
+                if (states_[i].tick_count > 0) {
                     uint64_t elapsed_epochs = epoch.number - states_[i].last_tick_epoch;
                     effective_dt = epoch.dt * static_cast<float>(elapsed_epochs);
+                } else {
+                    effective_dt = epoch.dt * static_cast<float>(epoch.number);
+                    if (effective_dt == 0.0f) {
+                        effective_dt = epoch.dt;
+                    }
                 }
 
                 entries.push_back(TickEntry{id, effective_dt, forced});
@@ -146,12 +151,26 @@ public:
      * @brief Record that a subsystem completed its tick
      */
     void record_tick(SubsystemId id, const SyncEpoch& epoch) noexcept {
+        record_tick(id, epoch, epoch.dt);
+    }
+
+    void record_tick(SubsystemId id, const SyncEpoch& epoch, float effective_dt) noexcept {
         auto idx = static_cast<size_t>(id);
         if (idx < SUBSYSTEM_COUNT) {
             states_[idx].last_tick_epoch = epoch.number;
-            states_[idx].last_dt = epoch.dt;
-            states_[idx].cumulative_time += epoch.dt;
+            states_[idx].last_dt = effective_dt;
+            states_[idx].cumulative_time += effective_dt;
             ++states_[idx].tick_count;
+        }
+    }
+
+    /**
+     * @brief Reset a subsystem's timing anchor without recording a synthetic tick
+     */
+    void reset_timing(SubsystemId id, uint64_t current_epoch) noexcept {
+        auto idx = static_cast<size_t>(id);
+        if (idx < SUBSYSTEM_COUNT) {
+            states_[idx].last_tick_epoch = current_epoch;
         }
     }
 
@@ -195,6 +214,13 @@ public:
         if (idx < SUBSYSTEM_COUNT) {
             config_.rates[idx].divisor = std::max(divisor, 1u);
         }
+    }
+
+    /**
+     * @brief Replace the scheduler configuration
+     */
+    void set_config(const SyncConfig& config) noexcept {
+        config_ = config;
     }
 
     /**

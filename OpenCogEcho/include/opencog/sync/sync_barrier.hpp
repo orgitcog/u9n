@@ -88,7 +88,7 @@ public:
         float coherence = bus_.global_coherence();
         ++total_checks_;
 
-        if (coherence >= threshold_) {
+        if (coherence >= effective_threshold(current_phase_)) {
             // Natural release — coherence threshold met
             exit_coherence_ = coherence;
             if (callback_) {

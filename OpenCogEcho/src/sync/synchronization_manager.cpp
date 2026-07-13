@@ -66,18 +66,25 @@ void SynchronizationManager::tick(float dt) noexcept {
     // Update aggregate metrics
     float coherence = bus_.global_coherence();
     metrics_.update_coherence(coherence);
-    metrics_.total_epochs = epoch_.number;
+
+    // Update mean epoch dt before publishing the new epoch count
     if (metrics_.total_epochs > 0) {
         metrics_.mean_epoch_dt =
             metrics_.mean_epoch_dt * 0.99f + dt * 0.01f;
     } else {
         metrics_.mean_epoch_dt = dt;
     }
+    metrics_.total_epochs = epoch_.number;
 
     // Check for resync
     if (monitor_.needs_resync()) {
         force_resync();
-        monitor_.acknowledge_resync();
+    }
+
+    // Restore coupling after resync cooldown
+    if (resync_cooldown_epoch_ > 0 && epoch_.number >= resync_cooldown_epoch_) {
+        bus_.set_global_coupling(pre_resync_coupling_);
+        resync_cooldown_epoch_ = 0;
     }
 
     running_ = false;
@@ -94,14 +101,11 @@ void SynchronizationManager::execute_phase(SyncPhase phase, float dt) noexcept {
     // Enter barrier for this phase transition
     barrier_.enter(phase, epoch_.number);
 
-    // Check barrier (uses CrystalBus coherence)
+    // Check barrier (uses CrystalBus coherence) — loop until release or force-release
     auto result = barrier_.check();
-
-    if (result == BarrierResult::WAITING) {
+    while (result == BarrierResult::WAITING) {
         metrics_.barrier_waits++;
-        // In the single-threaded pipeline, WAITING means coherence is low
-        // but we still proceed (the barrier tracks the wait for diagnostics).
-        // A true multi-threaded implementation would spin here.
+        result = barrier_.check();
     }
 
     if (result == BarrierResult::FORCE_RELEASED) {
@@ -135,7 +139,7 @@ void SynchronizationManager::dispatch_phase_ticks(SyncPhase phase, float dt) noe
 
         if (in_schedule) {
             tick_callback_(id, effective_dt, phase);
-            scheduler_.record_tick(id, epoch_);
+            scheduler_.record_tick(id, epoch_, effective_dt);
             metrics_.subsystem_ticks[static_cast<size_t>(id)]++;
             record_event(SyncEventType::SUBSYSTEM_TICK, phase, id, effective_dt);
         }
@@ -149,14 +153,16 @@ void SynchronizationManager::dispatch_phase_ticks(SyncPhase phase, float dt) noe
 void SynchronizationManager::force_resync() noexcept {
     record_event(SyncEventType::RESYNC_TRIGGERED, current_phase_);
 
-    // Boost crystal bus coupling to encourage phase locking
-    float current_coupling = bus_.config().global_coupling;
-    bus_.set_global_coupling(std::min(current_coupling + 0.2f, 1.0f));
+    // Temporarily boost coupling and restore it after a cooldown.
+    if (resync_cooldown_epoch_ == 0) {
+        pre_resync_coupling_ = bus_.config().global_coupling;
+    }
+    bus_.set_global_coupling(std::min(pre_resync_coupling_ + 0.2f, 1.0f));
+    resync_cooldown_epoch_ = epoch_.number + RESYNC_COOLDOWN;
 
-    // Reset all subsystem timing to current epoch
+    // Reset all subsystem timing to the current epoch without falsifying ticks
     for (size_t i = 0; i < SUBSYSTEM_COUNT; ++i) {
-        auto id = static_cast<SubsystemId>(i);
-        scheduler_.record_tick(id, epoch_);
+        scheduler_.reset_timing(static_cast<SubsystemId>(i), epoch_.number);
     }
 
     metrics_.resync_count++;
@@ -193,6 +199,7 @@ void SynchronizationManager::clear_history() noexcept {
 
 void SynchronizationManager::set_config(const SyncConfig& config) noexcept {
     config_ = config;
+    scheduler_.set_config(config);
     barrier_.set_threshold(config.barrier_coherence_threshold);
     barrier_.set_max_wait(config.barrier_max_wait);
     monitor_.set_resync_threshold(config.resync_coherence_threshold);

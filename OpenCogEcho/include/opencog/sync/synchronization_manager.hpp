@@ -170,8 +170,12 @@ private:
 
     SyncMetrics metrics_{};
     std::vector<SyncEvent> events_;
+    float pre_resync_coupling_{0.0f};
+    uint64_t resync_cooldown_epoch_{0};
 
     SubsystemTickFn tick_callback_;
+
+    static constexpr uint64_t RESYNC_COOLDOWN = 16;
 };
 
 } // namespace opencog::sync

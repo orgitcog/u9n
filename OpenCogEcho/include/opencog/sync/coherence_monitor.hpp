@@ -224,18 +224,15 @@ private:
             uint64_t expected_interval = divisor;
             uint64_t actual_interval = epoch.number - states[i].last_tick_epoch;
 
-            if (actual_interval == 0) {
+            if (actual_interval == 0 || actual_interval <= expected_interval) {
                 total_coherence += 1.0f;
                 continue;
             }
 
-            // Coherence = 1 - normalized deviation
-            float deviation = std::abs(
-                static_cast<float>(actual_interval) -
-                static_cast<float>(expected_interval)
-            ) / static_cast<float>(expected_interval);
+            float overdue = static_cast<float>(actual_interval - expected_interval) /
+                static_cast<float>(expected_interval);
 
-            total_coherence += std::max(0.0f, 1.0f - deviation);
+            total_coherence += std::max(0.0f, 1.0f - overdue);
         }
 
         return active_count > 0 ? total_coherence / static_cast<float>(active_count) : 1.0f;

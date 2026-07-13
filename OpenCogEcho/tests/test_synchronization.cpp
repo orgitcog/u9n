@@ -231,6 +231,33 @@ TEST(sync_barrier_effective_threshold) {
     return true;
 }
 
+TEST(sync_barrier_triadic_uses_effective_threshold) {
+    CrystalBus bus(CrystalBusConfig{.global_coupling = 0.5f});
+    for (int i = 0; i < 100; ++i) bus.tick(0.001f);
+
+    float coherence = bus.global_coherence();
+    if (!(coherence > 0.0f && coherence < 1.0f)) {
+        return true;
+    }
+
+    float base = coherence * 0.8f;
+    SyncBarrier barrier(bus, base, 2);
+
+    ASSERT_LT(base, coherence);
+    ASSERT_GT(barrier.effective_threshold(SyncPhase::PRODUCE), coherence);
+
+    barrier.enter(SyncPhase::TRANSPORT, 1);
+    auto non_triadic = barrier.check();
+    ASSERT_EQ(static_cast<uint8_t>(non_triadic),
+              static_cast<uint8_t>(BarrierResult::RELEASED));
+
+    barrier.enter(SyncPhase::PRODUCE, 2);
+    auto triadic = barrier.check();
+    ASSERT_NE(static_cast<uint8_t>(triadic),
+              static_cast<uint8_t>(BarrierResult::RELEASED));
+    return true;
+}
+
 TEST(sync_barrier_callback) {
     CrystalBus bus(CrystalBusConfig{.global_coupling = 0.0f});
     SyncBarrier barrier(bus, 0.99f, 2);
@@ -340,6 +367,33 @@ TEST(sync_scheduler_record_tick) {
     ASSERT_EQ(state.last_tick_epoch, 5u);
     ASSERT_EQ(state.tick_count, 1u);
     ASSERT_NEAR(state.cumulative_time, 0.01f, 0.001f);
+    return true;
+}
+
+TEST(sync_scheduler_first_tick_accumulates_elapsed_time) {
+    SyncConfig config;
+    TickScheduler sched(config);
+
+    SyncEpoch epoch{.number = 4, .dt = 0.01f};
+    auto entries = sched.schedule(epoch);
+
+    bool found = false;
+    float effective_dt = 0.0f;
+    for (const auto& entry : entries) {
+        if (entry.id == SubsystemId::REASONING) {
+            found = true;
+            effective_dt = entry.dt;
+            break;
+        }
+    }
+
+    ASSERT(found);
+    ASSERT_NEAR(effective_dt, 0.04f, 0.001f);
+
+    sched.record_tick(SubsystemId::REASONING, epoch, effective_dt);
+    const auto& state = sched.state(SubsystemId::REASONING);
+    ASSERT_NEAR(state.last_dt, 0.04f, 0.001f);
+    ASSERT_NEAR(state.cumulative_time, 0.04f, 0.001f);
     return true;
 }
 
@@ -515,6 +569,28 @@ TEST(sync_coherence_monitor_trend) {
     // Value depends on dynamics — just verify it returns a finite number
     ASSERT(!std::isnan(trend));
     ASSERT(!std::isinf(trend));
+    return true;
+}
+
+TEST(sync_coherence_monitor_mid_interval_is_on_schedule) {
+    CrystalBus bus(CrystalBusConfig{.global_coupling = 0.5f});
+    CoherenceMonitor monitor(bus, 0.1f, 64);
+
+    SyncConfig config;
+    std::array<SubsystemState, SUBSYSTEM_COUNT> states{};
+    for (size_t i = 0; i < SUBSYSTEM_COUNT; ++i) {
+        states[i].id = static_cast<SubsystemId>(i);
+        states[i].enabled = false;
+    }
+
+    auto idx = static_cast<size_t>(SubsystemId::REASONING);
+    states[idx].enabled = true;
+    states[idx].last_tick_epoch = 4;
+
+    SyncEpoch epoch{.number = 6, .dt = 0.01f};
+    monitor.update(epoch, states, config.rates);
+
+    ASSERT_NEAR(monitor.current().timing, 1.0f, 0.001f);
     return true;
 }
 
