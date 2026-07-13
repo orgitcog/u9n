@@ -83,7 +83,9 @@ void SynchronizationManager::tick(float dt) noexcept {
 
     // Restore coupling after resync cooldown
     if (resync_cooldown_epoch_ > 0 && epoch_.number >= resync_cooldown_epoch_) {
-        bus_.set_global_coupling(pre_resync_coupling_);
+        float current_coupling = bus_.config().global_coupling;
+        bus_.set_global_coupling(std::max(0.0f, current_coupling - resync_coupling_boost_));
+        resync_coupling_boost_ = 0.0f;
         resync_cooldown_epoch_ = 0;
     }
 
@@ -101,14 +103,12 @@ void SynchronizationManager::execute_phase(SyncPhase phase, float dt) noexcept {
     // Enter barrier for this phase transition
     barrier_.enter(phase, epoch_.number);
 
-    // Check barrier (uses CrystalBus coherence) — loop until release or force-release
+    // Check barrier once and proceed; this pipeline is single-threaded.
     auto result = barrier_.check();
-    while (result == BarrierResult::WAITING) {
+    if (result == BarrierResult::WAITING) {
         metrics_.barrier_waits++;
-        result = barrier_.check();
-    }
-
-    if (result == BarrierResult::FORCE_RELEASED) {
+    } else if (result == BarrierResult::FORCE_RELEASED) {
+        metrics_.barrier_waits++;
         metrics_.resync_count++;
     }
 
@@ -154,10 +154,9 @@ void SynchronizationManager::force_resync() noexcept {
     record_event(SyncEventType::RESYNC_TRIGGERED, current_phase_);
 
     // Temporarily boost coupling and restore it after a cooldown.
-    if (resync_cooldown_epoch_ == 0) {
-        pre_resync_coupling_ = bus_.config().global_coupling;
-    }
-    bus_.set_global_coupling(std::min(pre_resync_coupling_ + 0.2f, 1.0f));
+    float current_coupling = bus_.config().global_coupling;
+    resync_coupling_boost_ = std::min(0.2f, 1.0f - current_coupling);
+    bus_.set_global_coupling(current_coupling + resync_coupling_boost_);
     resync_cooldown_epoch_ = epoch_.number + RESYNC_COOLDOWN;
 
     // Reset all subsystem timing to the current epoch without falsifying ticks

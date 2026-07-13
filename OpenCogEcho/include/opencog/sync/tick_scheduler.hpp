@@ -90,18 +90,10 @@ public:
             bool forced = !should_tick && is_stale;
 
             if (should_tick || forced) {
-                // Compute effective dt: accumulated time since last tick
-                float effective_dt = epoch.dt;
-                if (states_[i].tick_count > 0) {
-                    uint64_t elapsed_epochs = epoch.number - states_[i].last_tick_epoch;
-                    effective_dt = epoch.dt * static_cast<float>(elapsed_epochs);
-                } else {
-                    effective_dt = epoch.dt * static_cast<float>(epoch.number);
-                    if (effective_dt == 0.0f) {
-                        effective_dt = epoch.dt;
-                    }
-                }
-
+                // Compute effective dt: accumulated time since last tick (or epoch 0).
+                uint64_t elapsed_epochs = epoch.number - states_[i].last_tick_epoch;
+                float effective_dt =
+                    epoch.dt * static_cast<float>(std::max(elapsed_epochs, uint64_t{1}));
                 entries.push_back(TickEntry{id, effective_dt, forced});
             }
         }

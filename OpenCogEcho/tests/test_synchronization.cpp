@@ -232,25 +232,30 @@ TEST(sync_barrier_effective_threshold) {
 }
 
 TEST(sync_barrier_triadic_uses_effective_threshold) {
+    // Coupling 0.5 with 100 ticks gives coherence strictly between 0 and 1
     CrystalBus bus(CrystalBusConfig{.global_coupling = 0.5f});
     for (int i = 0; i < 100; ++i) bus.tick(0.001f);
 
     float coherence = bus.global_coherence();
-    if (!(coherence > 0.0f && coherence < 1.0f)) {
-        return true;
-    }
+    // With coupling=0.5 coherence must be in (0, 1)
+    ASSERT_GT(coherence, 0.0f);
+    ASSERT_LT(coherence, 1.0f);
 
+    // Set base threshold below coherence so non-triadic releases,
+    // but triadic (1.5x) is above coherence so triadic waits
     float base = coherence * 0.8f;
     SyncBarrier barrier(bus, base, 2);
 
     ASSERT_LT(base, coherence);
     ASSERT_GT(barrier.effective_threshold(SyncPhase::PRODUCE), coherence);
 
+    // Non-triadic phase (TRANSPORT = 1): threshold = base < coherence -> RELEASED
     barrier.enter(SyncPhase::TRANSPORT, 1);
     auto non_triadic = barrier.check();
     ASSERT_EQ(static_cast<uint8_t>(non_triadic),
               static_cast<uint8_t>(BarrierResult::RELEASED));
 
+    // Triadic phase (PRODUCE = 0): threshold = base*1.5 > coherence -> not RELEASED
     barrier.enter(SyncPhase::PRODUCE, 2);
     auto triadic = barrier.check();
     ASSERT_NE(static_cast<uint8_t>(triadic),
@@ -394,6 +399,30 @@ TEST(sync_scheduler_first_tick_accumulates_elapsed_time) {
     const auto& state = sched.state(SubsystemId::REASONING);
     ASSERT_NEAR(state.last_dt, 0.04f, 0.001f);
     ASSERT_NEAR(state.cumulative_time, 0.04f, 0.001f);
+    return true;
+}
+
+TEST(sync_scheduler_reset_timing_anchors_first_tick) {
+    SyncConfig config;
+    TickScheduler sched(config);
+
+    sched.reset_timing(SubsystemId::REASONING, 100);
+
+    SyncEpoch epoch{.number = 104, .dt = 0.01f};
+    auto entries = sched.schedule(epoch);
+
+    bool found = false;
+    float effective_dt = 0.0f;
+    for (const auto& entry : entries) {
+        if (entry.id == SubsystemId::REASONING) {
+            found = true;
+            effective_dt = entry.dt;
+            break;
+        }
+    }
+
+    ASSERT(found);
+    ASSERT_NEAR(effective_dt, 0.04f, 0.001f);
     return true;
 }
 
@@ -767,6 +796,52 @@ TEST(sync_manager_force_resync) {
 
     // Resync count should be recorded
     ASSERT_GE(mgr.metrics().resync_count, 1u);
+    return true;
+}
+
+TEST(sync_manager_waiting_barrier_is_diagnostic_only) {
+    CrystalBus bus(CrystalBusConfig{.global_coupling = 0.0f});
+    for (int i = 0; i < 200; ++i) {
+        bus.tick(0.01f);
+    }
+
+    SyncConfig config;
+    config.barrier_coherence_threshold = 0.99f;
+    config.barrier_max_wait = 2;
+    config.resync_coherence_threshold = 0.0f;
+    SynchronizationManager mgr(bus, config);
+
+    int tick_count = 0;
+    mgr.set_tick_callback([&](SubsystemId, float, SyncPhase) {
+        ++tick_count;
+    });
+
+    mgr.tick(0.01f);
+
+    ASSERT_GT(mgr.metrics().barrier_waits, 0u);
+    ASSERT_EQ(mgr.metrics().resync_count, 0u);
+    ASSERT_GT(tick_count, 0);
+    return true;
+}
+
+TEST(sync_manager_resync_cooldown_preserves_external_coupling_changes) {
+    CrystalBus bus(CrystalBusConfig{.global_coupling = 0.2f});
+    SyncConfig config;
+    config.resync_coherence_threshold = 0.0f;
+    SynchronizationManager mgr(bus, config);
+
+    mgr.set_tick_callback([](SubsystemId, float, SyncPhase) {});
+
+    mgr.force_resync();
+    ASSERT_NEAR(bus.config().global_coupling, 0.4f, 0.001f);
+
+    bus.set_global_coupling(0.6f);
+
+    for (uint64_t i = 0; i < 16; ++i) {
+        mgr.tick(0.01f);
+    }
+
+    ASSERT_NEAR(bus.config().global_coupling, 0.4f, 0.001f);
     return true;
 }
 
