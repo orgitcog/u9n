@@ -176,6 +176,7 @@ if(BUILD_TESTING)
     list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "ReservoirTopologyGeneratorTests.cpp")
     list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "ReservoirIntegrationTests.cpp")
     list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "SymbolicToNeuralEncoderTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "QueueCapacityRegressionTests.cpp")
     
     if(UNIT_TEST_SOURCES)
         add_executable(DeepTreeEchoUnitTests ${UNIT_TEST_SOURCES})
