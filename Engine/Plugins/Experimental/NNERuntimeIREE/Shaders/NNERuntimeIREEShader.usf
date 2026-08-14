@@ -1,0 +1,6 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+
+// Include the generated kernel source.
+#include "/Plugin/NNERuntimeIREEShader/Generated/NNERuntimeIREEShader.ush"

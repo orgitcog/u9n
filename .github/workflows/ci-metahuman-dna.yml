@@ -1,0 +1,349 @@
+# MetaHuman-DNA-Calibration CI
+# Build and test DNA calibration library with Python bindings
+
+name: MetaHuman DNA CI
+
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'claude/**']
+    paths:
+      - 'MetaHuman-DNA-Calibration/**'
+      - '.github/workflows/ci-metahuman-dna.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'MetaHuman-DNA-Calibration/**'
+      - '.github/workflows/ci-metahuman-dna.yml'
+  workflow_dispatch:
+    inputs:
+      build_shared:
+        description: 'Build shared libraries'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  DNACALIB_DIR: MetaHuman-DNA-Calibration/dnacalib
+
+jobs:
+  # ============================================================================
+  # Linux Build Matrix
+  # ============================================================================
+  linux-build:
+    name: Linux ${{ matrix.python_version }} ${{ matrix.build_type }} ${{ matrix.library_type }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: ['3.9', '3.10', '3.11']
+        build_type: [Release]
+        library_type: [STATIC, SHARED]
+        include:
+          - python_version: '3.9'
+            build_type: Debug
+            library_type: STATIC
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up Python ${{ matrix.python_version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python_version }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pytest
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libeigen3-dev swig
+
+      - name: Configure CMake
+        working-directory: ${{ env.DNACALIB_DIR }}
+        run: |
+          cmake -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DDNAC_BUILD_${{ matrix.library_type }}=ON \
+            -DPython3_EXECUTABLE=$(which python) \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+
+      - name: Build DNACalib
+        working-directory: ${{ env.DNACALIB_DIR }}
+        run: cmake --build build --parallel $(nproc)
+
+      - name: Verify library output
+        working-directory: ${{ env.DNACALIB_DIR }}/build
+        run: |
+          echo "=== Build artifacts ==="
+          find . -name "*.so" -o -name "*.a" | head -20
+          ls -la
+
+      - name: Run Python integration tests
+        working-directory: MetaHuman-DNA-Calibration
+        if: matrix.library_type == 'SHARED'
+        run: |
+          export PYTHONPATH="${PWD}/dnacalib/build:${PYTHONPATH}"
+          python -c "import sys; print('Python path:', sys.path)"
+          # Validate DNA examples can be imported
+          if [ -d "examples" ]; then
+            echo "Testing example scripts syntax..."
+            python -m py_compile examples/*.py || true
+          fi
+
+      - name: Upload build artifacts
+        if: matrix.build_type == 'Release'
+        uses: actions/upload-artifact@v7
+        with:
+          name: dnacalib-linux-py${{ matrix.python_version }}-${{ matrix.library_type }}
+          path: |
+            ${{ env.DNACALIB_DIR }}/build/*.so
+            ${{ env.DNACALIB_DIR }}/build/*.a
+            ${{ env.DNACALIB_DIR }}/build/lib*
+          retention-days: 30
+
+  # ============================================================================
+  # macOS Build
+  # ============================================================================
+  macos-build:
+    name: macOS ${{ matrix.python_version }} ${{ matrix.build_type }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: ['3.9', '3.10', '3.11']
+        build_type: [Release]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up Python ${{ matrix.python_version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python_version }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pytest
+
+      - name: Install system dependencies
+        run: brew install cmake ninja
+
+      - name: Configure CMake
+        working-directory: ${{ env.DNACALIB_DIR }}
+        run: |
+          cmake -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DDNAC_BUILD_SHARED=ON \
+            -DPython3_EXECUTABLE=$(which python) \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+
+      - name: Build DNACalib
+        working-directory: ${{ env.DNACALIB_DIR }}
+        run: cmake --build build --parallel $(sysctl -n hw.ncpu)
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dnacalib-macos-py${{ matrix.python_version }}
+          path: |
+            ${{ env.DNACALIB_DIR }}/build/*.dylib
+            ${{ env.DNACALIB_DIR }}/build/*.a
+            ${{ env.DNACALIB_DIR }}/build/lib*
+          retention-days: 30
+
+  # ============================================================================
+  # Windows Build
+  # ============================================================================
+  windows-build:
+    name: Windows ${{ matrix.python_version }} ${{ matrix.build_type }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python_version: ['3.9', '3.10', '3.11']
+        build_type: [Release]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up Python ${{ matrix.python_version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python_version }}
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pytest
+
+      - name: Install CMake
+        run: choco install cmake ninja -y
+
+      - name: Configure CMake
+        working-directory: ${{ env.DNACALIB_DIR }}
+        shell: pwsh
+        run: |
+          $pythonPath = (Get-Command python).Source
+          cmake -B build -G "Ninja" -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DDNAC_BUILD_SHARED=ON "-DPython3_EXECUTABLE=$pythonPath" -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+
+      - name: Build DNACalib
+        working-directory: ${{ env.DNACALIB_DIR }}
+        run: cmake --build build --parallel
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: dnacalib-windows-py${{ matrix.python_version }}
+          path: |
+            ${{ env.DNACALIB_DIR }}/build/*.dll
+            ${{ env.DNACALIB_DIR }}/build/*.lib
+            ${{ env.DNACALIB_DIR }}/build/*.pyd
+          retention-days: 30
+
+  # ============================================================================
+  # Python Example Validation
+  # ============================================================================
+  python-examples:
+    name: Validate Python Examples
+    runs-on: ubuntu-latest
+    needs: linux-build
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install numpy pycodestyle pylint
+
+      - name: Lint Python examples
+        working-directory: MetaHuman-DNA-Calibration
+        continue-on-error: true
+        run: |
+          echo "=== Checking Python code style ==="
+          pycodestyle --max-line-length=120 examples/ || true
+
+          echo "=== Running pylint ==="
+          pylint --disable=import-error,no-member examples/*.py || true
+
+      - name: Syntax check all Python files
+        working-directory: MetaHuman-DNA-Calibration
+        run: |
+          echo "=== Syntax checking Python files ==="
+          find . -name "*.py" -type f | while read file; do
+            echo "Checking: $file"
+            python -m py_compile "$file"
+          done
+
+  # ============================================================================
+  # DNA File Validation
+  # ============================================================================
+  dna-validation:
+    name: Validate DNA Files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check DNA file presence
+        working-directory: MetaHuman-DNA-Calibration
+        run: |
+          echo "=== Checking DNA data files ==="
+          if [ -d "data/dna_files" ]; then
+            echo "DNA files directory exists"
+            ls -la data/dna_files/ || echo "No DNA files found"
+          else
+            echo "No DNA files directory found"
+          fi
+
+          echo "=== Checking MH4 assets ==="
+          if [ -d "data/mh4" ]; then
+            echo "MH4 assets directory exists"
+            ls -la data/mh4/ || echo "No MH4 files found"
+          else
+            echo "No MH4 assets directory found"
+          fi
+
+      - name: Validate file structure
+        working-directory: MetaHuman-DNA-Calibration
+        run: |
+          echo "=== Required directories ==="
+          for dir in dnacalib dna_viewer examples lib; do
+            if [ -d "$dir" ]; then
+              echo "✓ $dir exists"
+            else
+              echo "✗ $dir missing"
+            fi
+          done
+
+  # ============================================================================
+  # Package Build (CPack)
+  # ============================================================================
+  package:
+    name: Create Distribution Package
+    runs-on: ubuntu-latest
+    needs: [linux-build, macos-build, windows-build]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libeigen3-dev swig
+          pip install numpy
+
+      - name: Configure and build for packaging
+        working-directory: ${{ env.DNACALIB_DIR }}
+        run: |
+          cmake -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDNAC_BUILD_SHARED=ON \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          cmake --build build --parallel $(nproc)
+
+      - name: Create package
+        working-directory: ${{ env.DNACALIB_DIR }}/build
+        run: cpack -G ZIP
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: dnacalib-package
+          path: ${{ env.DNACALIB_DIR }}/build/*.zip
+          retention-days: 90

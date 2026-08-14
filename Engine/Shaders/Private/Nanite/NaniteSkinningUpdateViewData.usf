@@ -1,0 +1,73 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../ViewData.ush"
+#include "../ComputeShaderUtils.ush"
+#include "../InstanceCulling/InstanceCullingLoadBalancer.ush"
+
+
+#define NANITE_MULTI_VIEW 1
+
+#include "NaniteDataDecode.ush"
+#include "NaniteSceneCommon.ush"
+
+float DefaultAnimationMinScreenSize;
+
+// TODO: move to some shared util
+float UnpackUintToNorm(uint Packed, uint MaxNumBits)
+{
+	return float(Packed) / float((1u << MaxNumBits) - 1u);
+}
+
+[numthreads(THREAD_GROUP_SIZE, 1, 1)]
+void NaniteSkinningUpdateViewDataCS(uint3 GroupId : SV_GroupID, uint GroupThreadIndex : SV_GroupIndex)
+{
+	FInstanceWorkSetup WorkSetup = InstanceCullingLoadBalancer_Setup(GroupId, GroupThreadIndex, 0U);
+	if (!WorkSetup.bValid)
+	{
+		return;
+	}
+	const uint InstanceId = WorkSetup.Item.InstanceDataOffset + uint(WorkSetup.LocalItemIndex);
+
+	FInstanceSceneData InstanceSceneData = GetInstanceSceneData(InstanceId);
+
+	if (InstanceSceneData.ValidInstance)
+	{
+		// TODO: figure out a neat way to achieve this!
+		// Force the inclusion of the SceneUbExNaniteSkinning UB through magic*!
+		// SceneUbExNaniteSkinning.Whatever
+		// * The magic is that the shader compiler in BuildShaderFileToUniformBufferMap looks at the verbatim source file to figure out what UBs to inject, and this happens before macros are expanded or comments stripped.
+
+		FNaniteSkinningHeader NaniteSkinningHeader = LoadNaniteSkinningHeader(InstanceSceneData.PrimitiveId);
+
+		if (!NaniteSkinningHeader.bHasLODScreenSize)
+		{
+			// infinite range, mark all views
+			MarkInstanceAsDeformingWithViewMask(InstanceId, (1u << NumSceneRendererPrimaryViews) - 1u);
+			return;
+		}
+
+		float AnimationMinScreenSize = NaniteSkinningHeader.AnimationMinScreenSize != 0u 
+			? BitFieldExtractFloat(NaniteSkinningHeader.AnimationMinScreenSize, SKINNING_LOD_SCREEN_SIZE_BITS, 0u)
+			: DefaultAnimationMinScreenSize;
+
+		const float RadiusSq = length2( InstanceSceneData.LocalBoundsExtent * InstanceSceneData.NonUniformScale.xyz );
+
+		uint ViewMask = 0u;
+		for (uint ViewIndex = 0u; ViewIndex < NumSceneRendererPrimaryViews; ++ViewIndex)
+		{
+			FNaniteView NaniteView = GetNaniteView(ViewIndex);
+			FInstanceDynamicData DynamicData = CalculateInstanceDynamicData(NaniteView, InstanceSceneData);
+
+			const float3 CenterTranslatedWorld = mul( float4( InstanceSceneData.LocalBoundsCenter, 1.0f ), DynamicData.LocalToTranslatedWorld ).xyz;
+			float InstanceDrawDistSq = length2(CenterTranslatedWorld - NaniteView.CullingViewOriginTranslatedWorld);
+
+			if (NaniteView.CullingViewScreenMultipleSq * RadiusSq >= Square(AnimationMinScreenSize) * InstanceDrawDistSq)
+			{
+				ViewMask |= 1u << ViewIndex;
+			}
+		}
+		MarkInstanceAsDeformingWithViewMask(InstanceId, ViewMask);
+	}
+}

@@ -1,0 +1,128 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#ifdef NUM_SAMPLES_PER_VOXEL_1D
+	#define NUM_SAMPLES_1D NUM_SAMPLES_PER_VOXEL_1D
+#endif
+
+#ifdef NUM_SAMPLES_PER_PIXEL_1D
+	#define NUM_SAMPLES_1D NUM_SAMPLES_PER_PIXEL_1D
+#endif
+
+struct FCandidateLightSample
+{
+	uint LocalLightIndex;
+	bool bLightWasVisible;
+	float Weight;
+};
+
+FCandidateLightSample InitCandidateLightSample()
+{
+	FCandidateLightSample LightSample;
+	LightSample.LocalLightIndex = MAX_LOCAL_LIGHT_INDEX;
+	LightSample.bLightWasVisible = true;
+	LightSample.Weight = 0.0f;
+	return LightSample;
+}
+
+uint PackCandidateLightSample(FCandidateLightSample LightSample)
+{
+	uint PackedSample = LightSample.LocalLightIndex & 0xFFFF;
+	// Weights are always positive, so reuse the sign bit
+	PackedSample |= (f32tof16(LightSample.Weight) & 0x7FFF) << 16;
+	PackedSample |= LightSample.bLightWasVisible ? (1U << 31) : 0U;
+	return PackedSample;
+}
+
+FCandidateLightSample UnpackCandidateLightSample(uint PackedSample)
+{
+	FCandidateLightSample LightSample;
+	LightSample.LocalLightIndex = PackedSample & 0xFFFF;
+	LightSample.bLightWasVisible = (PackedSample & (1U << 31)) != 0;
+	LightSample.Weight = f16tof32((PackedSample >> 16) & 0x7FFF);
+	return LightSample;
+}
+
+struct FLightSampler
+{
+	uint PackedSamples[NUM_SAMPLES_1D];
+	float LightIndexRandom[NUM_SAMPLES_1D];
+	float WeightSum;
+};
+
+FLightSampler InitLightSampler(float RandomScalar)
+{
+	FLightSampler LightSampler;
+	LightSampler.WeightSum = 0.0f;
+
+	for (uint LightSampleIndex = 0; LightSampleIndex < NUM_SAMPLES_1D; ++LightSampleIndex)
+	{
+		LightSampler.PackedSamples[LightSampleIndex] = PackCandidateLightSample(InitCandidateLightSample());
+		LightSampler.LightIndexRandom[LightSampleIndex] = (RandomScalar + LightSampleIndex) / NUM_SAMPLES_1D;
+	}
+
+	return LightSampler;
+}
+
+void AddLightSample(inout FLightSampler LightSampler, float SampleWeight, uint ForwardLightIndex, bool bWasVisibleInLastFrame)
+{
+	float Tau = LightSampler.WeightSum / (LightSampler.WeightSum + SampleWeight);
+	LightSampler.WeightSum += SampleWeight;
+
+	for (uint LightSampleIndex = 0; LightSampleIndex < NUM_SAMPLES_1D; ++LightSampleIndex)
+	{
+		if (LightSampler.LightIndexRandom[LightSampleIndex] < Tau)
+		{
+			LightSampler.LightIndexRandom[LightSampleIndex] /= Tau;
+		}
+		else
+		{
+			// Select this sample
+			LightSampler.LightIndexRandom[LightSampleIndex] = (LightSampler.LightIndexRandom[LightSampleIndex] - Tau) / (1.0f - Tau);
+
+			FCandidateLightSample LightSample = InitCandidateLightSample();
+			LightSample.LocalLightIndex = ForwardLightIndex;
+			LightSample.bLightWasVisible = bWasVisibleInLastFrame;
+			LightSample.Weight = SampleWeight;
+			LightSampler.PackedSamples[LightSampleIndex] = PackCandidateLightSample(LightSample);
+		}
+
+		LightSampler.LightIndexRandom[LightSampleIndex] = clamp(LightSampler.LightIndexRandom[LightSampleIndex], 0, 0.9999f);
+	}
+}
+
+/**
+ * Mix visible and invisible samples using a desired ratio
+ */
+void CombineLightSamplers(inout FLightSampler LightSampler, inout FLightSampler HiddenLightSampler, bool bHasValidHistory, float HiddenRatio, inout FShaderPrintContext DebugContext)
+{
+	const float ClampedWeightSum = max(LightSampler.WeightSum, 0.01f);
+	float WeightRatio = HiddenLightSampler.WeightSum / max(LightSampler.WeightSum, ClampedWeightSum);
+	WeightRatio = min(WeightRatio, bHasValidHistory ? HiddenRatio : 1.0f);
+	float ClampedHiddenWeightSum = max(LightSampler.WeightSum, ClampedWeightSum) * WeightRatio;
+	float HiddenSampleWeightScale = ClampedHiddenWeightSum / HiddenLightSampler.WeightSum;
+
+	float Tau = LightSampler.WeightSum / (LightSampler.WeightSum + ClampedHiddenWeightSum);
+	LightSampler.WeightSum += ClampedHiddenWeightSum;
+
+	for (uint LightSampleIndex = 0; LightSampleIndex < NUM_SAMPLES_1D; ++LightSampleIndex)
+	{
+		if (LightSampler.LightIndexRandom[LightSampleIndex] >= Tau)
+		{
+			LightSampler.LightIndexRandom[LightSampleIndex] = (LightSampler.LightIndexRandom[LightSampleIndex] - Tau) / (1.0f - Tau);
+			uint HiddenLightSampleIndex = clamp(LightSampler.LightIndexRandom[LightSampleIndex] * NUM_SAMPLES_1D, 0, NUM_SAMPLES_1D - 1);
+
+			FCandidateLightSample LightSample = UnpackCandidateLightSample(HiddenLightSampler.PackedSamples[HiddenLightSampleIndex]);
+			LightSample.Weight *= HiddenSampleWeightScale;
+			LightSampler.PackedSamples[LightSampleIndex] = PackCandidateLightSample(LightSample);
+		}
+	}
+
+	if (DebugContext.bIsActive)
+	{
+		Newline(DebugContext);
+		Print(DebugContext, TEXT("Clamped hidden wsum: "));
+		Print(DebugContext, ClampedHiddenWeightSum, FontValue);
+	}
+}

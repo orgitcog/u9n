@@ -1,0 +1,282 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../../Common.ush"
+#include "../../BRDF.ush"
+#include "../../BlockCompressionCommon.ush"
+#include "../../BCCompressionCommon.ush"
+#include "LumenSurfaceCache.ush"
+#include "LumenSurfaceCacheSampling.ush"
+
+#ifndef THREADGROUP_SIZE
+	#define THREADGROUP_SIZE 0
+#endif
+
+RWTexture2D<uint4> RWAtlasBlock4;
+RWTexture2D<uint2> RWAtlasBlock2;
+
+Texture2D SourceAlbedoAtlas;
+Texture2D SourceNormalAtlas;
+Texture2D SourceEmissiveAtlas;
+Texture2D SourceDepthAtlas;
+
+float2 OneOverSourceAtlasSize;
+
+#define SURFACE_LAYER_DEPTH 0
+#define SURFACE_LAYER_ALBEDO 1
+#define SURFACE_LAYER_OPACITY 2
+#define SURFACE_LAYER_NORMAL 3
+#define SURFACE_LAYER_EMISSIVE 4
+
+void LumenCardCopyPS(
+	float4 Position : SV_POSITION,
+	float2 AtlasUV : TEXCOORD0
+#if !COMPRESS
+	, out float4 OutColor0 : SV_Target0
+#endif
+)
+{
+	uint2 WriteCoord = (uint2) Position.xy;
+
+	#if SURFACE_LAYER == SURFACE_LAYER_DEPTH
+	{
+		#if COMPRESS
+		{
+			float BlockTexels[16];
+			float BlockTexelsY[16];
+			ReadBlockX(SourceDepthAtlas, GlobalPointClampedSampler, AtlasUV - OneOverSourceAtlasSize, OneOverSourceAtlasSize, BlockTexels);
+
+			for (uint TexelIndex = 0; TexelIndex < 16; ++TexelIndex)
+			{
+				// Reverse inverted Z from the HW depth buffer
+				BlockTexels[TexelIndex] = 1.0f - BlockTexels[TexelIndex];
+			}
+
+			RWAtlasBlock2[WriteCoord] = CompressBC4Block(BlockTexels);
+		}
+		#else
+		{
+			bool bValidPixel = Texture2DSampleLevel(SourceNormalAtlas, GlobalPointClampedSampler, AtlasUV, 0).w > 0.5f;
+
+			// Reverse inverted Z from the HW depth buffer
+			float Depth = 1.0f - Texture2DSampleLevel(SourceDepthAtlas, GlobalPointClampedSampler, AtlasUV, 0).x;
+
+			OutColor0 = float4(EncodeSurfaceCacheDepth(Depth, bValidPixel), 0.0f, 0.0f, 0.0f);
+		}
+		#endif
+	}
+	#elif SURFACE_LAYER == SURFACE_LAYER_ALBEDO
+	{
+		#if COMPRESS
+		{
+			float3 BlockTexels[16];
+			ReadBlockRGB(SourceAlbedoAtlas, GlobalPointClampedSampler, AtlasUV - OneOverSourceAtlasSize, OneOverSourceAtlasSize, BlockTexels);
+			RWAtlasBlock4[WriteCoord] = CompressBC7Block(BlockTexels);
+		}
+		#else
+		{
+			float3 Albedo = Texture2DSampleLevel(SourceAlbedoAtlas, GlobalPointClampedSampler, AtlasUV, 0).xyz;
+			OutColor0 = float4(Albedo, 0.0f);
+		}
+		#endif
+	}
+	#elif SURFACE_LAYER == SURFACE_LAYER_OPACITY
+	{
+		#if COMPRESS
+		{
+			float BlockTexels[16];
+			ReadBlockAlpha(SourceAlbedoAtlas, GlobalPointClampedSampler, AtlasUV - OneOverSourceAtlasSize, OneOverSourceAtlasSize, BlockTexels);
+			RWAtlasBlock2[WriteCoord] = CompressBC4Block(BlockTexels);
+		}
+		#else
+		{
+			float Opacity = Texture2DSampleLevel(SourceAlbedoAtlas, GlobalPointClampedSampler, AtlasUV, 0).w;
+			OutColor0 = float4(Opacity, 0.0f, 0.0f, 0.0f);
+		}
+		#endif
+	}
+	#elif SURFACE_LAYER == SURFACE_LAYER_NORMAL
+	{
+		#if COMPRESS
+		{
+			float BlockTexelsX[16];
+			float BlockTexelsY[16];
+			ReadBlockXY(SourceNormalAtlas, GlobalPointClampedSampler, AtlasUV - OneOverSourceAtlasSize, OneOverSourceAtlasSize, BlockTexelsX, BlockTexelsY);
+			RWAtlasBlock4[WriteCoord] = CompressBC5Block(BlockTexelsX, BlockTexelsY);
+		}
+		#else
+		{
+			float3 Normal = Texture2DSampleLevel(SourceNormalAtlas, GlobalPointClampedSampler, AtlasUV, 0).xyz;
+			OutColor0 = float4(Normal.xy, 0.0f, 0.0f);
+		}
+		#endif
+	}
+	#elif SURFACE_LAYER == SURFACE_LAYER_EMISSIVE
+	{
+		#if COMPRESS
+		{
+			float3 BlockTexels[16];
+			ReadBlockRGB(SourceEmissiveAtlas, GlobalPointClampedSampler, AtlasUV - OneOverSourceAtlasSize, OneOverSourceAtlasSize, BlockTexels);
+			RWAtlasBlock4[WriteCoord] = CompressBC6HBlock(BlockTexels);
+		}
+		#else
+		{
+			float3 Emissive = Texture2DSampleLevel(SourceEmissiveAtlas, GlobalPointClampedSampler, AtlasUV, 0).xyz;
+			OutColor0 = float4(Emissive.xyz, 0.0f);
+		}
+		#endif
+	}
+	#endif
+}
+
+Texture2D SourceOpacityAtlas;
+Buffer<uint4> SourceCardData;
+
+void LumenCardResamplePS(
+	float4 SvPosition : SV_POSITION,
+	float2 AtlasUV : TEXCOORD0,
+	float2 RectUV : TEXCOORD1,
+	float RectIndexF : RECT_INDEX,
+	out float4 OutAlbedoOpacity : SV_Target0,
+	out float4 OutNormal : SV_Target1,
+	out float4 OutEmissive : SV_Target2,
+	out float OutDepth : SV_DEPTH)
+{
+	uint RectIndex = uint(RectIndexF);
+	uint PackedData = SourceCardData[RectIndex * 2 + 0].y;
+	uint SourceCardIndex = (PackedData & 0x7fffffff) - 1u;
+	bool bResample = SourceCardIndex != uint(-1);
+
+	if (bResample)
+	{
+		bResample = false;
+
+		bool bAxisXFlipped = (PackedData & 0x80000000) != 0;
+		float4 CardUVRect = asfloat(SourceCardData[RectIndex * 2 + 1]);
+		float2 CardUV = CardUVRect.xy + (CardUVRect.zw - CardUVRect.xy) * RectUV;
+
+		if (bAxisXFlipped)
+		{
+			CardUV.x = 1.0f - CardUV.x;
+		}
+
+		// LumenCardScene contains the old card structure during the resample
+		FLumenCardData OldCard = GetLumenCardData(SourceCardIndex);
+
+		// Assuming card extent hasn't changed
+		float2 LocalSamplePosition = GetCardLocalPosition(OldCard.LocalExtent, CardUV, 0.0f).xy;
+
+		FLumenCardSample CardSample = ComputeSurfaceCacheSample(OldCard, SourceCardIndex, LocalSamplePosition, 0.0f, false);
+		if (CardSample.bValid)
+		{
+			float4 TexelDepths = SourceDepthAtlas.Gather(GlobalPointClampedSampler, CardSample.PhysicalAtlasUV, 0.0f);
+			float4 TexelValid;
+
+			for (uint TexelIndex = 0; TexelIndex < 4; ++TexelIndex)
+			{
+				if (OldCard.bHeightfield)
+				{
+					// No need to depth test heightfields
+					TexelValid[TexelIndex] = 1.0f;
+				}
+				else
+				{
+					// Skip invalid texels
+					TexelValid[TexelIndex] = IsSurfaceCacheDepthValid(TexelDepths[TexelIndex]) ? 1.0f : 0.0f;
+				}
+			}
+
+			float4 TexelWeights = CardSample.TexelBilinearWeights * TexelValid;
+			float TexelWeightSum = dot(TexelWeights, 1.0f);
+
+			if (TexelWeightSum > 0.0f)
+			{
+				bResample = true;
+				TexelWeights /= TexelWeightSum;
+
+				float Depth = dot(TexelDepths, TexelWeights);
+				float3 Albedo = SampleSurfaceCacheAtlas(SourceAlbedoAtlas, CardSample.PhysicalAtlasUV, TexelWeights);
+				float Opacity = SampleSurfaceCacheAtlas(SourceOpacityAtlas, CardSample.PhysicalAtlasUV, TexelWeights).x;
+				float2 Normal = SampleSurfaceCacheAtlas(SourceNormalAtlas, CardSample.PhysicalAtlasUV, TexelWeights).xy;
+				float3 Emissive = SampleSurfaceCacheAtlas(SourceEmissiveAtlas, CardSample.PhysicalAtlasUV, TexelWeights);
+
+				OutAlbedoOpacity = float4(Albedo, Opacity);
+				OutNormal = float4(Normal, 0.0f, 1.0f);
+				OutEmissive = float4(Emissive, 0.0f);
+				OutDepth = 1.0f - Depth;
+			}
+		}
+	}
+
+	if (!bResample)
+	{
+		OutAlbedoOpacity = 0.0f;
+		OutNormal = float4(0.5f, 0.5f, 0.0f, 0.0f);
+		OutEmissive = 0.0f;
+		OutDepth = 0.0f;
+	}
+}
+
+#ifdef ClearCompressedAtlasCS
+float3 ClearValue;
+uint2 OutputAtlasSize;
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void ClearCompressedAtlasCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	uint2 WriteCoord = DispatchThreadId.xy;
+	if (all(WriteCoord < OutputAtlasSize))
+	{
+		#if SURFACE_LAYER == SURFACE_LAYER_DEPTH
+		{
+			float BlockTexels[16];
+			for (uint TexelIndex = 0; TexelIndex < 16; ++TexelIndex)
+			{
+				BlockTexels[TexelIndex] = ClearValue.x;
+			}
+			RWAtlasBlock2[WriteCoord] = CompressBC4Block(BlockTexels);
+		}
+		#elif SURFACE_LAYER == SURFACE_LAYER_ALBEDO
+		{
+			float3 BlockTexels[16];
+			for (uint TexelIndex = 0; TexelIndex < 16; ++TexelIndex)
+			{
+				BlockTexels[TexelIndex] = ClearValue;
+			}
+			RWAtlasBlock4[WriteCoord] = CompressBC7Block(BlockTexels);
+		}
+		#elif SURFACE_LAYER == SURFACE_LAYER_OPACITY
+		{
+			float BlockTexels[16];
+			for (uint TexelIndex = 0; TexelIndex < 16; ++TexelIndex)
+			{
+				BlockTexels[TexelIndex] = ClearValue.x;
+			}
+			RWAtlasBlock2[WriteCoord] = CompressBC4Block(BlockTexels);
+		}
+		#elif SURFACE_LAYER == SURFACE_LAYER_NORMAL
+		{
+			float BlockTexelsX[16];
+			float BlockTexelsY[16];
+			for (uint TexelIndex = 0; TexelIndex < 16; ++TexelIndex)
+			{
+				BlockTexelsX[TexelIndex] = ClearValue.x;
+				BlockTexelsY[TexelIndex] = ClearValue.y;
+			}
+			RWAtlasBlock4[WriteCoord] = CompressBC5Block(BlockTexelsX, BlockTexelsY);
+		}
+		#elif SURFACE_LAYER == SURFACE_LAYER_EMISSIVE
+		{
+			float3 BlockTexels[16];
+			for (uint TexelIndex = 0; TexelIndex < 16; ++TexelIndex)
+			{
+				BlockTexels[TexelIndex] = ClearValue;
+			}
+			RWAtlasBlock4[WriteCoord] = CompressBC6HBlock(BlockTexels);
+		}
+		#endif
+	}
+}
+#endif

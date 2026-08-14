@@ -1,0 +1,49 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Shared/MaterialCacheDefinitions.h"
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Public/RootConstants.ush"
+#include "/Engine/Private/MaterialCache/MaterialCacheCommon.ush"
+#include "/Engine/Private/MaterialCache/MaterialCacheABuffer.ush"
+ 
+#define SceneTexturesStruct MaterialCachePass.SceneTextures 
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+#include "/Engine/Generated/UniformBuffers/MaterialCachePass.ush"
+#include "/Engine/Private/MaterialCache/MaterialCacheShadeCommon.ush"
+
+struct FMaterialCacheInterpolantsVSToPS
+{
+
+};
+
+void Main(
+	FVertexFactoryInterpolantsVSToPS Interpolants,
+	FMaterialCacheInterpolantsVSToPS PassInterpolants,
+	in INPUT_POSITION_QUALIFIERS float4 SvPosition : SV_Position
+	OPTIONAL_IsFrontFace
+)
+{
+	const uint PageIndex = GetRootConstant0();
+	
+	const EMaterialCacheFlag    Flags   = (EMaterialCacheFlag)GetRootConstant2();
+	const FMaterialCacheBinData BinData = GetMaterialCacheShadingData(PageIndex);
+	
+	const uint2 PagePixelPos = uint2(SvPosition.xy) & MaterialCachePass.SvPagePositionModMask;
+	
+	ResolvedView = ResolveView();
+	
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
+
+	const float4 ScreenPosition          = SvPositionToResolvedScreenPosition(SvPosition);
+	const float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+	
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+
+	FMaterialCacheABuffer Top = GetMaterialABuffer(MaterialParameters, PixelMaterialInputs);
+	clip(Top.Clipped ? -1 : 1);
+
+	StoreMaterialABufferPixel(Top, Flags, BinData.ABufferPhysicalPosition, PagePixelPos);
+}

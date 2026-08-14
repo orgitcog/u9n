@@ -1,0 +1,96 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Generated/GeneratedUniformBuffers.ush" 
+#include "/Engine/Private/GammaCorrectionCommon.ush"
+#include "/Engine/Private/TonemapCommon.ush"
+
+// ----------------- Begin Duplicated from MediaShaders.usf -------------------------
+// todo: could be extracted in a MediaShadersCommon.ush.
+
+#define UE_Color_EEncoding_Linear		1u
+#define UE_Color_EEncoding_sRGB			2u
+#define UE_Color_EEncoding_ST2084		3u
+#define UE_Color_EEncoding_Gamma22		4u
+#define UE_Color_EEncoding_BT1886		5u
+#define UE_Color_EEncoding_Gamma26		6u
+#define UE_Color_EEncoding_Cineon		7u
+#define UE_Color_EEncoding_REDLog		8u
+#define UE_Color_EEncoding_REDLog3G10	9u
+#define UE_Color_EEncoding_SLog1		10u
+#define UE_Color_EEncoding_SLog2		11u
+#define UE_Color_EEncoding_SLog3		12u
+#define UE_Color_EEncoding_AlexaV3LogC	13u
+#define UE_Color_EEncoding_CanonLog		14u
+#define UE_Color_EEncoding_ProTune		15u
+#define UE_Color_EEncoding_VLog			16u
+
+#define ToneMapMethod_None           0u
+#define ToneMapMethod_Hable          1u
+#define ToneMapMethod_SimpleReinhard 2u
+
+float3 ApplyColorProcessingRGB(float3 Color, float4x4 CSMtx, uint EOTF, uint ToneMapMethod = 0)
+{
+	// Go linear
+	switch(EOTF)
+	{
+	case UE_Color_EEncoding_sRGB:	Color = sRGBToLinear(Color); break;
+	case UE_Color_EEncoding_ST2084: Color = ST2084ToLinear(Color); break;
+	case UE_Color_EEncoding_SLog3:	Color = SLog3ToLinear(Color); break;
+	default: break;
+	}
+
+	// Adjust colorspace
+	float4 Col4 = float4(Color, 1);
+	Color.x = dot(CSMtx[0], Col4);
+	Color.y = dot(CSMtx[1], Col4);
+	Color.z = dot(CSMtx[2], Col4);
+
+	switch(ToneMapMethod)
+	{
+	case ToneMapMethod_Hable:			Color = HableToneMap(Color);  break;
+	case ToneMapMethod_SimpleReinhard:	Color = SimpleReinhardToneMap(Color);  break;
+	default: break;
+	}
+
+	return Color;
+}
+
+float3 ApplyColorProcessing(float3 YUV, float4x4 YUVMtx, float4x4 CSMtx, uint EOTF, uint ToneMapMethod = 0)
+{
+	float3 Color;
+	float4 YUV4 = float4(YUV, 1);
+	Color.x = dot(YUVMtx[0], YUV4);
+	Color.y = dot(YUVMtx[1], YUV4);
+	Color.z = dot(YUVMtx[2], YUV4);
+
+	// Make sure we safely stay above zero
+	Color = max(Color, 0.0f);
+
+	return ApplyColorProcessingRGB(Color, CSMtx, EOTF, ToneMapMethod);
+}
+
+// ----------------- End Duplicated from MediaShaders.usf -------------------------
+
+// Conversion of UYVY-A format to RGBA.
+// Input has 2 textures:
+// - YUVTexture: UYVY 4:2:2
+// - AlphaTexture: A8
+void NDIMediaUYVYAConvertPS(
+	float4 InPosition : SV_POSITION,
+	float2 InUV : TEXCOORD0,
+	out float4 OutColor : SV_Target0)
+{
+	float4 UYVYB = NDIMediaUYVYAConvertUB.YUVTexture.Sample(NDIMediaUYVYAConvertUB.SamplerB, InUV);
+	float4 UYVYT = NDIMediaUYVYAConvertUB.YUVTexture.Sample(NDIMediaUYVYAConvertUB.SamplerT, InUV);
+	float Alpha = NDIMediaUYVYAConvertUB.AlphaTexture.Sample(NDIMediaUYVYAConvertUB.SamplerT, InUV).w;
+
+	float PosX = 2.0f * InUV.x * NDIMediaUYVYAConvertUB.InputWidth;
+
+	float FracX = PosX % 2.0f;
+	float3 YUV;
+	YUV.x = (1 - FracX) * UYVYT.y + FracX * UYVYT.w;
+	YUV.yz = UYVYB.zx;
+
+	OutColor = float4(ApplyColorProcessing(YUV, NDIMediaUYVYAConvertUB.ColorTransform, NDIMediaUYVYAConvertUB.CSTransform, NDIMediaUYVYAConvertUB.EOTF, NDIMediaUYVYAConvertUB.ToneMapMethod), Alpha);
+}

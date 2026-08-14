@@ -1,0 +1,126 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Plugin/ComputeFramework/Private/ComputeKernelCommon.ush"
+
+uint {DataInterfaceName}_NumSolverPoints;
+uint {DataInterfaceName}_NumSolverCurves;
+uint {DataInterfaceName}_NumSolverObjects;
+
+uint {DataInterfaceName}_NumDynamicPoints;
+uint {DataInterfaceName}_NumDynamicCurves;
+
+uint {DataInterfaceName}_NumKinematicPoints;
+uint {DataInterfaceName}_NumKinematicCurves;
+
+Buffer<uint> {DataInterfaceName}_ObjectCurveOffsets;
+Buffer<uint> {DataInterfaceName}_ObjectPointOffsets;
+
+Buffer<uint> {DataInterfaceName}_ObjectNumCurves;
+Buffer<uint> {DataInterfaceName}_ObjectNumPoints;
+
+Buffer<int> {DataInterfaceName}_PointObjectIndices;
+Buffer<int> {DataInterfaceName}_CurveObjectIndices;
+
+Buffer<int> {DataInterfaceName}_DynamicPointIndices;
+Buffer<int> {DataInterfaceName}_DynamicCurveIndices;
+
+Buffer<int> {DataInterfaceName}_KinematicPointIndices;
+Buffer<int> {DataInterfaceName}_KinematicCurveIndices;
+
+Buffer<uint> {DataInterfaceName}_ObjectDistanceLods;
+
+// Interface functions
+
+uint ReadNumSolverPoints_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumSolverPoints;
+}
+
+uint ReadNumSolverCurves_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumSolverCurves;
+}
+
+uint ReadNumSolverObjects_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumSolverObjects;
+}
+
+uint ReadNumDynamicPoints_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumDynamicPoints;
+}
+
+uint ReadNumDynamicCurves_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumDynamicCurves;
+}
+
+uint ReadNumKinematicPoints_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumKinematicPoints;
+}
+
+uint ReadNumKinematicCurves_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_NumKinematicCurves;
+}
+
+uint ReadObjectPointOffset_{DataInterfaceName}(uint ObjectIndex)
+{
+	return (ObjectIndex < ({DataInterfaceName}_NumSolverObjects+1)) ? {DataInterfaceName}_ObjectPointOffsets[ObjectIndex] : 0;
+}
+
+uint ReadObjectCurveOffset_{DataInterfaceName}(uint ObjectIndex)
+{
+	return (ObjectIndex < ({DataInterfaceName}_NumSolverObjects+1)) ? {DataInterfaceName}_ObjectCurveOffsets[ObjectIndex] : 0;
+}
+
+uint ReadObjectNumPoints_{DataInterfaceName}(uint ObjectIndex)
+{
+	return (ObjectIndex < {DataInterfaceName}_NumSolverObjects) ? {DataInterfaceName}_ObjectNumPoints[ObjectIndex] : 0;
+}
+
+uint ReadObjectNumCurves_{DataInterfaceName}(uint ObjectIndex)
+{
+	return (ObjectIndex < {DataInterfaceName}_NumSolverObjects) ? {DataInterfaceName}_ObjectNumCurves[ObjectIndex] : 0;
+}
+
+uint ReadObjectDistanceLod_{DataInterfaceName}(uint ObjectIndex)
+{
+	return (ObjectIndex < {DataInterfaceName}_NumSolverObjects) ? {DataInterfaceName}_ObjectDistanceLods[ObjectIndex] : 0;
+}
+
+int ReadPointObjectIndex_{DataInterfaceName}(uint PointIndex)
+{
+	return (PointIndex < {DataInterfaceName}_NumSolverPoints)? {DataInterfaceName}_PointObjectIndices[PointIndex] : -1;
+}
+
+int ReadCurveObjectIndex_{DataInterfaceName}(uint CurveIndex)
+{
+	return (CurveIndex < {DataInterfaceName}_NumSolverCurves) ? {DataInterfaceName}_CurveObjectIndices[CurveIndex] : -1;
+}
+
+int ReadDynamicPointIndex_{DataInterfaceName}(uint PointIndex)
+{
+	return (PointIndex < {DataInterfaceName}_NumDynamicPoints) ? {DataInterfaceName}_DynamicPointIndices[PointIndex] : -1;
+}
+
+int ReadKinematicPointIndex_{DataInterfaceName}(uint PointIndex)
+{
+	return (PointIndex < {DataInterfaceName}_NumKinematicPoints) ? {DataInterfaceName}_KinematicPointIndices[PointIndex] : -1;
+}
+
+int ReadDynamicCurveIndex_{DataInterfaceName}(uint CurveIndex)
+{
+	return (CurveIndex < {DataInterfaceName}_NumDynamicCurves) ? {DataInterfaceName}_DynamicCurveIndices[CurveIndex] : -1;
+}
+
+int ReadKinematicCurveIndex_{DataInterfaceName}(uint CurveIndex)
+{
+	return (CurveIndex < {DataInterfaceName}_NumKinematicCurves) ? {DataInterfaceName}_KinematicCurveIndices[CurveIndex] : -1;
+}
+
+
+
+

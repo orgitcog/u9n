@@ -1,0 +1,90 @@
+name: Cross-Org Progress Sync
+
+on:
+  schedule:
+    # Run weekly on Mondays at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'report'
+        type: choice
+        options:
+          - report
+          - create-tracking-issue
+          - sync-labels
+
+jobs:
+  sync-progress:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+
+      - name: Generate Progress Report
+        if: github.event.inputs.action == 'report' || github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_TOKEN }}
+        run: |
+          python echodev/project-template/scripts/sync-orgs.py \
+            --config echodev/project-template/config/organizations.json \
+            --action report \
+            --output progress-report.md
+
+      - name: Upload Report Artifact
+        if: github.event.inputs.action == 'report' || github.event_name == 'schedule'
+        uses: actions/upload-artifact@v7
+        with:
+          name: progress-report
+          path: progress-report.md
+
+      - name: Create Tracking Issue
+        if: github.event.inputs.action == 'create-tracking-issue'
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_TOKEN }}
+        run: |
+          python echodev/project-template/scripts/sync-orgs.py \
+            --config echodev/project-template/config/organizations.json \
+            --action create-tracking-issue \
+            --target-org ${{ github.repository_owner }} \
+            --target-repo ${{ github.event.repository.name }}
+
+      - name: Sync Labels
+        if: github.event.inputs.action == 'sync-labels'
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_TOKEN }}
+        run: |
+          echo "Label sync would require target org/repo specification"
+          echo "Use manual script execution for label sync"
+
+  notify-completion:
+    needs: sync-progress
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Notify on success
+        if: needs.sync-progress.result == 'success'
+        run: |
+          echo "Cross-org sync completed successfully"
+
+      - name: Notify on failure
+        if: needs.sync-progress.result == 'failure'
+        run: |
+          echo "Cross-org sync failed"
+          exit 1

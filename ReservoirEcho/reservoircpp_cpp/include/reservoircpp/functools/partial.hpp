@@ -1,0 +1,6 @@
+#ifndef RESERVOIRCPP_FUNCTOOLS_PARTIAL_HPP
+#define RESERVOIRCPP_FUNCTOOLS_PARTIAL_HPP
+
+#include "wraps.hpp"
+
+#endif

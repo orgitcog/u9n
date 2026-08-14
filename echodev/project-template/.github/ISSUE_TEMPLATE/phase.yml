@@ -1,0 +1,100 @@
+name: "📋 Phase"
+description: "Create a new Phase within an Epic"
+title: "[PHASE] "
+labels: ["phase", "roadmap"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Phase Definition
+        A Phase is a time-boxed development period within an Epic, containing multiple features.
+        
+  - type: input
+    id: phase_id
+    attributes:
+      label: Phase ID
+      description: "Unique identifier (e.g., 1.1, 2.3, 3.5)"
+      placeholder: "1.1"
+    validations:
+      required: true
+      
+  - type: input
+    id: parent_epic
+    attributes:
+      label: Parent Epic
+      description: "Reference to parent epic (e.g., #123 or E1)"
+      placeholder: "#123"
+    validations:
+      required: true
+      
+  - type: input
+    id: duration
+    attributes:
+      label: Estimated Duration
+      description: "Expected duration in weeks"
+      placeholder: "4 weeks"
+    validations:
+      required: true
+      
+  - type: textarea
+    id: description
+    attributes:
+      label: Phase Description
+      description: "Detailed description of the phase's goals"
+      placeholder: "Describe the phase..."
+    validations:
+      required: true
+      
+  - type: textarea
+    id: features
+    attributes:
+      label: Features
+      description: "List features to be implemented in this phase"
+      placeholder: |
+        - [ ] F1.1.1: Feature Title
+        - [ ] F1.1.2: Feature Title
+        - [ ] F1.1.3: Feature Title
+    validations:
+      required: true
+      
+  - type: textarea
+    id: deliverables
+    attributes:
+      label: Deliverables
+      description: "What will be delivered at the end of this phase?"
+      placeholder: |
+        - Deliverable 1
+        - Deliverable 2
+        
+  - type: textarea
+    id: technical_requirements
+    attributes:
+      label: Technical Requirements
+      description: "List technical requirements or constraints"
+      placeholder: |
+        - Requirement 1
+        - Requirement 2
+        
+  - type: dropdown
+    id: neural_symbolic
+    attributes:
+      label: Primary Focus
+      description: "Is this phase primarily neural, symbolic, or integration?"
+      options:
+        - Neural (Deep Tree Echo)
+        - Symbolic (Unreal Engine)
+        - Integration (Neural-Symbolic Bridge)
+        - Infrastructure
+    validations:
+      required: true
+      
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: "Criteria for phase completion"
+      placeholder: |
+        - [ ] All features implemented
+        - [ ] Unit tests passing
+        - [ ] Integration tests passing
+        - [ ] Documentation updated

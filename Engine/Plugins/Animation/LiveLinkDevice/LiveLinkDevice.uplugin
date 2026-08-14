@@ -1,0 +1,32 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Live Link Device Framework",
+	"Description": "Provides interfaces and base classes for implementing Live Link Hub devices",
+	"Category": "Animation",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Hidden": true,
+	"Installed": false,
+	"Plugins": [
+		{
+			"Name": "LiveLinkHub",
+			"Enabled": true
+		}
+	],
+	"Modules": [
+		{
+			"Name": "LiveLinkDevice",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

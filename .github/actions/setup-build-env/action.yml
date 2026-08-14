@@ -1,0 +1,88 @@
+# Reusable Composite Action for Build Environment Setup
+# Use this action to set up a consistent build environment across all workflows
+
+name: 'Setup Build Environment'
+description: 'Sets up the build environment with CMake, compilers, and dependencies'
+
+inputs:
+  os:
+    description: 'Operating system (linux, macos, windows)'
+    required: false
+    default: 'linux'
+  python-version:
+    description: 'Python version to install'
+    required: false
+    default: '3.10'
+  install-gtest:
+    description: 'Install Google Test'
+    required: false
+    default: 'true'
+  install-python-deps:
+    description: 'Install Python dependencies'
+    required: false
+    default: 'true'
+  cmake-version:
+    description: 'CMake version (leave empty for latest)'
+    required: false
+    default: ''
+
+outputs:
+  cmake-path:
+    description: 'Path to CMake executable'
+    value: ${{ steps.setup.outputs.cmake-path }}
+  python-path:
+    description: 'Path to Python executable'
+    value: ${{ steps.setup.outputs.python-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Linux dependencies
+      if: inputs.os == 'linux' || runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build
+        if [ "${{ inputs.install-gtest }}" == "true" ]; then
+          sudo apt-get install -y libgtest-dev
+        fi
+
+    - name: Install macOS dependencies
+      if: inputs.os == 'macos' || runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install cmake ninja
+        if [ "${{ inputs.install-gtest }}" == "true" ]; then
+          brew install googletest
+        fi
+
+    - name: Install Windows dependencies
+      if: inputs.os == 'windows' || runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        choco install cmake ninja -y
+
+    - name: Install Python dependencies
+      if: inputs.install-python-deps == 'true'
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install numpy pytest pytest-cov
+
+    - name: Verify setup
+      id: setup
+      shell: bash
+      run: |
+        echo "=== Build Environment ==="
+        echo "OS: ${{ runner.os }}"
+        echo "CMake: $(cmake --version | head -1)"
+        echo "Python: $(python --version)"
+        echo "Ninja: $(ninja --version 2>/dev/null || echo 'not installed')"
+
+        echo "cmake-path=$(which cmake)" >> $GITHUB_OUTPUT
+        echo "python-path=$(which python)" >> $GITHUB_OUTPUT

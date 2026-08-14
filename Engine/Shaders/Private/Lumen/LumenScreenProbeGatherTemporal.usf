@@ -1,0 +1,762 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define USE_HAIR_COMPLEX_TRANSMITTANCE 1
+
+#include "../Common.ush"
+#include "LumenMaterial.ush"
+#include "../DeferredShadingCommon.ush"
+#include "LumenScreenProbeCommon.ush"
+#include "LumenScreenSpaceBentNormal.ush"
+#include "LumenReflectionsCombine.ush"
+#include "LumenFloatQuantization.ush"
+#include "LumenPosition.ush"
+#include "../StochasticLighting/StochasticLightingCommon.ush"
+#include "../StochasticLighting/StochasticLightingUpsample.ush"
+
+// Float R11G11B10 max
+#define INVALID_LIGHTING float3(65024.0f, 65024.0f, 64512.0f)
+
+#if SHORT_RANGE_AO_MODE == 2
+
+// Denoise direction and AO separately for higher quality
+typedef uint TShortRangeAOPacked;
+typedef float4 TShortRangeAO;
+
+float4 InitShortRangeAO(FLumenMaterialData Material)
+{
+	return float4(Material.WorldNormal, 1.0f);
+}
+
+uint PackSharedShortRangeAO(float4 BentNormalAndAO)
+{
+	float3 BentNormal = normalize(BentNormalAndAO.xyz) * BentNormalAndAO.w;
+	return PackRGB111110(BentNormal * 0.5f + 0.5f);
+}
+
+float4 UnpackSharedShortRangeAO(uint PackedBentNormalAndAO)
+{
+	float3 BentNormal = UnpackRGB111110(PackedBentNormalAndAO) * 2.0f - 1.0f;
+	return float4(normalize(BentNormal.xyz), length(BentNormal.xyz));
+}
+
+#else
+
+typedef UNORM float TShortRangeAOPacked;
+typedef float TShortRangeAO;
+
+float InitShortRangeAO(FLumenMaterialData Material)
+{
+	return 1.0f;
+}
+
+float PackSharedShortRangeAO(float AmbientOcclusion)
+{
+	return AmbientOcclusion;
+}
+
+float  UnpackSharedShortRangeAO(float AmbientOcclusion)
+{
+	return AmbientOcclusion;
+}
+
+#endif
+
+RWTexture2DArray<float3> RWNewHistoryDiffuseIndirect;
+RWTexture2DArray<float3> RWNewHistoryBackfaceDiffuseIndirect;
+RWTexture2DArray<float3> RWNewHistoryRoughSpecularIndirect;
+RWTexture2DArray<UNORM float> RWNewHistoryFastUpdateMode_NumFramesAccumulated;
+RWTexture2DArray<TShortRangeAOPacked> RWNewHistoryShortRangeAO;
+
+Texture2DArray DiffuseIndirect;
+Texture2DArray LightIsMoving;
+Texture2DArray BackfaceDiffuseIndirect;
+Texture2DArray RoughSpecularIndirect;
+Texture2DArray<TShortRangeAOPacked> ShortRangeAOTexture;
+Texture2DArray DiffuseIndirectHistory;
+Texture2DArray BackfaceDiffuseIndirectHistory;
+Texture2DArray RoughSpecularIndirectHistory;
+Texture2DArray<TShortRangeAOPacked> ShortRangeAOHistory;
+Texture2DArray HistoryFastUpdateMode_NumFramesAccumulated;
+Texture2D DiffuseIndirectDepthHistory;
+Texture2D DiffuseIndirectNormalHistory;
+
+float HistoryDistanceThreshold;
+float HistoryDistanceThresholdForFoliage;
+
+float4 HistoryScreenPositionScaleBias;
+float4 HistoryUVToScreenPositionScaleBias;
+float4 HistoryUVMinMax;
+uint4 HistoryViewportMinMax;
+float4 HistoryBufferSizeAndInvSize;
+
+float ShortRangeAOTemporalNeighborhoodClampScale;
+
+uint2 IntegrateViewMin;
+uint2 IntegrateViewSize;
+
+uint2 ShortRangeAOViewMin;
+uint2 ShortRangeAOViewSize;
+
+float2 DownsampledBufferInvSize;
+
+float PrevSceneColorPreExposureCorrection;
+float InvFractionOfLightingMovingForFastUpdateMode;
+float MaxFastUpdateModeAmount;
+float MaxFramesAccumulated;
+float HistoryNormalCosThreshold;
+uint  bIsSubstrateTileHistoryValid;
+
+static const int2 kOffsets3x3[8] =
+{
+	int2(-1, -1),
+	int2( 0, -1),
+	int2( 1, -1),
+	int2(-1,  0),
+	int2( 1,  0),
+	int2(-1,  1),
+	int2( 0,  1),
+	int2( 1,  1),
+};
+
+bool IsNeighborPixelValid(uint2 InNeighborScreenCoord, uint InClosureIndex, bool bDefaultValue)
+{
+	// With Substrate, we can't ensure the neighbor indirect diffuse/rough lighting values have been computed for closure index > 0. 
+	// This is because we only clear lighting data for pixel within a tile, not pixels of neighboring tiles (In FScreenProbeTileClassificationMarkCS). 
+	// The following test ensures (only used for closer index > 0), ensure we don't fetch invalid/uninitialized lighting data.
+	// Ideally this should be computed ahead of time and directly stored into LightingTexture.w to avoid this extra fetch. 
+	bool bIsValid = bDefaultValue;
+	#if SUBTRATE_GBUFFER_FORMAT==1 && SUBSTRATE_MATERIAL_CLOSURE_COUNT > 1
+	if (InClosureIndex > 0)
+	{
+		FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(InNeighborScreenCoord.xy, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+		const FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+		bIsValid = InClosureIndex < SubstratePixelHeader.ClosureCount;
+	}
+	#endif
+	return bIsValid;
+}
+
+float3 GetFilteredNeighborhoodLighting(
+	Texture2DArray LightingTexture,
+	uint2 ScreenCoord, 
+	uint2 MinScreenCoord, 
+	uint2 MaxScreenCoord,
+	uint  InClosureIndex,
+	out bool bLightingIsValid)
+{
+	float3 FilteredLighting = 0;
+	float TotalWeight = 0;
+
+	for (uint NeighborId = 0; NeighborId < 8; NeighborId++)
+	{
+		const int2 SampleOffset = kOffsets3x3[NeighborId];
+		const uint3 NeighborScreenCoord = uint3(clamp(int2(ScreenCoord) + SampleOffset, int2(MinScreenCoord), int2(MaxScreenCoord)), InClosureIndex);
+
+		const float4 Lighting = LightingTexture[NeighborScreenCoord];
+
+		const bool bSampleLightingIsValid = IsNeighborPixelValid(NeighborScreenCoord.xy, InClosureIndex, Lighting.w > 0.0f /*DefaultValue*/);
+		if (bSampleLightingIsValid)
+		{
+			FilteredLighting += Lighting.xyz;
+			TotalWeight++;
+		}
+	}
+
+	bLightingIsValid = TotalWeight > 0;
+	return FilteredLighting /= max(TotalWeight, 1.0f);
+}
+
+float3 ClampHistory(
+	Texture2DArray LightingTexture,
+	uint2 ScreenCoord, 
+	uint2 MinScreenCoord, 
+	uint2 MaxScreenCoord,
+	float3 NewLighting,
+	float3 HistoryLighting,
+	uint InClosureIndex)
+{
+	float3 NeighborMin = NewLighting;
+	float3 NeighborMax = NewLighting;
+
+	UNROLL
+	for (uint NeighborId = 0; NeighborId < 8; NeighborId++)
+	{
+		const int2 SampleOffset = kOffsets3x3[NeighborId];
+		const uint3 NeighborScreenCoord = uint3(clamp(int2(ScreenCoord) + SampleOffset, int2(MinScreenCoord), int2(MaxScreenCoord)), InClosureIndex);
+
+		const bool bSampleLightingIsValid = IsNeighborPixelValid(NeighborScreenCoord.xy, InClosureIndex, true /*DefaultValue*/);
+		if (bSampleLightingIsValid)
+		{
+			const float3 Lighting = LightingTexture[NeighborScreenCoord].xyz;
+			NeighborMin = min(NeighborMin, Lighting.xyz);
+			NeighborMax = max(NeighborMax, Lighting.xyz);
+		}
+	}
+
+	HistoryLighting = clamp(HistoryLighting, NeighborMin, NeighborMax);
+	return HistoryLighting;
+}
+
+struct Bilinear
+{
+	float2 Origin;
+	float2 Weights;
+};
+
+Bilinear GetBilinearFilter(float2 UV, float2 TextureSize)
+{
+	Bilinear Result;
+	Result.Origin = floor(UV * TextureSize - .5f);
+	Result.Weights = frac(UV * TextureSize - .5f);
+	return Result;
+}
+
+float4 GetBilinearCustomWeights(Bilinear F, float4 CustomWeights)
+{
+	float4 Weights;
+	Weights.x = (1.0f - F.Weights.x) * (1.0f - F.Weights.y);
+	Weights.y = F.Weights.x * (1.0f - F.Weights.y);
+	Weights.z = (1.0f - F.Weights.x) * F.Weights.y;
+	Weights.w = F.Weights.x * F.Weights.y;
+	return Weights * CustomWeights;
+}
+
+float4 WeightedAverage(float4 V00, float4 V10,  float4 V01,  float4 V11, float4 Weights)
+{
+	float4 Result = V00 * Weights.x + V10 * Weights.y + V01 * Weights.z + V11 * Weights.w;
+	return Result / max(dot(Weights, 1), .00001f);
+}
+
+float3 WeightedAverage(float3 V00, float3 V10,  float3 V01,  float3 V11, float4 Weights)
+{
+	float3 Result = V00 * Weights.x + V10 * Weights.y + V01 * Weights.z + V11 * Weights.w;
+	return Result / max(dot(Weights, 1), .00001f);
+}
+
+float WeightedAverage(float4 V, float4 Weights)
+{	
+	return dot(V, Weights) / max(dot(Weights, 1), .00001f);
+}
+
+struct FGatherUV
+{
+	float2 UV00;
+	float2 UV10;
+	float2 UV11;
+	float2 UV01;
+};
+
+FGatherUV GetGatherUV(Bilinear In, float2 InTexelSize)
+{
+	FGatherUV Out;
+	Out.UV00 = (In.Origin + .5f) * InTexelSize;
+	Out.UV10 = Out.UV00 + float2(InTexelSize.x, 0);
+	Out.UV01 = Out.UV00 + float2(0, InTexelSize.y);
+	Out.UV11 = Out.UV00 + InTexelSize;
+	return Out;
+}
+
+float3 GetHistoryNormal(float2 InUV)
+{
+	return UnpackNormalAndShadingInfo(Texture2DSampleLevel(DiffuseIndirectNormalHistory, GlobalPointClampedSampler, InUV, 0)).Normal;
+}
+
+float2 DownsampledCoordToScreenUV(uint2 DownsampledCoord, uint DownsampleFactor)
+{
+	uint2 ScreenCoord = DownsampledCoord * DownsampleFactor + GetDownsampledCoordJitter(DownsampledCoord, DownsampleFactor);
+	float2 ScreenUV = (ScreenCoord + 0.5f) * View.BufferSizeAndInvSize.zw;
+	return ScreenUV;
+}
+
+#define SHARED_TILE_BORDER 1
+#define SHARED_TILE_SIZE (THREADGROUP_SIZE / SHORT_RANGE_AO_DOWNSAMPLE_FACTOR + 2 * SHARED_TILE_BORDER)
+
+#if SHORT_RANGE_AO_MODE
+struct FShortRangeAONeighborhood
+{
+	TShortRangeAO Center;
+	TShortRangeAO Extent;
+};
+
+groupshared TShortRangeAOPacked SharedShortRangeAO[SHARED_TILE_SIZE][SHARED_TILE_SIZE];
+
+// Compute local neighborhood statistics
+FShortRangeAONeighborhood GetShortRangeAONeighborhood(uint2 SharedCoord, TShortRangeAO CenterShortRangeAO)
+{
+	TShortRangeAO AOSum = CenterShortRangeAO;
+	TShortRangeAO AOSqSum = Pow2(CenterShortRangeAO);
+	float WeightSum = 1.0f;
+
+	const int KernelSize = 1;
+	for (int NeigborOffsetY = -KernelSize; NeigborOffsetY <= KernelSize; ++NeigborOffsetY)
+	{
+		for (int NeigborOffsetX = -KernelSize; NeigborOffsetX <= KernelSize; ++NeigborOffsetX)
+		{
+			const bool bCenter = NeigborOffsetX == 0 && NeigborOffsetY == 0;
+			const int2 NeigborSharedCoord = int2(SharedCoord.x + NeigborOffsetX, SharedCoord.y + NeigborOffsetY);
+
+			if (!bCenter && all(NeigborSharedCoord >= 0) && all(NeigborSharedCoord < SHARED_TILE_SIZE))
+			{
+				TShortRangeAO NeigborAO = UnpackSharedShortRangeAO(SharedShortRangeAO[NeigborSharedCoord.x][NeigborSharedCoord.y]);
+				AOSum += NeigborAO;
+				AOSqSum += Pow2(NeigborAO);
+				WeightSum += 1.0f;
+			}
+		}
+	}
+
+	TShortRangeAO M1 = AOSum / WeightSum;
+	TShortRangeAO M2 = AOSqSum / WeightSum;
+	TShortRangeAO Variance = max(M2 - Pow2(M1), 0.0f);
+	TShortRangeAO StdDev = sqrt(Variance);
+	
+	FShortRangeAONeighborhood Neighborhood;
+	Neighborhood.Center = M1;
+	Neighborhood.Extent = ShortRangeAOTemporalNeighborhoodClampScale * StdDev;
+	return Neighborhood;
+}
+#endif
+
+Texture2D<float> DownsampledSceneDepth;
+Texture2D<UNORM float3> DownsampledSceneWorldNormal;
+
+float GetNormalWeight(float3 SceneWorldNormal, uint2 DownsampledScreenCoord)
+{
+	float3 SampleWorldNormal = normalize(DecodeNormal(DownsampledSceneWorldNormal[DownsampledScreenCoord]));
+
+	float AngleBetweenNormals = acosFast(saturate(dot(SampleWorldNormal, SceneWorldNormal)));
+	float NormalWeight = 1.0f - saturate(AngleBetweenNormals);
+
+	return Pow2(NormalWeight);
+}
+
+// Pack into 8 bits. NumFramesAccumulated in [3:0] and FastUpdateModeAmount in [7:4]
+float PackFastUpdateModeAmountAndNumFramesAccumulated(float FastUpdateModeAmount, float NumFramesAccumulated)
+{
+	// Use ceil so that only 0 is mapped to 0. That is, only not moving is encoded as not moving
+	float EncodedFastUpdateModeAmount = ceil(FastUpdateModeAmount * 15.0f);
+
+	// Clamp max to 15 because we only have 4 bits. This means that any value >= 15 will be mapped to MaxFramesAccumulated
+	float LocalMaxFramesAccumulated = min(MaxFramesAccumulated, 15.0f);
+	float EncodedNumFramesAccumulated = round(saturate(NumFramesAccumulated / LocalMaxFramesAccumulated) * 15.0f);
+	
+	return (EncodedFastUpdateModeAmount * 16.0f + EncodedNumFramesAccumulated) / 255.0f;
+}
+
+void UnpackFastUpdateModeAmountAndNumFramesAccumulated(float4 Packed, out float4 OutFastUpdateModeAmount, out float4 OutNumFramesAccumulated)
+{
+	Packed = round(Packed * 255.0f);
+	float4 EncodedFastUpdateModeAmount = floor(Packed / 16.0f);
+	float4 EncodedNumFramesAccumulated = Packed - EncodedFastUpdateModeAmount * 16.0f;
+	OutFastUpdateModeAmount = EncodedFastUpdateModeAmount / 15.0f;
+	OutNumFramesAccumulated = select(EncodedNumFramesAccumulated == 15.0f, MaxFramesAccumulated, EncodedNumFramesAccumulated / 15.0f * min(MaxFramesAccumulated, 15.0f));
+}
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void ScreenProbeTemporalReprojectionCS( 
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupId : SV_GroupID,
+	uint2 GroupThreadId : SV_GroupThreadID)
+{
+	// SUBSTRATE_TODO: Reenable overflow tile once history tracking is correct
+#if 0
+	const FLumenMaterialCoord ScreenCoord = GetLumenMaterialCoord(DispatchThreadId, GroupId, GroupThreadId);
+#else
+	FLumenMaterialCoord ScreenCoord = GetLumenMaterialCoord(DispatchThreadId.xy, DispatchThreadId.z);
+	ScreenCoord.SvPosition += View.ViewRectMinAndSize.xy;
+	ScreenCoord.SvPositionFlatten.xy += View.ViewRectMinAndSize.xy;
+#endif
+
+	uint3 IntegrateCoord = uint3(ScreenCoord.SvPositionFlatten.xy / INTEGRATE_DOWNSAMPLE_FACTOR, ScreenCoord.SvPositionFlatten.z);
+	uint3 ShortRangeAOCoord = uint3(ScreenCoord.SvPositionFlatten.xy / SHORT_RANGE_AO_DOWNSAMPLE_FACTOR, ScreenCoord.SvPositionFlatten.z);
+	uint2 ShortRangeAOSharedCoord = SHARED_TILE_BORDER + GroupThreadId.xy / SHORT_RANGE_AO_DOWNSAMPLE_FACTOR;
+
+#if SHORT_RANGE_AO_MODE
+	// Load ShortRangeAO into groupshared for fast neighborhood clamp
+	for (uint SharedCoordY = GroupThreadId.y; SharedCoordY < SHARED_TILE_SIZE; SharedCoordY += THREADGROUP_SIZE)
+	{
+		for (uint SharedCoordX = GroupThreadId.x; SharedCoordX < SHARED_TILE_SIZE; SharedCoordX += THREADGROUP_SIZE)
+		{
+			int2 LoadCoord = ShortRangeAOViewMin + GroupId.xy * (THREADGROUP_SIZE / SHORT_RANGE_AO_DOWNSAMPLE_FACTOR) + int2(SharedCoordX, SharedCoordY) - SHARED_TILE_BORDER;
+			LoadCoord = clamp(LoadCoord, (int2)ShortRangeAOViewMin, (int2)ShortRangeAOViewMin + (int2)ShortRangeAOViewSize - 1);
+			SharedShortRangeAO[SharedCoordX][SharedCoordY] = ShortRangeAOTexture[int3(LoadCoord, ScreenCoord.ClosureIndex)];
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+#endif
+
+	const FLumenMaterialData Material = ReadMaterialData(ScreenCoord, MaxRoughnessToTrace);
+	if (!IsValid(Material))
+	{
+		// #lumen_todo: Fixup VisibilityWeights = 1 on hole filling to skip writing all those channels
+		RWNewHistoryDiffuseIndirect[ScreenCoord.SvPositionFlatten] = 0;
+		RWNewHistoryRoughSpecularIndirect[ScreenCoord.SvPositionFlatten] = 0;
+	#if SUPPORT_BACKFACE_DIFFUSE
+		RWNewHistoryBackfaceDiffuseIndirect[ScreenCoord.SvPositionFlatten] = 0;
+	#endif
+		RWNewHistoryFastUpdateMode_NumFramesAccumulated[ScreenCoord.SvPositionFlatten] = 0;
+	#if SHORT_RANGE_AO_MODE
+		RWNewHistoryShortRangeAO[ScreenCoord.SvPositionFlatten] = PackSharedShortRangeAO(InitShortRangeAO(Material));
+	#endif
+
+		return;
+	}
+
+	const float2 ScreenUV = (ScreenCoord.SvPosition + 0.5f) * View.BufferSizeAndInvSize.zw;
+	const float2 ScreenPosition = (ScreenUV.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+
+	const float DeviceZ = SceneDepthTexture[ScreenCoord.SvPosition].x;
+	const float SceneDepth = ConvertFromDeviceZ(DeviceZ);
+	const float3 HistoryScreenPosition = GetHistoryScreenPosition(ScreenPosition, ScreenUV, DeviceZ);
+
+
+	float2 HistoryScreenUV = HistoryScreenPosition.xy * HistoryScreenPositionScaleBias.xy + HistoryScreenPositionScaleBias.wz;
+	const bool bHistoryWasOnscreen = all(HistoryScreenUV < HistoryUVMinMax.zw) && all(HistoryScreenUV > HistoryUVMinMax.xy);
+	// Avoid reading NaNs outside the valid viewport, just setting the weight to 0 is not enough
+	HistoryScreenUV = clamp(HistoryScreenUV, HistoryUVMinMax.xy, HistoryUVMinMax.zw);
+
+	const Bilinear BilinearFilterAtHistoryScreenUV = GetBilinearFilter(HistoryScreenUV, HistoryBufferSizeAndInvSize.xy);
+	float2 HistoryGatherUV = (BilinearFilterAtHistoryScreenUV.Origin + 1.0f) * HistoryBufferSizeAndInvSize.zw;
+
+	// History depth doesn't have overflow, and has the dimension as the view unlike other history data
+	const float2 HistoryDepthGatherUV = (BilinearFilterAtHistoryScreenUV.Origin + 1.0f) * HistoryBufferSizeAndInvSize.zw;
+	const float4 HistoryDepthDeviceZ = DiffuseIndirectDepthHistory.GatherRed(GlobalPointClampedSampler, HistoryDepthGatherUV).wzxy;
+	const float4 HistorySceneDepth = float4(ConvertFromDeviceZ(HistoryDepthDeviceZ.x), ConvertFromDeviceZ(HistoryDepthDeviceZ.y), ConvertFromDeviceZ(HistoryDepthDeviceZ.z), ConvertFromDeviceZ(HistoryDepthDeviceZ.w));
+
+	const float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
+	const float RandomScalar = BlueNoiseScalar(ScreenCoord.SvPositionFlatten.xy, ScreenProbeGatherStateFrameIndex);
+
+	#if	INTEGRATE_DOWNSAMPLE_FACTOR == 2 || SHORT_RANGE_AO_DOWNSAMPLE_FACTOR == 2
+	{
+		#define MAX_DOWNSAMPLE_FACTOR max(INTEGRATE_DOWNSAMPLE_FACTOR, SHORT_RANGE_AO_DOWNSAMPLE_FACTOR)
+
+		// Prepare weights for upsampling
+		float4 UpsampleWeights = 0.0f;
+		{
+			int2 DownsampledCoord00 = floor(ScreenUV * View.BufferSizeAndInvSize.xy / MAX_DOWNSAMPLE_FACTOR - 0.5f);
+			float2 DownsampledGatherUV = (DownsampledCoord00 + 1.0f) * DownsampledBufferInvSize;
+
+			float4 CornerDepths = DownsampledSceneDepth.GatherRed(GlobalPointClampedSampler, DownsampledGatherUV).wzxy;
+
+			int2 ScreenCoordOffset = ScreenCoord.SvPositionFlatten.xy - DownsampledCoord00 * 2;
+			int2 SampleOffset00 = GetDownsampledCoordJitter(DownsampledCoord00 + uint2(0, 0), MAX_DOWNSAMPLE_FACTOR) + uint2(0, 0) * 2 - ScreenCoordOffset;
+			int2 SampleOffset10 = GetDownsampledCoordJitter(DownsampledCoord00 + uint2(1, 0), MAX_DOWNSAMPLE_FACTOR) + uint2(1, 0) * 2 - ScreenCoordOffset;
+			int2 SampleOffset01 = GetDownsampledCoordJitter(DownsampledCoord00 + uint2(0, 1), MAX_DOWNSAMPLE_FACTOR) + uint2(0, 1) * 2 - ScreenCoordOffset;
+			int2 SampleOffset11 = GetDownsampledCoordJitter(DownsampledCoord00 + uint2(1, 1), MAX_DOWNSAMPLE_FACTOR) + uint2(1, 1) * 2 - ScreenCoordOffset;
+
+			// Triangle filter weights between pixel and 4 samples
+			UpsampleWeights.x = (2.0f - abs(SampleOffset00.x)) * (2.0f - abs(SampleOffset00.y));
+			UpsampleWeights.y = (2.0f - abs(SampleOffset10.x)) * (2.0f - abs(SampleOffset10.y));
+			UpsampleWeights.z = (2.0f - abs(SampleOffset01.x)) * (2.0f - abs(SampleOffset01.y));
+			UpsampleWeights.w = (2.0f - abs(SampleOffset11.x)) * (2.0f - abs(SampleOffset11.y));
+
+			float4 DepthWeights = 0.0f;	
+			{
+				float4 ScenePlane = float4(Material.WorldNormal, dot(TranslatedWorldPosition, Material.WorldNormal));
+
+				float3 Position00 = GetTranslatedWorldPositionFromScreenUV(DownsampledCoordToScreenUV(DownsampledCoord00 + uint2(0, 0), MAX_DOWNSAMPLE_FACTOR), CornerDepths.x);
+				float3 Position10 = GetTranslatedWorldPositionFromScreenUV(DownsampledCoordToScreenUV(DownsampledCoord00 + uint2(1, 0), MAX_DOWNSAMPLE_FACTOR), CornerDepths.y);
+				float3 Position01 = GetTranslatedWorldPositionFromScreenUV(DownsampledCoordToScreenUV(DownsampledCoord00 + uint2(0, 1), MAX_DOWNSAMPLE_FACTOR), CornerDepths.z);
+				float3 Position11 = GetTranslatedWorldPositionFromScreenUV(DownsampledCoordToScreenUV(DownsampledCoord00 + uint2(1, 1), MAX_DOWNSAMPLE_FACTOR), CornerDepths.w);
+
+				float4 PlaneDistances;
+				PlaneDistances.x = abs(dot(float4(Position00, -1), ScenePlane));
+				PlaneDistances.y = abs(dot(float4(Position10, -1), ScenePlane));
+				PlaneDistances.z = abs(dot(float4(Position01, -1), ScenePlane));
+				PlaneDistances.w = abs(dot(float4(Position11, -1), ScenePlane));
+
+				float4 RelativeDepthDifference = PlaneDistances / Material.SceneDepth;
+
+				DepthWeights = select(CornerDepths > 0.0f, exp2(-10000.0f * (RelativeDepthDifference * RelativeDepthDifference)), 0.0f);
+			}
+			UpsampleWeights *= DepthWeights;
+
+			float4 NormalWeights = 1.0f;
+			{
+				NormalWeights.x = GetNormalWeight(Material.WorldNormal, DownsampledCoord00 + uint2(0, 0));
+				NormalWeights.y = GetNormalWeight(Material.WorldNormal, DownsampledCoord00 + uint2(1, 0));
+				NormalWeights.z = GetNormalWeight(Material.WorldNormal, DownsampledCoord00 + uint2(0, 1));
+				NormalWeights.w = GetNormalWeight(Material.WorldNormal, DownsampledCoord00 + uint2(1, 1));
+			}
+			UpsampleWeights *= NormalWeights;
+		}
+
+		const uint2 StochasticBilinearOffset = GetStochasticBilinearOffset(RandomScalar, UpsampleWeights);
+
+		#if INTEGRATE_DOWNSAMPLE_FACTOR != 1
+		{
+			IntegrateCoord.xy = (int2(ScreenCoord.SvPositionFlatten.xy) - 1) / INTEGRATE_DOWNSAMPLE_FACTOR + StochasticBilinearOffset;
+			IntegrateCoord.xy = min(IntegrateCoord.xy, IntegrateViewMin + IntegrateViewSize - 1);
+		}
+		#endif
+
+		#if SHORT_RANGE_AO_DOWNSAMPLE_FACTOR != 1
+		{
+			ShortRangeAOCoord.xy = (int2(ScreenCoord.SvPositionFlatten.xy) - 1) / SHORT_RANGE_AO_DOWNSAMPLE_FACTOR + StochasticBilinearOffset;
+			ShortRangeAOCoord.xy = min(ShortRangeAOCoord.xy, ShortRangeAOViewMin + ShortRangeAOViewSize - 1);
+			ShortRangeAOSharedCoord = (SHARED_TILE_BORDER * SHORT_RANGE_AO_DOWNSAMPLE_FACTOR + int2(GroupThreadId.xy) - 1) / SHORT_RANGE_AO_DOWNSAMPLE_FACTOR + StochasticBilinearOffset;
+		}
+		#endif
+	}
+#endif
+
+	float DisocclusionDistanceThreshold = Material.bHasBackfaceDiffuse ? HistoryDistanceThresholdForFoliage : HistoryDistanceThreshold;
+	DisocclusionDistanceThreshold *= lerp(.5f, 1.5f, RandomScalar);
+
+	const float PrevSceneDepth = ConvertFromDeviceZ(HistoryScreenPosition.z);
+	FGatherUV HistoryGather  = GetGatherUV(BilinearFilterAtHistoryScreenUV, HistoryBufferSizeAndInvSize.zw);
+
+#if SUBTRATE_GBUFFER_FORMAT==1
+	// When Substrate is enabled: use top layer normal instead of the BSDF normal, since it is used for occlusion rejection, and needs to be stable during reprojection.
+	const float3 WorldNormal = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(ScreenCoord.SvPosition, 0))).WorldNormal;
+#else
+	const float3 WorldNormal = Material.WorldNormal;
+#endif
+
+#define PLANE_DISOCCLUSION_WEIGHTS 0
+#if PLANE_DISOCCLUSION_WEIGHTS
+	float3 PrevTranslatedPrevWorldPosition = mul(float4(GetScreenPositionForProjectionType(HistoryScreenPosition.xy,PrevSceneDepth), PrevSceneDepth, 1), View.PrevScreenToTranslatedWorld).xyz;
+	float4 PrevTranslatedPrevScenePlane = float4(WorldNormal, dot(PrevTranslatedPrevWorldPosition, WorldNormal));
+
+	float4 PlaneDistance;
+	{
+		float2 HistoryScreenPosition00 = HistoryGatherUV00 * HistoryUVToScreenPositionScaleBias.xy + HistoryUVToScreenPositionScaleBias.zw;
+		float3 PrevTranslatedHistoryWorldPosition00 = mul(float4(GetScreenPositionForProjectionType(HistoryScreenPosition00, HistorySceneDepth.x), HistorySceneDepth.x, 1), View.PrevScreenToTranslatedWorld).xyz;
+		PlaneDistance.x = abs(dot(float4(PrevTranslatedHistoryWorldPosition00, -1), PrevTranslatedPrevScenePlane));
+
+		float2 HistoryScreenPosition10 = HistoryGatherUV10.x * HistoryUVToScreenPositionScaleBias.xy + HistoryUVToScreenPositionScaleBias.zw;
+		float3 PrevTranslatedHistoryWorldPosition10 = mul(float4(GetScreenPositionForProjectionType(HistoryScreenPosition10, HistorySceneDepth.y), HistorySceneDepth.y, 1), View.PrevScreenToTranslatedWorld).xyz;
+		PlaneDistance.y = abs(dot(float4(PrevTranslatedHistoryWorldPosition10, -1), PrevTranslatedPrevScenePlane));
+
+		float2 HistoryScreenPosition01 = HistoryGatherUV01 * HistoryUVToScreenPositionScaleBias.xy + HistoryUVToScreenPositionScaleBias.zw;
+		float3 PrevTranslatedHistoryWorldPosition01 = mul(float4(GetScreenPositionForProjectionType(HistoryScreenPosition01, HistorySceneDepth.z), HistorySceneDepth.z, 1), View.PrevScreenToTranslatedWorld).xyz;
+		PlaneDistance.z = abs(dot(float4(PrevTranslatedHistoryWorldPosition01, -1), PrevTranslatedPrevScenePlane));
+
+		float2 HistoryScreenPosition11 = HistoryGatherUV11 * HistoryUVToScreenPositionScaleBias.xy + HistoryUVToScreenPositionScaleBias.zw;
+		float3 PrevTranslatedHistoryWorldPosition11 = mul(float4(GetScreenPositionForProjectionType(HistoryScreenPosition11.xy, HistorySceneDepth.w), HistorySceneDepth.w, 1), View.PrevScreenToTranslatedWorld).xyz;
+		PlaneDistance.w = abs(dot(float4(PrevTranslatedHistoryWorldPosition11, -1), PrevTranslatedPrevScenePlane));
+	}
+	
+	float4 OcclusionWeights = PlaneDistance >= PrevSceneDepth * DisocclusionDistanceThreshold ? 1 : 0;
+#else
+
+	#define EXPAND_HISTORY_DISTANCE_THRESHOLD_FOR_JITTER 1
+	#if EXPAND_HISTORY_DISTANCE_THRESHOLD_FOR_JITTER
+		const float3 V = normalize(-TranslatedWorldPosition);
+		// Raise the threshold at grazing angles to compensate for TAA jitter causing a depth mismatch dependent on the angle
+		// This also introduces some ghosting around characters, needs a better solution
+		DisocclusionDistanceThreshold /= clamp(saturate(dot(V, WorldNormal)), .1f, 1.0f); 
+	#endif
+
+	const float4 DistanceToHistoryValue = abs(HistorySceneDepth - PrevSceneDepth);
+	float4 OcclusionWeights = select(DistanceToHistoryValue >= PrevSceneDepth * DisocclusionDistanceThreshold, 1.0, 0.0);
+
+#endif
+
+	const float4 OriginalOcclusionWeights = OcclusionWeights;
+
+#if HISTORY_REJECT_BASED_ON_NORMAL
+	const float3 HistoryNormal00 = GetHistoryNormal(HistoryGather.UV00);
+	const float3 HistoryNormal10 = GetHistoryNormal(HistoryGather.UV10);
+	const float3 HistoryNormal01 = GetHistoryNormal(HistoryGather.UV01);
+	const float3 HistoryNormal11 = GetHistoryNormal(HistoryGather.UV11);
+
+	const float4 HistoryNormalWeights = select(float4(
+		dot(HistoryNormal00, WorldNormal),
+		dot(HistoryNormal10, WorldNormal),
+		dot(HistoryNormal01, WorldNormal),
+		dot(HistoryNormal11, WorldNormal)) < HistoryNormalCosThreshold, 1.0f, 0.0f);
+
+	OcclusionWeights = saturate(HistoryNormalWeights + OcclusionWeights);
+#endif
+
+	// Reject based on the foliage material flag (bHasBackfaceDiffuse)
+	{
+		const float4 PackedW = DiffuseIndirectNormalHistory.GatherAlpha(GlobalPointClampedSampler, HistoryGatherUV).wzxy;
+
+		const bool4 bHasBackfaceDiffuse = bool4(
+			UnpackNormalAndShadingInfo(float4(0,0,0,PackedW.x)).bHasBackfaceDiffuse,
+			UnpackNormalAndShadingInfo(float4(0,0,0,PackedW.y)).bHasBackfaceDiffuse,
+			UnpackNormalAndShadingInfo(float4(0,0,0,PackedW.z)).bHasBackfaceDiffuse,
+			UnpackNormalAndShadingInfo(float4(0,0,0,PackedW.w)).bHasBackfaceDiffuse);
+		OcclusionWeights = saturate(OcclusionWeights + select(Material.bHasBackfaceDiffuse.xxxx == bHasBackfaceDiffuse, 0.0f, 1.0f));
+	}
+
+	//@todo - calculate for each texel in the footprint to avoid tossing history around screen edges
+	float4 VisibilityWeights = saturate((bHistoryWasOnscreen ? 1.0f : 0.0f) - OcclusionWeights);
+
+#if SHORT_RANGE_AO_MODE
+	TShortRangeAO NewShortRangeAO = UnpackSharedShortRangeAO(SharedShortRangeAO[ShortRangeAOSharedCoord.x][ShortRangeAOSharedCoord.y]);
+#endif
+	float4 NewDiffuseLighting = float4(DiffuseIndirect[IntegrateCoord].xyz, LightIsMoving[IntegrateCoord].x);
+	float3 NewRoughSpecularLighting = RoughSpecularIndirect[IntegrateCoord].xyz;
+	bool bLightingIsValid = NewDiffuseLighting.w > 0.0f;
+	float LightingIsMoving = abs(NewDiffuseLighting.w);
+
+	float4 FinalWeights = GetBilinearCustomWeights(BilinearFilterAtHistoryScreenUV, VisibilityWeights);
+
+	float NewNumFramesAccumulated = 0.0f;
+#if SHORT_RANGE_AO_MODE
+	TShortRangeAO OutShortRangeAO = NewShortRangeAO;
+#endif
+	float3 OutDiffuseIndirect = NewDiffuseLighting.xyz;
+	float3 OutRoughSpecularIndirect = NewRoughSpecularLighting;
+	float3 OutBackfaceDiffuseIndirect = 0.0f;
+	float OutFastUpdateModeAmount = 0.0f;
+
+	#if VALID_HISTORY
+	{
+		TShortRangeAO HistoryShortRangeAO;
+		float3 HistoryDiffuseIndirect;
+		float3 HistoryRoughSpecularIndirect;
+
+		// Diffuse
+		{
+			const float4 R4 = DiffuseIndirectHistory.GatherRed(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+			const float4 G4 = DiffuseIndirectHistory.GatherGreen(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+			const float4 B4 = DiffuseIndirectHistory.GatherBlue(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+
+			const float3 HistoryDiffuseIndirect00 = float3(R4.x, G4.x, B4.x);
+			const float3 HistoryDiffuseIndirect10 = float3(R4.y, G4.y, B4.y);
+			const float3 HistoryDiffuseIndirect01 = float3(R4.z, G4.z, B4.z);
+			const float3 HistoryDiffuseIndirect11 = float3(R4.w, G4.w, B4.w);
+
+			// TODO: clear unused tiles at closures > 0 to INVALID_LIGHTING
+			if (ScreenCoord.ClosureIndex > 0)
+			{
+				float4 ValidWeights = 0;
+				ValidWeights.x = all(HistoryDiffuseIndirect00 == INVALID_LIGHTING) ? 0.f : 1.f;
+				ValidWeights.y = all(HistoryDiffuseIndirect10 == INVALID_LIGHTING) ? 0.f : 1.f;
+				ValidWeights.z = all(HistoryDiffuseIndirect01 == INVALID_LIGHTING) ? 0.f : 1.f;
+				ValidWeights.w = all(HistoryDiffuseIndirect11 == INVALID_LIGHTING) ? 0.f : 1.f;
+				FinalWeights *= ValidWeights;
+			}
+
+			HistoryDiffuseIndirect = WeightedAverage(HistoryDiffuseIndirect00, HistoryDiffuseIndirect10, HistoryDiffuseIndirect01, HistoryDiffuseIndirect11, FinalWeights) * PrevSceneColorPreExposureCorrection;
+		}
+
+		// Rough specular
+		{
+			const float4 R4 = RoughSpecularIndirectHistory.GatherRed(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+			const float4 G4 = RoughSpecularIndirectHistory.GatherGreen(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+			const float4 B4 = RoughSpecularIndirectHistory.GatherBlue(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+
+			const float3 HistoryRoughSpecularIndirect00 = float3(R4.x, G4.x, B4.x);
+			const float3 HistoryRoughSpecularIndirect10 = float3(R4.y, G4.y, B4.y);
+			const float3 HistoryRoughSpecularIndirect01 = float3(R4.z, G4.z, B4.z);
+			const float3 HistoryRoughSpecularIndirect11 = float3(R4.w, G4.w, B4.w);
+
+			HistoryRoughSpecularIndirect = WeightedAverage(HistoryRoughSpecularIndirect00, HistoryRoughSpecularIndirect10, HistoryRoughSpecularIndirect01, HistoryRoughSpecularIndirect11, FinalWeights) * PrevSceneColorPreExposureCorrection;
+		}
+
+#if SHORT_RANGE_AO_MODE == 2
+		uint4 HistoryShortRangeAOGather4 = ShortRangeAOHistory.GatherRed(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+		const TShortRangeAO HistoryShortRangeAO00 = UnpackSharedShortRangeAO(HistoryShortRangeAOGather4.x);
+		const TShortRangeAO HistoryShortRangeAO10 = UnpackSharedShortRangeAO(HistoryShortRangeAOGather4.y);
+		const TShortRangeAO HistoryShortRangeAO01 = UnpackSharedShortRangeAO(HistoryShortRangeAOGather4.z);
+		const TShortRangeAO HistoryShortRangeAO11 = UnpackSharedShortRangeAO(HistoryShortRangeAOGather4.w);
+		HistoryShortRangeAO = WeightedAverage(HistoryShortRangeAO00, HistoryShortRangeAO10, HistoryShortRangeAO01, HistoryShortRangeAO11, FinalWeights);
+#else
+		float4 HistoryShortRangeAOGather4 = ShortRangeAOHistory.GatherRed(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+		HistoryShortRangeAO = WeightedAverage(HistoryShortRangeAOGather4, FinalWeights);
+#endif
+
+		float4 Packed4 = HistoryFastUpdateMode_NumFramesAccumulated.GatherRed(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+		float4 HistoryNumFramesAccumulated4;
+		float4 HistoryFastUpdateModeAmount4;
+		UnpackFastUpdateModeAmountAndNumFramesAccumulated(Packed4, HistoryFastUpdateModeAmount4, HistoryNumFramesAccumulated4);
+
+		const float NumFramesAccumulated = min(WeightedAverage(HistoryNumFramesAccumulated4 + 1.0f, FinalWeights), MaxFramesAccumulated);
+
+		float FastUpdateModeAmount = saturate(LightingIsMoving * InvFractionOfLightingMovingForFastUpdateMode);
+		FastUpdateModeAmount = saturate(min((FastUpdateModeAmount - .2f) / .8f, MaxFastUpdateModeAmount));
+
+		{
+			OutFastUpdateModeAmount = FastUpdateModeAmount;
+			float FastUpdateModeHistoryValue = WeightedAverage(HistoryFastUpdateModeAmount4, FinalWeights);
+			FastUpdateModeHistoryValue = min(FastUpdateModeHistoryValue, MaxFastUpdateModeAmount);
+			// Stabilizes the calculated value, and speeds up lighting change propagation around where the moving object was last frame
+			FastUpdateModeAmount = max(FastUpdateModeAmount, FastUpdateModeHistoryValue);
+		}
+	
+		NewNumFramesAccumulated = min(NumFramesAccumulated, (1.0f - FastUpdateModeAmount) * MaxFramesAccumulated);
+		NewNumFramesAccumulated = bHistoryWasOnscreen ? NewNumFramesAccumulated : 0;
+
+		#if FAST_UPDATE_MODE_NEIGHBORHOOD_CLAMP
+		if (FastUpdateModeAmount > 0.0f)
+		{
+			const uint2 MinScreenCoord = IntegrateViewMin;
+			const uint2 MaxScreenCoord = IntegrateViewMin + IntegrateViewSize - 1;
+			HistoryDiffuseIndirect = ClampHistory(DiffuseIndirect, IntegrateCoord.xy, MinScreenCoord, MaxScreenCoord, NewDiffuseLighting.xyz, HistoryDiffuseIndirect, ScreenCoord.ClosureIndex);
+			HistoryRoughSpecularIndirect = ClampHistory(RoughSpecularIndirect, IntegrateCoord.xy, MinScreenCoord, MaxScreenCoord, NewRoughSpecularLighting, HistoryRoughSpecularIndirect, ScreenCoord.ClosureIndex);
+		}
+		#endif
+
+		#if SHORT_RANGE_AO_MODE
+		if (ShortRangeAOTemporalNeighborhoodClampScale > 0.0f)
+		{
+			// Rectify history
+			FShortRangeAONeighborhood ShortRangeAONeighborhood = GetShortRangeAONeighborhood(ShortRangeAOSharedCoord, NewShortRangeAO);
+			TShortRangeAO ClampedHistoryShortRangeAO = clamp(HistoryShortRangeAO, ShortRangeAONeighborhood.Center - ShortRangeAONeighborhood.Extent, ShortRangeAONeighborhood.Center + ShortRangeAONeighborhood.Extent);
+			HistoryShortRangeAO = ClampedHistoryShortRangeAO;
+		}
+		#endif
+
+		float Alpha = 1.0f / (1.0f + NewNumFramesAccumulated);
+
+		// If current sample is invalid we need to instead to heavily rely on history
+		if (!bLightingIsValid && NewNumFramesAccumulated >= 1)
+		{
+			Alpha = 1.0f / (1.0f + 4.0f * NewNumFramesAccumulated);
+		}
+
+		OutDiffuseIndirect = lerp(HistoryDiffuseIndirect, NewDiffuseLighting.xyz, Alpha);
+		OutRoughSpecularIndirect = lerp(HistoryRoughSpecularIndirect, NewRoughSpecularLighting, Alpha);
+#if SHORT_RANGE_AO_MODE
+		OutShortRangeAO = lerp(HistoryShortRangeAO, NewShortRangeAO, Alpha);
+#endif
+
+		#if SUPPORT_BACKFACE_DIFFUSE
+		if (Material.bHasBackfaceDiffuse)
+		{
+			const float4 R4 = BackfaceDiffuseIndirectHistory.GatherRed(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+			const float4 G4 = BackfaceDiffuseIndirectHistory.GatherGreen(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+			const float4 B4 = BackfaceDiffuseIndirectHistory.GatherBlue(GlobalPointClampedSampler, float3(HistoryGatherUV, ScreenCoord.ClosureIndex)).wzxy;
+
+			const float3 HistoryDiffuseIndirect00 = float3(R4.x, G4.x, B4.x);
+			const float3 HistoryDiffuseIndirect10 = float3(R4.y, G4.y, B4.y);
+			const float3 HistoryDiffuseIndirect01 = float3(R4.z, G4.z, B4.z);
+			const float3 HistoryDiffuseIndirect11 = float3(R4.w, G4.w, B4.w);
+
+			const float3 HistoryBackfaceDiffuseIndirect = WeightedAverage(HistoryDiffuseIndirect00, HistoryDiffuseIndirect10, HistoryDiffuseIndirect01, HistoryDiffuseIndirect11, FinalWeights) * PrevSceneColorPreExposureCorrection;
+
+			const float3 NewBackfaceDiffuseLighting = BackfaceDiffuseIndirect[IntegrateCoord].xyz;
+			OutBackfaceDiffuseIndirect = lerp(HistoryBackfaceDiffuseIndirect, NewBackfaceDiffuseLighting, Alpha);		
+			OutBackfaceDiffuseIndirect = MakeFinite(OutBackfaceDiffuseIndirect);
+		}
+		#endif
+	}
+	#endif
+
+	// Debug visualizations
+#if VALID_HISTORY
+	//OutRoughSpecularIndirect.xyz = dot(VisibilityWeights, 1) > 0.0f ? float3(0, 1, 0) : float3(1, 0, 0);
+#endif
+	//OutRoughSpecularIndirect.xyz = OutDiffuseIndirect.xyz = FastUpdateModeAmount; 
+	//if (!bLightingIsValid) { OutRoughSpecularIndirect.xyz = OutDiffuseIndirect.xyz = float3(1, 0, 0); }
+	//OutRoughSpecularIndirect.xyz = OutDiffuseIndirect.xyz = bHistoryWasOnscreen ? saturate(HistoryNormalWeights.xyz - OriginalOcclusionWeights.xyz) : 0.0f;
+
+	OutDiffuseIndirect.rgb = -min(-OutDiffuseIndirect.rgb, 0.0f);
+	OutRoughSpecularIndirect.rgb = -min(-OutRoughSpecularIndirect.rgb, 0.0f);
+
+	RWNewHistoryDiffuseIndirect[ScreenCoord.SvPositionFlatten] = QuantizeForFloatRenderTarget(OutDiffuseIndirect, RandomScalar);
+	RWNewHistoryRoughSpecularIndirect[ScreenCoord.SvPositionFlatten] = QuantizeForFloatRenderTarget(OutRoughSpecularIndirect, RandomScalar);
+	RWNewHistoryFastUpdateMode_NumFramesAccumulated[ScreenCoord.SvPositionFlatten] = PackFastUpdateModeAmountAndNumFramesAccumulated(OutFastUpdateModeAmount, NewNumFramesAccumulated);
+#if SHORT_RANGE_AO_MODE
+	RWNewHistoryShortRangeAO[ScreenCoord.SvPositionFlatten] = PackSharedShortRangeAO(OutShortRangeAO);
+#endif
+#if SUPPORT_BACKFACE_DIFFUSE
+	RWNewHistoryBackfaceDiffuseIndirect[ScreenCoord.SvPositionFlatten] = QuantizeForFloatRenderTarget(OutBackfaceDiffuseIndirect, RandomScalar);
+#endif
+}

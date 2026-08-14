@@ -1,0 +1,12 @@
+{
+	"ParentSDKFile": "../Apple/Apple_SDK.json",
+
+	"EditorDeploymentTarget": "14.00",
+	"EditorBuildTarget": "14.00",
+
+	"DeploymentTarget": "14.00",
+	"BuildTarget": "14.00",
+
+	"//": "macOS Sonoma 14.0 (Released Sept 26, 2023)",
+	"MinSoftwareVersion": "14.00"
+}

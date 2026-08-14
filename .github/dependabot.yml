@@ -1,0 +1,52 @@
+# Dependabot Configuration
+# Automated dependency updates for security and feature improvements
+
+version: 2
+
+updates:
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Python dependencies (MetaHuman-DNA-Calibration)
+  - package-ecosystem: "pip"
+    directory: "/MetaHuman-DNA-Calibration"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+      - "python"
+    ignore:
+      # Ignore major version updates for critical dependencies
+      - dependency-name: "numpy"
+        update-types: ["version-update:semver-major"]
+    groups:
+      python-deps:
+        patterns:
+          - "*"
+
+  # CMake/C++ (via git submodules, manual updates recommended)
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+      - "submodule"
