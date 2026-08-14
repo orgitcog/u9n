@@ -1,0 +1,330 @@
+# Pull Request Validation
+# Comprehensive PR checks to ensure code quality before merge
+
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Cancel in-progress runs for the same PR
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # PR Metadata Validation
+  # ============================================================================
+  pr-metadata:
+    name: PR Metadata
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check PR title format
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          TITLE="$PR_TITLE"
+          echo "PR Title: $TITLE"
+
+          # Check for conventional commit format (optional enforcement)
+          if [[ "$TITLE" =~ ^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\(.+\))?: ]]; then
+            echo "✓ Title follows conventional commit format"
+          else
+            echo "⚠ Title does not follow conventional commit format"
+            echo "Recommended format: type(scope): description"
+            echo "Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build, revert"
+          fi
+
+      - name: Check PR description
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          BODY="$PR_BODY"
+          if [ -z "$BODY" ] || [ ${#BODY} -lt 10 ]; then
+            echo "⚠ PR description is empty or too short"
+            echo "Please add a meaningful description of your changes"
+          else
+            echo "✓ PR has description"
+          fi
+
+      - name: Check for linked issues
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          BODY="$PR_BODY"
+          if [[ "$BODY" =~ (close[sd]?|fix(e[sd])?|resolve[sd]?)\ +#[0-9]+ ]]; then
+            echo "✓ PR links to an issue"
+          else
+            echo "ℹ No linked issues found (optional)"
+          fi
+
+  # ============================================================================
+  # Changed Files Analysis
+  # ============================================================================
+  changed-files:
+    name: Analyze Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      reservoir-changed: ${{ steps.changes.outputs.reservoir }}
+      dna-changed: ${{ steps.changes.outputs.dna }}
+      deeptree-changed: ${{ steps.changes.outputs.deeptree }}
+      unreal-changed: ${{ steps.changes.outputs.unreal }}
+      workflows-changed: ${{ steps.changes.outputs.workflows }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Detect changed paths
+        id: changes
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            reservoir:
+              - 'ReservoirEcho/**'
+            dna:
+              - 'MetaHuman-DNA-Calibration/**'
+            deeptree:
+              - 'DeepTreeEcho/**'
+              - 'Source/DeepTreeEcho/**'
+            unreal:
+              - 'UnrealEcho/**'
+              - 'Source/UnrealEcho/**'
+            workflows:
+              - '.github/**'
+
+      - name: Summary
+        run: |
+          echo "## Changed Components"
+          echo "- ReservoirEcho: ${{ steps.changes.outputs.reservoir }}"
+          echo "- MetaHuman-DNA: ${{ steps.changes.outputs.dna }}"
+          echo "- DeepTreeEcho: ${{ steps.changes.outputs.deeptree }}"
+          echo "- UnrealEcho: ${{ steps.changes.outputs.unreal }}"
+          echo "- Workflows: ${{ steps.changes.outputs.workflows }}"
+
+  # ============================================================================
+  # Quick Build Check
+  # ============================================================================
+  quick-build:
+    name: Quick Build Check
+    runs-on: ubuntu-latest
+    needs: changed-files
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libeigen3-dev
+
+      - name: Build ReservoirEcho (if changed)
+        if: needs.changed-files.outputs.reservoir-changed == 'true'
+        working-directory: ReservoirEcho/reservoircpp_cpp
+        run: |
+          echo "=== Building ReservoirEcho ==="
+          rm -rf build CMakeCache.txt CMakeFiles && cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+          cmake --build build --parallel $(nproc)
+          echo "✓ ReservoirEcho builds successfully"
+
+      - name: Build DNACalib (if changed)
+        if: needs.changed-files.outputs.dna-changed == 'true'
+        working-directory: MetaHuman-DNA-Calibration/dnacalib
+        run: |
+          echo "=== Building DNACalib ==="
+          rm -rf build CMakeCache.txt CMakeFiles && cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build --parallel $(nproc)
+          echo "✓ DNACalib builds successfully"
+
+      - name: Validate C++ headers (if core changed)
+        if: needs.changed-files.outputs.deeptree-changed == 'true' || needs.changed-files.outputs.unreal-changed == 'true'
+        run: |
+          echo "=== Validating C++ Headers ==="
+          # Check for syntax errors in headers
+          find . \( -path './ReservoirEcho/external' -prune \) -o \
+            -name '*.h' -print | head -50 | while read header; do
+              # Basic preprocessor check
+              g++ -fsyntax-only -x c++-header "$header" 2>/dev/null || \
+                echo "⚠ Potential issue in: $header"
+            done
+
+  # ============================================================================
+  # Quick Test Check
+  # ============================================================================
+  quick-test:
+    name: Quick Test Check
+    runs-on: ubuntu-latest
+    needs: [changed-files, quick-build]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgtest-dev libeigen3-dev
+
+      - name: Run ReservoirEcho tests (if changed)
+        if: needs.changed-files.outputs.reservoir-changed == 'true'
+        working-directory: ReservoirEcho/reservoircpp_cpp
+        run: |
+          echo "=== Running ReservoirEcho Tests ==="
+          rm -rf build CMakeCache.txt CMakeFiles && cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+          cmake --build build --parallel $(nproc)
+          cd build && ctest --output-on-failure --parallel $(nproc)
+          echo "✓ All ReservoirEcho tests passed"
+
+  # ============================================================================
+  # Code Quality Gate
+  # ============================================================================
+  code-quality-gate:
+    name: Code Quality Gate
+    runs-on: ubuntu-latest
+    needs: changed-files
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install linters
+        run: |
+          pip install flake8 black isort
+
+      - name: Check Python formatting (if DNA changed)
+        if: needs.changed-files.outputs.dna-changed == 'true'
+        continue-on-error: true
+        run: |
+          echo "=== Python Format Check ==="
+          black --check --diff MetaHuman-DNA-Calibration/ 2>&1 | head -50 || true
+
+      - name: Check Python imports (if DNA changed)
+        if: needs.changed-files.outputs.dna-changed == 'true'
+        continue-on-error: true
+        run: |
+          echo "=== Import Order Check ==="
+          isort --check-only --diff MetaHuman-DNA-Calibration/ 2>&1 | head -50 || true
+
+      - name: Run flake8 (if DNA changed)
+        if: needs.changed-files.outputs.dna-changed == 'true'
+        continue-on-error: true
+        run: |
+          echo "=== Flake8 Check ==="
+          flake8 --max-line-length=120 --statistics MetaHuman-DNA-Calibration/ 2>&1 | head -50 || true
+
+  # ============================================================================
+  # Security Scan
+  # ============================================================================
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: changed-files
+    permissions:
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Check for secrets
+        continue-on-error: true
+        run: |
+          echo "=== Secret Scanning ==="
+          # Check for potential secrets in changed files
+          git diff --name-only origin/${{ github.base_ref }}..HEAD | while read file; do
+            if [ -f "$file" ]; then
+              # Check for common secret patterns
+              if grep -E '(password|secret|api_key|token|credential).*=' "$file" 2>/dev/null | grep -v '#'; then
+                echo "⚠ Potential secret in: $file"
+              fi
+            fi
+          done || true
+
+  # ============================================================================
+  # Documentation Check
+  # ============================================================================
+  docs-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    needs: changed-files
+    if: needs.changed-files.outputs.deeptree-changed == 'true' || needs.changed-files.outputs.unreal-changed == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check for documentation updates
+        run: |
+          echo "=== Documentation Check ==="
+
+          # Check if significant code changes have corresponding docs
+          CODE_CHANGES=$(git diff --name-only origin/${{ github.base_ref }}..HEAD | \
+            grep -E '\.(cpp|h|hpp)$' | wc -l)
+          DOC_CHANGES=$(git diff --name-only origin/${{ github.base_ref }}..HEAD | \
+            grep -E '\.(md|rst|txt)$' | wc -l)
+
+          echo "Code files changed: $CODE_CHANGES"
+          echo "Doc files changed: $DOC_CHANGES"
+
+          if [ "$CODE_CHANGES" -gt 10 ] && [ "$DOC_CHANGES" -eq 0 ]; then
+            echo "⚠ Large code change with no documentation updates"
+            echo "Consider updating README.md or adding inline comments"
+          fi
+
+  # ============================================================================
+  # PR Summary
+  # ============================================================================
+  pr-summary:
+    name: PR Summary
+    runs-on: ubuntu-latest
+    needs: [pr-metadata, changed-files, quick-build, quick-test, code-quality-gate, security-scan]
+    if: always()
+
+    steps:
+      - name: Generate summary
+        run: |
+          echo "# PR Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Job Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| PR Metadata | ${{ needs.pr-metadata.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Changed Files | ${{ needs.changed-files.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Quick Build | ${{ needs.quick-build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Quick Test | ${{ needs.quick-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Code Quality | ${{ needs.code-quality-gate.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Changed Components" >> $GITHUB_STEP_SUMMARY
+          echo "- ReservoirEcho: ${{ needs.changed-files.outputs.reservoir-changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- MetaHuman-DNA: ${{ needs.changed-files.outputs.dna-changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- DeepTreeEcho: ${{ needs.changed-files.outputs.deeptree-changed }}" >> $GITHUB_STEP_SUMMARY
+          echo "- UnrealEcho: ${{ needs.changed-files.outputs.unreal-changed }}" >> $GITHUB_STEP_SUMMARY

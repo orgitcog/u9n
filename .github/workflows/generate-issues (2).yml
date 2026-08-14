@@ -1,0 +1,118 @@
+name: Generate Roadmap Issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      epic:
+        description: 'Specific Epic to generate (e.g., E1, E2). Leave blank for all.'
+        required: false
+        type: string
+      dry_run:
+        description: 'Dry run (show what would be created without creating)'
+        required: true
+        default: true
+        type: boolean
+      deduplicate:
+        description: 'Close duplicate open issues (keeps the lowest-numbered original)'
+        required: false
+        default: false
+        type: boolean
+      create_labels:
+        description: 'Create labels from config'
+        required: false
+        default: false
+        type: boolean
+      create_milestones:
+        description: 'Create milestones from config'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  generate-issues:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Configure gh CLI
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Deduplicate Issues
+        if: inputs.deduplicate
+        run: |
+          python echodev/project-template/scripts/generate-issues.py \
+            --roadmap echodev/project-template/config/roadmap-data.json \
+            --org ${{ github.repository_owner }} \
+            --repo ${{ github.event.repository.name }} \
+            --deduplicate \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Create Labels
+        if: inputs.create_labels && !inputs.deduplicate
+        run: |
+          python echodev/project-template/scripts/generate-issues.py \
+            --roadmap echodev/project-template/config/roadmap-data.json \
+            --org ${{ github.repository_owner }} \
+            --repo ${{ github.event.repository.name }} \
+            --create-labels \
+            --labels-config .github/config/labels.json \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Create Milestones
+        if: inputs.create_milestones && !inputs.deduplicate
+        run: |
+          python echodev/project-template/scripts/generate-issues.py \
+            --roadmap echodev/project-template/config/roadmap-data.json \
+            --org ${{ github.repository_owner }} \
+            --repo ${{ github.event.repository.name }} \
+            --create-milestones \
+            --milestones-config .github/config/milestones.json \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Generate Issues for Specific Epic
+        if: inputs.epic != '' && !inputs.deduplicate
+        run: |
+          python echodev/project-template/scripts/generate-issues.py \
+            --roadmap echodev/project-template/config/roadmap-data.json \
+            --org ${{ github.repository_owner }} \
+            --repo ${{ github.event.repository.name }} \
+            --epic ${{ inputs.epic }} \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Generate All Issues
+        if: inputs.epic == '' && !inputs.deduplicate
+        run: |
+          python echodev/project-template/scripts/generate-issues.py \
+            --roadmap echodev/project-template/config/roadmap-data.json \
+            --org ${{ github.repository_owner }} \
+            --repo ${{ github.event.repository.name }} \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Summary
+        run: |
+          echo "## Issue Generation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.dry_run }}" == "true" ]; then
+            echo "**Mode:** Dry Run (no changes made)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Mode:** Live" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.deduplicate }}" == "true" ]; then
+            echo "**Action:** Deduplicate issues" >> $GITHUB_STEP_SUMMARY
+          elif [ -n "${{ inputs.epic }}" ]; then
+            echo "**Epic:** ${{ inputs.epic }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Epic:** All" >> $GITHUB_STEP_SUMMARY
+          fi
