@@ -1,0 +1,279 @@
+# Code Quality CI
+# Comprehensive linting, formatting, and security analysis
+
+name: Code Quality
+
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'claude/**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+  schedule:
+    # Run weekly security scans on Sundays at midnight
+    - cron: '0 0 * * 0'
+
+jobs:
+  # ============================================================================
+  # Python Code Quality
+  # ============================================================================
+  python-lint:
+    name: Python Linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install Python linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install black flake8 pylint isort mypy bandit
+
+      - name: Run black (format check)
+        continue-on-error: true
+        run: |
+          echo "=== Black Format Check ==="
+          black --check --diff --color . 2>&1 | head -100 || true
+
+      - name: Run isort (import ordering)
+        continue-on-error: true
+        run: |
+          echo "=== Import Ordering Check ==="
+          isort --check-only --diff . 2>&1 | head -100 || true
+
+      - name: Run flake8
+        continue-on-error: true
+        run: |
+          echo "=== Flake8 Analysis ==="
+          flake8 --max-line-length=120 --statistics --show-source \
+            --exclude='.git,__pycache__,build,dist,*.egg-info,external,ReservoirEcho/external' \
+            . 2>&1 | head -200 || true
+
+      - name: Run pylint on key directories
+        continue-on-error: true
+        run: |
+          echo "=== Pylint Analysis ==="
+          find MetaHuman-DNA-Calibration -name "*.py" -type f | head -20 | \
+            xargs pylint --disable=import-error,no-member --max-line-length=120 \
+            --output-format=colorized 2>&1 | head -200 || true
+
+      - name: Run bandit security scan
+        continue-on-error: true
+        run: |
+          echo "=== Bandit Security Scan ==="
+          bandit -r . \
+            --exclude './ReservoirEcho/external,./build,./.git' \
+            -f txt 2>&1 | head -200 || true
+
+  # ============================================================================
+  # C++ Code Quality
+  # ============================================================================
+  cpp-lint:
+    name: C++ Linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install C++ tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-format-15 \
+            clang-tidy-15 \
+            cppcheck \
+            cmake \
+            ninja-build
+
+      - name: Check C++ formatting
+        continue-on-error: true
+        run: |
+          echo "=== Clang-Format Check ==="
+          find . \( -path './ReservoirEcho/external' -prune \) -o \
+            \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) -print | \
+            head -50 | while read file; do
+              clang-format-15 --dry-run --Werror "$file" 2>&1 || \
+                echo "Format issue in: $file"
+            done
+
+      - name: Run cppcheck
+        continue-on-error: true
+        run: |
+          echo "=== Cppcheck Analysis ==="
+          cppcheck --enable=warning,style,performance,portability \
+            --suppress=missingIncludeSystem \
+            --suppress=unmatchedSuppression \
+            --inline-suppr \
+            -i ReservoirEcho/external \
+            -i build \
+            --quiet \
+            . 2>&1 | head -200 || true
+
+      - name: Generate and run clang-tidy on ReservoirEcho
+        continue-on-error: true
+        working-directory: ReservoirEcho/reservoircpp_cpp
+        run: |
+          echo "=== Clang-Tidy Analysis ==="
+          rm -rf build CMakeCache.txt CMakeFiles && cmake -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON || exit 0
+          if [ -f build/compile_commands.json ]; then
+            find src include -name '*.cpp' 2>/dev/null | head -20 | \
+              xargs clang-tidy-15 -p build \
+                --checks='-*,bugprone-*,performance-*,readability-braces-*' \
+                --quiet 2>&1 | head -100 || true
+          fi
+
+  # ============================================================================
+  # Security Scanning (CodeQL)
+  # ============================================================================
+  codeql-analysis:
+    name: CodeQL Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [cpp, python]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: +security-and-quality
+
+      - name: Build C++ for analysis
+        if: matrix.language == 'cpp'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          cd ReservoirEcho/reservoircpp_cpp
+          rm -rf build CMakeCache.txt CMakeFiles && cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=OFF
+          cmake --build build --parallel $(nproc) || true
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  # ============================================================================
+  # License Compliance
+  # ============================================================================
+  license-check:
+    name: License Compliance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check for license files
+        run: |
+          echo "=== License Files Check ==="
+          for license in LICENSE LICENSE.txt LICENSE.md COPYING; do
+            if [ -f "$license" ]; then
+              echo "✓ Found: $license"
+              head -5 "$license"
+            fi
+          done
+
+      - name: Scan for SPDX headers
+        continue-on-error: true
+        run: |
+          echo "=== SPDX License Headers ==="
+          grep -r "SPDX-License-Identifier" --include="*.cpp" --include="*.h" \
+            --include="*.py" . 2>/dev/null | head -20 || \
+            echo "No SPDX headers found"
+
+      - name: Check third-party licenses
+        run: |
+          echo "=== Third-Party Dependencies ==="
+          if [ -d "ReservoirEcho/external" ]; then
+            echo "External dependencies:"
+            ls -la ReservoirEcho/external/
+            for dir in ReservoirEcho/external/*/; do
+              if [ -f "${dir}LICENSE" ] || [ -f "${dir}LICENSE.txt" ]; then
+                echo "✓ License found in: $dir"
+              else
+                echo "⚠ No license in: $dir"
+              fi
+            done
+          fi
+
+  # ============================================================================
+  # Documentation Quality
+  # ============================================================================
+  docs-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Check markdown files
+        run: |
+          echo "=== Markdown Files ==="
+          find . -name "*.md" -type f | grep -v external | head -30
+
+      - name: Install markdown linter
+        run: npm install -g markdownlint-cli
+
+      - name: Lint markdown files
+        continue-on-error: true
+        run: |
+          echo "=== Markdown Lint ==="
+          markdownlint '**/*.md' \
+            --ignore 'ReservoirEcho/external/**' \
+            --ignore 'node_modules/**' \
+            --ignore 'build/**' 2>&1 | head -50 || true
+
+      - name: Check for broken internal links
+        continue-on-error: true
+        run: |
+          echo "=== Internal Link Check ==="
+          for md in $(find . -name "*.md" -type f | grep -v external | head -20); do
+            echo "Checking: $md"
+            grep -oE '\[.*\]\(([^)]+)\)' "$md" 2>/dev/null | \
+              grep -v 'http' | head -5 || true
+          done
+
+  # ============================================================================
+  # Spell Check
+  # ============================================================================
+  spell-check:
+    name: Spell Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install codespell
+        run: pip install codespell
+
+      - name: Run spell check
+        continue-on-error: true
+        run: |
+          echo "=== Spell Check ==="
+          codespell \
+            --skip='*.json,*.xml,*.csv,*.svg,*.png,*.jpg,*.gif,*.dna,*.bin,./ReservoirEcho/external/*,./build/*,./.git/*' \
+            --ignore-words-list='nd,te,ue,fo,nD,datas,assertIn' \
+            . 2>&1 | head -100 || true

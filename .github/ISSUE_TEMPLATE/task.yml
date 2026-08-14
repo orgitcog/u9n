@@ -1,0 +1,79 @@
+name: "🔧 Task"
+description: "Create an atomic work item task"
+title: "[TASK] "
+labels: ["task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Task Definition
+        A Task is an atomic work item that can be completed in a single session.
+
+  - type: input
+    id: parent_feature
+    attributes:
+      label: Parent Feature
+      description: "Reference to parent feature issue (optional)"
+      placeholder: "#125"
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Critical
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: dropdown
+    id: effort
+    attributes:
+      label: Effort Estimate
+      description: "How long will this take?"
+      options:
+        - "< 1 hour"
+        - "1-4 hours"
+        - "4-8 hours"
+        - "1-2 days"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Task Description
+      description: "What needs to be done?"
+      placeholder: "Describe the task..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: "How will we know this is done?"
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Neural Core
+        - Symbolic Engine
+        - Integration
+        - Sensorimotor
+        - Cognitive
+        - Endocrine
+        - Gaming
+        - Social
+        - Meta-Cognitive
+        - Infrastructure
+        - Documentation

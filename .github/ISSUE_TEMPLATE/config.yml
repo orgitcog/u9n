@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/orgitcog/u9n/blob/main/DOCUMENTATION_INDEX.md
+    about: Check the documentation before opening an issue
+  - name: Roadmap
+    url: https://github.com/orgitcog/u9n/blob/main/echodev/ROADMAP.md
+    about: View the development roadmap
+  - name: Implementation Status
+    url: https://github.com/orgitcog/u9n/blob/main/IMPLEMENTATION_STATUS.md
+    about: Check current implementation status
