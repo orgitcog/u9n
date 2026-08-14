@@ -1,4 +1,0 @@
-django==4.2.28
-djangorestframework==3.15.2
-channels==4.0.0
-daphne==4.0.0
