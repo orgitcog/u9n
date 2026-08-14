@@ -1,0 +1,43 @@
+{
+	"Version": 1,
+	"Name": [
+		{
+			"Language": "en",
+			"Text": "FirstPerson Shared Resource Standard"
+		}
+	],
+	"Description": [
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for FirstPerson"
+		}
+	],
+	"AssetTypes": [
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags": [
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "Variant_Shooter.png",
+	"Screenshots": [
+		"Variant_Shooter_Preview.png"
+	],
+	"Ident": "Variant_ShooterStandard",
+	"AdditionalFiles": {
+		"DestinationFilesFolder": "Variant_Shooter",
+		"AdditionalFilesList": [
+			"Templates/TemplateResources/Standard/Variant_Shooter/Content/*.*",
+			"Templates/TemplateResources/Standard/Variant_Shooter/__ExternalActors__/*.*",
+			"Templates/TemplateResources/Standard/Variant_Shooter/__ExternalObjects__/*.*"
+		]
+	}
+}
+
