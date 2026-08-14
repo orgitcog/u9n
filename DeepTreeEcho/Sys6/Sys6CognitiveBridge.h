@@ -1,4 +1,3 @@
-// Forwarding header for backward compatibility
-// Canonical location: DeepTreeEcho/Core/Sys6CognitiveBridge.h
-#pragma once
-#include "../Core/Sys6CognitiveBridge.h"
+﻿#pragma once
+// Forwarding header after nest-4 restructure. Canonical: Core/Sys6/Sys6CognitiveBridge.h
+#include "Core/Sys6/Sys6CognitiveBridge.h"

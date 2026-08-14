@@ -14,17 +14,18 @@
 //   L5: True Autonomy (self-directed evolution)
 // ═══════════════════════════════════════════════════════════════════════════
 #include "CoreMinimal.h"
-#include "DeepTreeEcho/NanEcho/DteNodes/EchoReservoirNode.h"
-#include "DeepTreeEcho/NanEcho/DteNodes/CognitiveReadoutNode.h"
-#include "DeepTreeEcho/NanEcho/DteNodes/AARRelationNode.h"
-#include "DeepTreeEcho/NanEcho/DteNodes/EchobeatNode.h"
-#include "DeepTreeEcho/NanEcho/DteNodes/IntrospectionNode.h"
-#include "DeepTreeEcho/NanEcho/DteNodes/MembraneNode.h"
-#include "DeepTreeEcho/IonDevice/IonCognitiveShell.h"
-#include "DeepTreeEcho/Persona/Humor/DTEHumorEngine.h"
-#include "DeepTreeEcho/Persona/SomaticDecisionEngine.h"
-#include "DeepTreeEcho/Persona/Backup/IdentityCoreMLP.h"
-#include "DeepTreeEcho/Persona/Backup/PersonaBackupRestore.h"
+#include "Reservoir/NanEcho/DteNodes/EchoReservoirNode.h"
+#include "Reservoir/NanEcho/DteNodes/CognitiveReadoutNode.h"
+#include "Reservoir/NanEcho/DteNodes/AARRelationNode.h"
+#include "Reservoir/NanEcho/DteNodes/EchobeatNode.h"
+#include "Reservoir/NanEcho/DteNodes/IntrospectionNode.h"
+#include "Reservoir/NanEcho/DteNodes/MembraneNode.h"
+#include "Streams/IonDevice/IonCognitiveShell.h"
+#include "Self/Persona/Humor/DTEHumorEngine.h"
+#include "Self/Persona/SomaticDecisionEngine.h"
+#include "Self/Persona/Backup/IdentityCoreMLP.h"
+#include "Self/Persona/Backup/PersonaBackupRestore.h"
+#include "Self/CoreSelfEngine.h"
 #include <Eigen/Dense>
 
 /** Autonomy level of the DTE system */
@@ -250,6 +251,11 @@ public:
         // Wire echobeat dispatch slots into the Ion shell
         WireDispatchSlots();
 
+        CoreSelf.Initialize();
+        Cfg.bSelfModificationEnabled =
+            Cfg.bSelfModificationEnabled ||
+            (Cfg.TargetAutonomyLevel >= EAutonomyLevel::L3_SELF_MODIFYING);
+
         CurrentAutonomy = EAutonomyLevel::L0_REACTIVE;
         bInitialized = true;
 
@@ -276,6 +282,14 @@ public:
         CombinedInput.setZero();
         int32 ExtDim = FMath::Min(32, (int32)ExternalInput.size());
         CombinedInput.head(ExtDim) = ExternalInput.head(ExtDim);
+
+        if (CoreSelf.IsInitialized())
+        {
+            Eigen::VectorXf Id = CoreSelf.GetIdentityContext(8);
+            int32 IdDim = FMath::Min(8, FMath::Min(ExtDim, (int32)Id.size()));
+            CombinedInput.head(IdDim) =
+                0.5f * CombinedInput.head(IdDim) + 0.5f * Id.head(IdDim);
+        }
 
         // Inject somatic feedback into reservoir input (last 6 dims)
         if (Cfg.bSomaticFeedback)
@@ -333,6 +347,10 @@ public:
 
         // Update telemetry
         UpdateTelemetry(SelfImage);
+        if (CoreSelf.IsInitialized())
+        {
+            CoreSelf.Update(MakeCoreSelfTelemetry());
+        }
 
         // ═══ PHASE 6: ENACTION (L3+ only) ═══
         if (CurrentAutonomy >= EAutonomyLevel::L3_SELF_MODIFYING && Cfg.bSelfModificationEnabled)
@@ -375,6 +393,20 @@ public:
     FDTEHumorEngine& GetHumorEngine() { return HumorEngine; }
     FSomaticDecisionEngine& GetSomaticEngine() { return SomaticEngine; }
     FIdentityCoreMLP& GetIdentityMLP() { return IdentityMLP; }
+    FCoreSelfEngine& GetCoreSelf() { return CoreSelf; }
+    Eigen::VectorXf GetReservoirState() const { return Reservoir.GetState(); }
+
+    FCoreSelfTelemetry MakeCoreSelfTelemetry() const
+    {
+        FCoreSelfTelemetry T;
+        T.AARCoherence = Telemetry.AARCoherence;
+        T.SelfModelAccuracy = Telemetry.SelfModelAccuracy;
+        T.EmotionalValence = Telemetry.EmotionalValence;
+        T.AutognosisLevel = static_cast<int32>(Telemetry.AutognosisLevel);
+        T.AutonomyLevel = static_cast<int32>(Telemetry.AutonomyLevel);
+        T.EchobeatStep = Telemetry.EchobeatStep;
+        return T;
+    }
 
     /** Force a persona backup */
     bool ForceBackup(const FString& Path)
@@ -404,8 +436,15 @@ private:
                 FString::Printf(TEXT("Echobeat_%d"), i),
                 [this, Step]()
                 {
-                    // Each dispatch triggers the corresponding echobeat phase
-                    // This is handled by the main Tick loop
+                    if (Echobeats.GetCurrentStep() != Step)
+                    {
+                        return;
+                    }
+                    // Reflective beats (3, 7, 11) update the Ion self-image.
+                    if ((Step % 4) == 3)
+                    {
+                        Shell.Reflect();
+                    }
                 });
         }
 
@@ -503,6 +542,7 @@ private:
     FEchobeatNode Echobeats;               // L5 cogplan9
     FDTEHumorEngine HumorEngine;           // Persona layer
     FIonCognitiveShell Shell;              // Virtual hardware host
+    FCoreSelfEngine CoreSelf;              // Identity mesh
 
     // State
     EAutonomyLevel CurrentAutonomy = EAutonomyLevel::L0_REACTIVE;
