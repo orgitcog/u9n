@@ -1,0 +1,73 @@
+﻿{
+	"Version": 1,
+	"Name": [
+		{
+			"Language": "en",
+			"Text": "Vehicle"
+		},
+		{
+			"Language": "ja",
+			"Text": "ビークル"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "载具模板"
+		},
+		{
+			"Language": "ko",
+			"Text": "비히클"
+		}
+	],
+	"Description": [
+		{
+			"Language": "en",
+			"Text": "This pack features a sports car and an offroad vehicle with a double wishbone suspension, as well as a HUD displaying the current gear and speed. Vehicle movement can be controlled with keyboard, controller, steering wheel, or virtual joystick on a touch device."
+		},
+		{
+			"Language": "ja",
+			"Text": "このパックには、スポーツ カーとダブル ウィッシュボーン サスペンションを備えたオフロード車、そして現在のギアと速度を表示する HUD が含まれています。車の動きは、キーボード、コントローラー、ステアリング ホイール、またはタッチ デバイスのバーチャル ジョイスティックで操作できます"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "此模板展示了一辆跑车和一辆配备双叉臂悬架的越野车，同时还有一块抬头显示器，可显示当前挡位和速度。载具的移动可以通过键盘、手柄、方向盘或触控设备上的虚拟摇杆来控你。"
+		},
+		{
+			"Language": "ko",
+			"Text": "이 팩에는 스포츠카와 더블 위시본 서스펜션이 장착된 오프로드 차량, 그리고 현재 기어와 속도를 표시하는 HUD가 포함되어 있습니다. 키보드, 컨트롤러, 스티어링 휠 또는 터치 디바이스의 가상 조이스틱으로 차량의 움직임을 제어할 수 있습니다."
+		}
+	],
+	"AssetTypes": [
+		{
+			"Language": "en",
+			"Text": "Static Mesh, Landscape, Material, Instance, Physical Material, Texture, Skeletal Mesh, Skeleton, Physics Asset, Animation Blueprint, Data Asset, Vehicle Wheel"
+		}
+	],
+	"SearchTags": [
+		{
+			"Language": "en",
+			"Text": "Tyre,Suspension,Wheel,Racing,Vehicle,Car"
+		}
+	],
+	"ClassTypes": "GameMode, WheeledVehicle, HUD, SpringArmComponent, CameraComponent, PhysicalMaterial",
+	"Category": "BlueprintFeature",
+	"FocusAsset": "/Game/VehicleTemplate/Blueprints/VehiclePlayerController.VehiclePlayerController",
+	"Thumbnail": "TP_VehicleAdvBP.png",
+	"Screenshots": [
+		"TP_VehicleAdvBP_Preview.png"
+	],
+	"SortKey": "ZVehicle_AdvBP",
+	"AdditionalFeaturePacks": [
+		{
+			"MountName": "Vehicles",
+			"DetailLevels": [
+				"Standard"
+			]
+		},
+		{
+			"MountName": "Input",
+			"DetailLevels": [
+				"High"
+			]
+		}
+	]
+}

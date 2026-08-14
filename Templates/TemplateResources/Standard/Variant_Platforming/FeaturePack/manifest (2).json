@@ -1,0 +1,49 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Platforming Variant Shared Resource Standard"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for ThirdPerson Platforming Variant"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "Variant_Platforming.png",
+	"Screenshots":
+	[
+		"Variant_Platforming_Preview.png"
+	],
+	"Ident": "Variant_PlatformingStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "Variant_Platforming",
+		"AdditionalFilesList": [
+			"Templates/TemplateResources/Standard/Variant_Platforming/Content/*.*",
+			"Templates/TemplateResources/Standard/Variant_Platforming/__ExternalActors__/*.*",
+			"Templates/TemplateResources/Standard/Variant_Platforming/__ExternalObjects__/*.*"
+		]
+	}
+}
+

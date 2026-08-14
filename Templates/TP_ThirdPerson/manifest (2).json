@@ -1,0 +1,78 @@
+﻿{
+	"Version": 1,
+	"Name": [
+		{
+			"Language": "en",
+			"Text": "Third Person"
+		},
+		{
+			"Language": "ko",
+			"Text": "3인칭"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "第三人称模板"
+		},
+		{
+			"Language": "ja",
+			"Text": "三人称"
+		}
+	],
+	"Description": [
+		{
+			"Language": "en",
+			"Text": "This pack features a playable character where the camera observes an over-the-shoulder point of view. The player can rotate the camera and move around using keyboard, mouse, controller or virtual joystick on a touch device."
+		},
+		{
+			"Language": "ko",
+			"Text": "이 팩에는 카메라가 어깨 너머 시점으로 관찰하는 플레이 가능한 캐릭터가 등장합니다. 플레이어는 키보드, 마우스, 컨트롤러 또는 터치 디바이스의 가상 조이스틱을 사용하여 카메라를 회전하고 이동할 수 있습니다."
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "此模板包含一个可操控的角色，镜头采用过肩视角进行拍摄。玩家可以通过键盘、鼠标、手柄或触控设备上的虚拟摇杆来旋转镜头并进行移动。"
+		},
+		{
+			"Language": "ja",
+			"Text": "このパックには、カメラが肩越しの視点で表示されるプレイアブル キャラクターが含まれています。プレイヤーは、キーボード、マウス、コントローラー、またはタッチ デバイスのバーチャル ジョイスティックを使用して、カメラを回転させたり移動したりできます"
+		}
+	],
+	"AssetTypes": [
+		{
+			"Language": "en",
+			"Text": "Animation Sequence, Animation Blueprint, Skeleton, Skeletal Mesh, Control Rig"
+		}
+	],
+	"SearchTags": [
+		{
+			"Language": "en",
+			"Text": "Action, Adventure, Third"
+		}
+	],
+	"ClassTypes": "Character, SpringArmComponent, PlayerController, GameMode",
+	"Category": "CodeFeature",
+	"FocusAsset": "/Game/ThirdPerson/Blueprints/BP_ThirdPersonCharacter.BP_ThirdPersonCharacter",
+	"Thumbnail": "TP_ThirdPerson.png",
+	"Screenshots": [
+		"TP_ThirdPerson_Preview.png"
+	],
+	"AdditionalFeaturePacks": [
+		{
+			"MountName": "LevelPrototyping",
+			"DetailLevels": [
+				"High"
+			]
+		},
+		{
+			"MountName": "Characters",
+			"DetailLevels": [
+				"High"
+			]
+		},
+		{
+			"MountName": "Input",
+			"DetailLevels": [
+				"High"
+			]
+		}
+	]
+}

@@ -1,0 +1,6 @@
+#ifndef RESERVOIRCPP_JOBLIB_DELAYED_HPP
+#define RESERVOIRCPP_JOBLIB_DELAYED_HPP
+
+#include "Parallel.hpp"
+
+#endif
