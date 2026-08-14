@@ -1,0 +1,312 @@
+.roadmap-container {
+  padding: 3rem 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.hero-section {
+  text-align: center;
+  margin-bottom: 4rem;
+}
+
+.hero-title {
+  font-size: 3rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.hero-subtitle {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  margin-bottom: 1.5rem;
+}
+
+.hero-description {
+  font-size: 1.1rem;
+  color: var(--text-secondary);
+  max-width: 800px;
+  margin: 0 auto 2rem;
+  line-height: 1.8;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn-primary, .btn-secondary {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-teal));
+  color: var(--bg-primary);
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(0, 217, 255, 0.3);
+}
+
+.btn-secondary {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-secondary);
+  border-color: var(--accent-cyan);
+}
+
+.metrics-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+  margin-bottom: 4rem;
+}
+
+.metric-card {
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  padding: 2rem;
+}
+
+.metric-card h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.1em;
+  margin-bottom: 1rem;
+}
+
+.progress-value {
+  font-size: 3rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  margin-bottom: 1rem;
+}
+
+.progress-bar {
+  height: 8px;
+  background-color: var(--bg-tertiary);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-teal));
+  transition: width 0.5s ease;
+}
+
+.phase-number {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--accent-teal);
+  margin-bottom: 0.5rem;
+}
+
+.phase-description {
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.milestone-name {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.milestone-time {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+}
+
+.phases-section {
+  margin-bottom: 4rem;
+}
+
+.section-title {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 1.5rem;
+}
+
+.legend {
+  display: flex;
+  gap: 2rem;
+  margin-bottom: 2rem;
+  font-size: 0.875rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+}
+
+.legend-item.completed {
+  color: var(--status-completed);
+}
+
+.legend-item.in-progress {
+  color: var(--status-in-progress);
+}
+
+.legend-item.pending {
+  color: var(--status-pending);
+}
+
+.timeline {
+  position: relative;
+}
+
+.phase-card {
+  display: flex;
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+
+.phase-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.phase-number-circle {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  border: 3px solid var(--border-color);
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.phase-card.completed .phase-number-circle {
+  border-color: var(--status-completed);
+  background-color: rgba(0, 255, 136, 0.1);
+  color: var(--status-completed);
+}
+
+.phase-card.in-progress .phase-number-circle {
+  border-color: var(--status-in-progress);
+  background-color: rgba(0, 217, 255, 0.1);
+  color: var(--status-in-progress);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.phase-connector {
+  width: 3px;
+  flex: 1;
+  background-color: var(--border-color);
+  margin: 0.5rem 0;
+}
+
+.phase-card.completed .phase-connector {
+  background-color: var(--status-completed);
+}
+
+.phase-content {
+  flex: 1;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  padding: 2rem;
+}
+
+.phase-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.status-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.status-badge.completed {
+  background-color: rgba(0, 255, 136, 0.2);
+  color: var(--status-completed);
+}
+
+.status-badge.in-progress {
+  background-color: rgba(0, 217, 255, 0.2);
+  color: var(--status-in-progress);
+}
+
+.status-badge.pending {
+  background-color: rgba(74, 85, 104, 0.2);
+  color: var(--status-pending);
+}
+
+.phase-timeline {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  font-family: 'Fira Code', monospace;
+}
+
+.phase-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}
+
+.task-list {
+  list-style: none;
+  margin-top: 1.5rem;
+}
+
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  color: var(--text-secondary);
+}
+
+.task-checkbox {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-color);
+  border-radius: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: var(--status-completed);
+}
+
+.task-item .task-checkbox:not(:empty) {
+  background-color: rgba(0, 255, 136, 0.2);
+  border-color: var(--status-completed);
+}
