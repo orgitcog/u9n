@@ -1,6 +1,0 @@
-#ifndef RESERVOIRCPP_ABC_ABCMETA_HPP
-#define RESERVOIRCPP_ABC_ABCMETA_HPP
-
-#include "ABC.hpp"
-
-#endif
