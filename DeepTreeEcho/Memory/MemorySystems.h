@@ -243,7 +243,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnWorkingMemoryFull, int32, ItemCou
  * Implements episodic, semantic, procedural, and working memory
  */
 UCLASS(ClassGroup=(DeepTreeEcho), meta=(BlueprintSpawnableComponent))
-class UNREALECHO_API UMemorySystems : public UActorComponent
+class DEEPTREEECHO_API UMemorySystems : public UActorComponent
 {
     GENERATED_BODY()
 

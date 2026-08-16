@@ -1,5 +1,3 @@
-// Forwarding header for backward compatibility
-// Canonical location: DeepTreeEcho/Sensorimotor/SensorimotorIntegration.h
-// Legacy implementation preserved in SensorimotorIntegration_legacy.h
-#pragma once
-#include "../Sensorimotor/SensorimotorIntegration.h"
+﻿#pragma once
+// Forwarding header after nest-4 restructure. Canonical: Cognition4E/Embodied/SensorimotorIntegration.h
+#include "Cognition4E/Embodied/SensorimotorIntegration.h"

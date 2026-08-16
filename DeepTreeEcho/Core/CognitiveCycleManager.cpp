@@ -4,7 +4,7 @@
 #include "CognitiveCycleManager.h"
 #include "DeepTreeEchoReservoir.h"
 #include "../Wisdom/WisdomCultivation.h"
-#include "../Embodied/Embodied4ECognition.h"
+#include "../Cognition4E/Embodied4ECognition.h"
 #include "Math/UnrealMathUtility.h"
 
 UCognitiveCycleManager::UCognitiveCycleManager()
@@ -1141,7 +1141,7 @@ ECognitiveStepType UCognitiveCycleManager::GetStepType(int32 Step) const
     return CalculateStepType(Step);
 }
 
-ECognitiveMode UCognitiveCycleManager::GetStepMode(int32 Step) const
+ECognitiveModeType UCognitiveCycleManager::GetStepMode(int32 Step) const
 {
     return CalculateStepMode(Step);
 }
@@ -1237,18 +1237,18 @@ ECognitiveStepType UCognitiveCycleManager::CalculateStepType(int32 Step) const
     }
 }
 
-ECognitiveMode UCognitiveCycleManager::CalculateStepMode(int32 Step) const
+ECognitiveModeType UCognitiveCycleManager::CalculateStepMode(int32 Step) const
 {
     // 7 expressive steps: 1, 2, 3, 4, 5, 6, 7
     // 5 reflective steps: 8, 9, 10, 11, 12
 
     if (Step <= 7)
     {
-        return ECognitiveMode::Expressive;
+        return ECognitiveModeType::Expressive;
     }
     else
     {
-        return ECognitiveMode::Reflective;
+        return ECognitiveModeType::Reflective;
     }
 }
 

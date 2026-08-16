@@ -28,6 +28,13 @@ class UDeepTreeEchoReservoir;
 class URecursiveMutualAwarenessSystem;
 class UHypergraphMemorySystem;
 class UDNABodySchemaBinding;
+class UCognitiveCycleManager;
+class UEchoSelfIntegration;
+class UAutognosisSystem;
+class UToroidalCognitiveAdapter;
+class UHypergraphBridgeAdapter;
+class UEchoSpaceMemoryBridge;
+class FAutonomyPipeline;
 
 /**
  * Cognitive Mode - Current processing mode of the system
@@ -243,6 +250,18 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DeepTreeEcho|Config")
     bool bEnableBodySchemaBinding = true;
 
+    /** Drive FAutonomyPipeline + EchoSelf from this component's tick */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DeepTreeEcho|Config")
+    bool bEnableAutonomyPipeline = true;
+
+    /** Level5 identity backup every N autonomy cycles (not a rival core) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DeepTreeEcho|Config", meta = (ClampMin = "1"))
+    int32 Level5PulseInterval = 1000;
+
+    /** Level6 recursive layer every N echobeat cycles (not a rival core) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DeepTreeEcho|Config", meta = (ClampMin = "1"))
+    int32 Level6PulseInterval = 12;
+
     /** 12-step cognitive cycle duration */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "DeepTreeEcho|Config", meta = (ClampMin = "1.0", ClampMax = "60.0"))
     float CycleDuration = 12.0f;
@@ -270,6 +289,30 @@ public:
     /** Reference to DNA Body Schema Binding */
     UPROPERTY(BlueprintReadOnly, Category = "DeepTreeEcho|Components")
     UDNABodySchemaBinding* BodySchemaBinding;
+
+    /** 12-step / 3-stream clock (found on owner if present) */
+    UPROPERTY(BlueprintReadOnly, Category = "DeepTreeEcho|Components")
+    UCognitiveCycleManager* CycleManager;
+
+    /** EchoSelf metrics + resonance (driven from Core, not a solo tick) */
+    UPROPERTY(BlueprintReadOnly, Category = "DeepTreeEcho|Self")
+    UEchoSelfIntegration* EchoSelf;
+
+    /** Blueprint wrapper around canonical FIntrospectionNode autognosis */
+    UPROPERTY(BlueprintReadOnly, Category = "DeepTreeEcho|Self")
+    UAutognosisSystem* Autognosis;
+
+    /** Toroidal hemispheres synced to echobeat phase */
+    UPROPERTY(BlueprintReadOnly, Category = "DeepTreeEcho|Self")
+    UToroidalCognitiveAdapter* Toroidal;
+
+    /** In-process hypergraph of CoreSelf identity tuples */
+    UPROPERTY(BlueprintReadOnly, Category = "DeepTreeEcho|Self")
+    UHypergraphBridgeAdapter* HypergraphBridge;
+
+    /** In-process identity snapshot memory (no pgvector) */
+    UPROPERTY(BlueprintReadOnly, Category = "DeepTreeEcho|Self")
+    UEchoSpaceMemoryBridge* EchoSpace;
 
     // ========================================
     // COGNITIVE STATE
@@ -441,6 +484,7 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    virtual void BeginDestroy() override;
 
 private:
     // ========================================
@@ -452,6 +496,10 @@ private:
 
     /** System initialized flag */
     bool bIsInitialized = false;
+
+    FAutonomyPipeline* AutonomyLoop = nullptr;
+    TArray<float> LastSensoryInput;
+    int32 AutonomyCycleCounter = 0;
 
     // ========================================
     // INTERNAL METHODS
@@ -483,4 +531,5 @@ private:
 
     /** Find and cache component references */
     void FindComponentReferences();
+    void TickAutonomyPipeline(float DeltaTime);
 };

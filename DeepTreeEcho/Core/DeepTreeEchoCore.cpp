@@ -10,12 +10,32 @@
 #include "../Reservoir/DeepTreeEchoReservoir.h"
 #include "../../UnrealEcho/Consciousness/RecursiveMutualAwarenessSystem.h"
 #include "../Memory/HypergraphMemorySystem.h"
-#include "../4ECognition/DNABodySchemaBinding.h"
+#include "../Cognition4E/4ECognition/DNABodySchemaBinding.h"
+#include "AutonomyPipeline.h"
+#include "CognitiveCycleManager.h"
+#include "Self/EchoSelf/EchoSelfIntegration.h"
+#include "Self/Introspection/AutognosisSystem.h"
+#include "Self/EchoSelf/ToroidalCognitiveAdapter.h"
+#include "Self/EchoSelf/HypergraphBridgeAdapter.h"
+#include "Self/EchoSelf/EchoSpaceMemoryBridge.h"
 
 UDeepTreeEchoCore::UDeepTreeEchoCore()
 {
     PrimaryComponentTick.bCanEverTick = true;
     PrimaryComponentTick.TickInterval = 0.016f; // ~60 Hz
+
+    EchoSelf = CreateDefaultSubobject<UEchoSelfIntegration>(TEXT("EchoSelf"));
+    Autognosis = CreateDefaultSubobject<UAutognosisSystem>(TEXT("Autognosis"));
+    Toroidal = CreateDefaultSubobject<UToroidalCognitiveAdapter>(TEXT("Toroidal"));
+    HypergraphBridge = CreateDefaultSubobject<UHypergraphBridgeAdapter>(TEXT("Hypergraph"));
+    EchoSpace = CreateDefaultSubobject<UEchoSpaceMemoryBridge>(TEXT("EchoSpace"));
+}
+
+void UDeepTreeEchoCore::BeginDestroy()
+{
+    delete AutonomyLoop;
+    AutonomyLoop = nullptr;
+    Super::BeginDestroy();
 }
 
 void UDeepTreeEchoCore::BeginPlay()
@@ -67,6 +87,8 @@ void UDeepTreeEchoCore::TickComponent(float DeltaTime, ELevelTick TickType, FAct
     {
         UpdateBodySchemaSync();
     }
+
+    TickAutonomyPipeline(DeltaTime);
 }
 
 void UDeepTreeEchoCore::InitializeSystem()
@@ -93,6 +115,19 @@ void UDeepTreeEchoCore::InitializeSystem()
     CurrentCycleStep = 1;
     CurrentNestingLevel = 1;
 
+    if (!AutonomyLoop)
+    {
+        AutonomyLoop = new FAutonomyPipeline();
+    }
+    if (!AutonomyLoop->IsInitialized())
+    {
+        AutonomyLoop->Initialize();
+    }
+    if (Autognosis)
+    {
+        Autognosis->StartAutognosis();
+    }
+
     bIsInitialized = true;
 }
 
@@ -102,6 +137,8 @@ void UDeepTreeEchoCore::ProcessSensoryInput(const TArray<float>& SensoryData, co
     {
         return;
     }
+
+    LastSensoryInput = SensoryData;
 
     // Route sensory data through reservoir system
     if (ReservoirSystem)
@@ -498,6 +535,27 @@ void UDeepTreeEchoCore::FindComponentReferences()
         MutualAwarenessSystem = Owner->FindComponentByClass<URecursiveMutualAwarenessSystem>();
         MemorySystem = Owner->FindComponentByClass<UHypergraphMemorySystem>();
         BodySchemaBinding = Owner->FindComponentByClass<UDNABodySchemaBinding>();
+        CycleManager = Owner->FindComponentByClass<UCognitiveCycleManager>();
+        if (!EchoSelf)
+        {
+            EchoSelf = Owner->FindComponentByClass<UEchoSelfIntegration>();
+        }
+        if (!Autognosis)
+        {
+            Autognosis = Owner->FindComponentByClass<UAutognosisSystem>();
+        }
+        if (!Toroidal)
+        {
+            Toroidal = Owner->FindComponentByClass<UToroidalCognitiveAdapter>();
+        }
+        if (!HypergraphBridge)
+        {
+            HypergraphBridge = Owner->FindComponentByClass<UHypergraphBridgeAdapter>();
+        }
+        if (!EchoSpace)
+        {
+            EchoSpace = Owner->FindComponentByClass<UEchoSpaceMemoryBridge>();
+        }
     }
 }
 
@@ -658,5 +716,77 @@ void UDeepTreeEchoCore::UpdateBodySchemaSync()
         {
             ReservoirSystem->ProcessInput(BodyState, 2); // Acting stream
         }
+    }
+}
+
+void UDeepTreeEchoCore::TickAutonomyPipeline(float DeltaTime)
+{
+    if (!bEnableAutonomyPipeline || !AutonomyLoop || !AutonomyLoop->IsInitialized())
+    {
+        return;
+    }
+
+    Eigen::VectorXf Input(32);
+    Input.setZero();
+    const int32 N = FMath::Min(32, LastSensoryInput.Num());
+    for (int32 i = 0; i < N; ++i)
+    {
+        Input(i) = LastSensoryInput[i];
+    }
+
+    AutonomyLoop->Tick(Input);
+    ++AutonomyCycleCounter;
+
+    const FPipelineTelemetry& Telemetry = AutonomyLoop->GetTelemetry();
+
+    if (EchoSelf)
+    {
+        EchoSelf->RecordCycleMetrics(
+            Telemetry.AARCoherence,
+            Telemetry.MeanStreamEnergy,
+            FMath::Clamp(Telemetry.ReservoirActivation, 0.0f, 1.0f),
+            Telemetry.SelfModelAccuracy);
+    }
+
+    if (Autognosis)
+    {
+        Autognosis->IngestPipelineTelemetry(
+            Telemetry.AARCoherence,
+            Telemetry.SelfModelAccuracy,
+            Telemetry.EchobeatStep,
+            static_cast<int32>(Telemetry.AutognosisLevel));
+    }
+
+    if (Toroidal)
+    {
+        Toroidal->SyncToEchobeat(Telemetry.EchobeatStep, DeltaTime);
+    }
+
+    // Nest-4 reflective point: one identity ingest per 12-step echobeat.
+    if (Telemetry.TotalCycles > 0 && (Telemetry.TotalCycles % 12) == 0)
+    {
+        if (HypergraphBridge)
+        {
+            HypergraphBridge->IngestCoreSelf(AutonomyLoop->GetCoreSelf());
+        }
+        if (EchoSpace)
+        {
+            EchoSpace->StoreIdentitySnapshot(AutonomyLoop->GetCoreSelf());
+        }
+    }
+
+    // Level5/Level6 are N-cycle layers, not rival cores.
+    if (Level5PulseInterval > 0 && Telemetry.TotalCycles > 0 &&
+        (Telemetry.TotalCycles % Level5PulseInterval) == 0)
+    {
+        AutonomyLoop->ForceBackup(TEXT("Saved/DTE-Backups"));
+    }
+
+    if (Level6PulseInterval > 0 && Telemetry.TotalCycles > 0 &&
+        (Telemetry.TotalCycles % Level6PulseInterval) == 0)
+    {
+        UE_LOG(LogTemp, Verbose,
+            TEXT("DTE Core: Level6 N-cycle pulse at autonomy cycle %lld (echobeat %d)"),
+            Telemetry.TotalCycles, Telemetry.EchobeatStep);
     }
 }

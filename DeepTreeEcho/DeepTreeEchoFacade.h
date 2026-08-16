@@ -1,39 +1,50 @@
 /**
  * @file DeepTreeEchoFacade.h
- * @brief Unified API facade for the Deep Tree Echo cognitive framework
- * 
- * This header provides a single entry point to access all Deep Tree Echo
- * subsystems, implementing the neuro-symbolic AI architecture where:
- * - Deep Tree Echo = Neural perception / intuitive vision
- * - Unreal Engine = Symbolic differential solver / game physics
- * 
- * The facade consolidates previously fragmented components into a coherent
- * membrane-based cognitive architecture following the o9c specification.
+ * @brief Unified API facade — nest-4 (OEIS A000081) entry point
+ *
+ * Nest-1: DeepTreeEcho/   Nest-2: Core + Self
+ * Nest-3: + Reservoir + Cognition4E
+ * Nest-4: nine terms below (see Self/COGNITIVE_GRIP.md)
  */
 #pragma once
 
 // ============================================================================
-// Core Systems
+// 1 Core
 // ============================================================================
 #include "Core/DeepTreeEchoCore.h"
 #include "Core/CognitiveCycleManager.h"
 #include "Core/CognitiveMemoryManager.h"
+#include "Core/AutonomyPipeline.h"
 #include "Core/Sys6CognitiveBridge.h"
 #include "Core/Sys6OperadEngine.h"
 #include "Core/Types/CognitiveTypes.h"
+#include "Core/Sys6/Sys6LCMClockSynchronizer.h"
+#include "Core/System5/System5CognitiveIntegration.h"
+#include "Core/Taskflow/TaskflowCognitiveScheduler.h"
+#include "Core/Taskflow/TaskflowProfiler.h"
 
 // ============================================================================
-// Reservoir Computing (Echo State Networks)
+// 2 Self
+// ============================================================================
+#include "Self/CoreSelfEngine.h"
+#include "Self/Introspection/AutognosisSystem.h"
+#include "Self/EchoSelf/EchoSelfIntegration.h"
+#include "Self/EchoSelf/ToroidalCognitiveAdapter.h"
+#include "Self/EchoSelf/HypergraphBridgeAdapter.h"
+#include "Self/EchoSelf/EchoSpaceMemoryBridge.h"
+
+// ============================================================================
+// 3 Reservoir
 // ============================================================================
 #include "Reservoir/DeepTreeEchoReservoir.h"
 #include "Reservoir/ReservoirCognitiveIntegration.h"
 #include "Reservoir/DeepCognitiveBridge.h"
 #include "Reservoir/EchobeatsReservoirDynamics.h"
-#include "Reservoir/Embodied4ECognition.h"
 #include "Reservoir/TetradicReservoirIntegration.h"
+#include "Cognition4E/Embodied4ECognition.h"
 
 // ============================================================================
-// Memory Systems (Hypergraph Knowledge)
+// 5 Memory
 // ============================================================================
 #include "Memory/MemorySystems.h"
 #include "Memory/HypergraphMemorySystem.h"
@@ -42,32 +53,29 @@
 #include "Memory/MemoryConsciousnessIntegration.h"
 
 // ============================================================================
-// 4E Embodied Cognition
+// 4 Cognition4E
 // ============================================================================
-#include "4ECognition/EmbodiedCognitionComponent.h"
-#include "4ECognition/DNABodySchemaBinding.h"
-#include "Sensorimotor/SensorimotorIntegration.h"
-#include "Sensory/SensoryInputIntegration.h"
+#include "Cognition4E/4ECognition/EmbodiedCognitionComponent.h"
+#include "Cognition4E/4ECognition/DNABodySchemaBinding.h"
+#include "Cognition4E/Sensorimotor/SensorimotorIntegration.h"
+#include "Cognition4E/Sensory/SensoryInputIntegration.h"
+#include "Cognition4E/Avatar/EmbodiedAvatarComponent.h"
+#include "Cognition4E/Avatar/UnrealAvatarCognition.h"
+#include "Cognition4E/Avatar/UnrealAvatarEmbodiment.h"
+#include "Cognition4E/Avatar/ExpressiveAnimationSystem.h"
+#include "Cognition4E/Avatar/AdvancedEmotionBlending.h"
+#include "Cognition4E/Avatar/AvatarEvolutionSystem.h"
+#include "Cognition4E/Avatar/AvatarQualityAssurance.h"
+#include "Cognition4E/Avatar/Sys6AvatarIntegration.h"
+#include "Cognition4E/Avatar/UnrealAvatar/DeepTreeEchoAvatarComponent.h"
+#include "Cognition4E/Avatar/UnrealAvatar/AGICoreCommunication.h"
+#include "Cognition4E/Avatar/UnrealAvatar/AGIPCGManager.h"
+#include "Cognition4E/Emotion/EmotionalSystem.h"
+#include "Cognition4E/Evolution/Enhanced4ECognitionEvolution.h"
 
 // ============================================================================
-// Avatar Systems (Embodiment Interface)
+// 9 Wisdom
 // ============================================================================
-#include "Avatar/EmbodiedAvatarComponent.h"
-#include "Avatar/UnrealAvatarCognition.h"
-#include "Avatar/UnrealAvatarEmbodiment.h"
-#include "Avatar/ExpressiveAnimationSystem.h"
-#include "Avatar/AdvancedEmotionBlending.h"
-#include "Avatar/AvatarEvolutionSystem.h"
-#include "Avatar/AvatarQualityAssurance.h"
-#include "Avatar/Sys6AvatarIntegration.h"
-#include "Avatar/UnrealAvatar/DeepTreeEchoAvatarComponent.h"
-#include "Avatar/UnrealAvatar/AGICoreCommunication.h"
-#include "Avatar/UnrealAvatar/AGIPCGManager.h"
-
-// ============================================================================
-// Emotion & Wisdom Systems
-// ============================================================================
-#include "Emotion/EmotionalSystem.h"
 #include "Wisdom/WisdomCultivation.h"
 #include "Wisdom/RelevanceRealizationEnnead.h"
 #include "Wisdom/InsightFacilitator.h"
@@ -75,113 +83,55 @@
 #include "Wisdom/DialogicalPracticeFramework.h"
 #include "Wisdom/SelfDeceptionDetector.h"
 #include "Wisdom/MeaningIntegrator.h"
+#include "Wisdom/Metamodel/HolisticMetamodel.h"
 
 // ============================================================================
-// Active Inference & Learning
+// 8 Enaction
 // ============================================================================
-#include "ActiveInference/ActiveInferenceEngine.h"
-#include "ActiveInference/AXIOMActiveInference.h"
-#include "ActiveInference/ActiveInferenceCognitiveIntegration.h"
-#include "ActiveInference/NicheConstructionSystem.h"
-#include "Learning/OnlineLearningSystem.h"
-#include "Learning/PredictiveAdaptationEngine.h"
+#include "Enaction/ActiveInference/ActiveInferenceEngine.h"
+#include "Enaction/ActiveInference/AXIOMActiveInference.h"
+#include "Enaction/ActiveInference/ActiveInferenceCognitiveIntegration.h"
+#include "Enaction/ActiveInference/NicheConstructionSystem.h"
+#include "Enaction/Learning/OnlineLearningSystem.h"
+#include "Enaction/Learning/PredictiveAdaptationEngine.h"
+#include "Enaction/Planning/PlanningSystem.h"
+#include "Enaction/Goals/HierarchicalGoalManager.h"
+#include "Enaction/Cosmos/CosmosStateMachine.h"
+#include "Enaction/Entelechy/EntelechyFramework.h"
+#include "Enaction/Social/SocialCognitionSystem.h"
+#include "Enaction/Language/LanguageSystem.h"
+#include "Enaction/Neural/NeuralNetworkBackend.h"
+#include "Enaction/UnrealBridge/DeepTreeEchoUnrealBridge.h"
+#include "Enaction/UnrealBridge/DeepTreeEchoUnrealIntegration.h"
+#include "Enaction/Blueprint/DeepTreeEchoBlueprintLibrary.h"
+#include "Enaction/GameTraining/GameTrainingEnvironment.h"
+#include "Enaction/GameTraining/GameSkillTrainingSystem.h"
+#include "Enaction/GameTraining/GameControllerInterface.h"
+#include "Enaction/GameTraining/ReinforcementLearningBridge.h"
 
 // ============================================================================
-// Attention & Planning
+// 6 Attention
 // ============================================================================
 #include "Attention/AttentionSystem.h"
-#include "Planning/PlanningSystem.h"
-#include "Goals/HierarchicalGoalManager.h"
 
 // ============================================================================
-// Introspection & Metamodel
+// 7 Streams
 // ============================================================================
-#include "Introspection/AutognosisSystem.h"
-#include "Metamodel/HolisticMetamodel.h"
-
-// ============================================================================
-// Echobeats Integration
-// ============================================================================
-#include "Echobeats/EchobeatsStreamEngine.h"
-#include "Echobeats/NestedShellStructure.h"
-#include "Echobeats/TensionalCouplingDynamics.h"
-
-// ============================================================================
-// System Integration
-// ============================================================================
-#include "Cosmos/CosmosStateMachine.h"
-#include "Entelechy/EntelechyFramework.h"
-#include "Evolution/Enhanced4ECognitionEvolution.h"
-#include "Social/SocialCognitionSystem.h"
-#include "Language/LanguageSystem.h"
-#include "Neural/NeuralNetworkBackend.h"
-
-// ============================================================================
-// Unreal Engine Bridge
-// ============================================================================
-#include "UnrealBridge/DeepTreeEchoUnrealBridge.h"
-#include "UnrealBridge/DeepTreeEchoUnrealIntegration.h"
-#include "Blueprint/DeepTreeEchoBlueprintLibrary.h"
-
-// ============================================================================
-// Sys6 Triality (LCM Clock Synchronization)
-// ============================================================================
-#include "Sys6/Sys6LCMClockSynchronizer.h"
-
-// ============================================================================
-// System5 Cognitive Integration
-// ============================================================================
-#include "System5/System5CognitiveIntegration.h"
-
-// ============================================================================
-// Taskflow Scheduling
-// ============================================================================
-#include "Taskflow/TaskflowCognitiveScheduler.h"
-#include "Taskflow/TaskflowProfiler.h"
-
-// ============================================================================
-// Game Training Systems
-// ============================================================================
-#include "GameTraining/GameTrainingEnvironment.h"
-#include "GameTraining/GameSkillTrainingSystem.h"
-#include "GameTraining/GameControllerInterface.h"
-#include "GameTraining/ReinforcementLearningBridge.h"
+#include "Streams/Echobeats/EchobeatsStreamEngine.h"
+#include "Streams/Echobeats/NestedShellStructure.h"
+#include "Streams/Echobeats/TensionalCouplingDynamics.h"
 
 /**
  * @namespace DeepTreeEcho
- * @brief Namespace containing all Deep Tree Echo cognitive framework components
- * 
- * The Deep Tree Echo framework implements a neuro-symbolic cognitive architecture
- * based on:
- * - Echo State Networks for temporal pattern processing
- * - P-System membranes for hierarchical boundary management
- * - Butcher B-Series for differential temporal integration
- * - Hypergraph memory for multi-relational knowledge
- * - 4E Cognition (Embodied, Embedded, Enacted, Extended)
- * - Relevance Realization for wisdom cultivation
  */
 namespace DeepTreeEcho
 {
-    /**
-     * @brief Get the Deep Tree Echo version string
-     * @return Version string in format "major.minor.patch"
-     */
-    inline const char* GetVersion() { return "1.0.0"; }
-    
-    /**
-     * @brief Get the consolidation date
-     * @return Date string when fragmentation was resolved
-     */
-    inline const char* GetConsolidationDate() { return "2026-01-10"; }
-    
-    /**
-     * @brief Architecture description
-     * @return Description of the neuro-symbolic integration
-     */
+    inline const char* GetVersion() { return "1.1.0"; }
+    inline const char* GetConsolidationDate() { return "2026-08-13"; }
     inline const char* GetArchitectureDescription()
     {
-        return "Deep Tree Echo: Neural perception layer for Unreal Engine symbolic solver. "
-               "Implements 4E embodied cognition with echo state reservoir computing, "
-               "P-system membrane filtering, and relevance realization optimization.";
+        return "Deep Tree Echo nest-4 (OEIS A000081): Core, Self, Reservoir, "
+               "Cognition4E, Memory, Attention, Streams, Enaction, Wisdom. "
+               "EchoSelf identity ticks through AutonomyPipeline.";
     }
 }

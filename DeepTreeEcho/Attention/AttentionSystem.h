@@ -203,7 +203,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAttentionFatigued, float, Fatigue
  * Implements selective attention and salience computation
  */
 UCLASS(ClassGroup=(DeepTreeEcho), meta=(BlueprintSpawnableComponent))
-class UNREALECHO_API UAttentionSystem : public UActorComponent
+class DEEPTREEECHO_API UAttentionSystem : public UActorComponent
 {
     GENERATED_BODY()
 

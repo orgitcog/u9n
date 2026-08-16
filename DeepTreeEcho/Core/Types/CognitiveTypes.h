@@ -61,7 +61,7 @@ enum class EStreamRole : uint8
  * Reflective mode (Steps 8-12): Inward-directed, self-modeling
  */
 UENUM(BlueprintType)
-enum class ECognitiveMode : uint8
+enum class ECognitivePhaseMode : uint8
 {
     /** Expressive: Outward-directed processing, engaging with world */
     Expressive   UMETA(DisplayName = "Expressive"),
@@ -243,7 +243,7 @@ struct FUnifiedStreamState
 
     /** Current cognitive mode */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mode")
-    ECognitiveMode Mode = ECognitiveMode::Expressive;
+    ECognitivePhaseMode Mode = ECognitivePhaseMode::Expressive;
 
     /** Current granular step type */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Step")
@@ -300,7 +300,7 @@ struct FCognitiveStepConfig
 
     /** Cognitive mode for this step */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Mode")
-    ECognitiveMode Mode = ECognitiveMode::Expressive;
+    ECognitivePhaseMode Mode = ECognitivePhaseMode::Expressive;
 
     /** Primary stream responsible for this step */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stream")
@@ -466,9 +466,9 @@ namespace CognitiveTypeUtils
     /**
      * Get the cognitive mode for a step number
      */
-    inline ECognitiveMode GetModeForStep(int32 StepNumber)
+    inline ECognitivePhaseMode GetModeForStep(int32 StepNumber)
     {
-        return (StepNumber <= 7) ? ECognitiveMode::Expressive : ECognitiveMode::Reflective;
+        return (StepNumber <= 7) ? ECognitivePhaseMode::Expressive : ECognitivePhaseMode::Reflective;
     }
 
     /**
