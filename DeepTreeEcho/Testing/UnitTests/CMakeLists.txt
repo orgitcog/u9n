@@ -755,6 +755,34 @@ gtest_discover_tests(RelevanceKernelTests
 )
 
 # ============================================================================
+# Engine Source Grip Tests (APL253 overlay — don't-move + salience)
+# ============================================================================
+add_executable(EngineSourceGripTests
+    EngineSourceGripTests.cpp
+)
+
+if(MSVC)
+    target_link_libraries(EngineSourceGripTests gtest gtest_main gmock)
+else()
+    target_link_libraries(EngineSourceGripTests ${GTEST_LIBS})
+endif()
+
+target_include_directories(EngineSourceGripTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}/../../.." _UN9N_REPO_ROOT)
+target_compile_definitions(EngineSourceGripTests PRIVATE "UN9N_REPO_ROOT=\"${_UN9N_REPO_ROOT}\"")
+
+gtest_discover_tests(EngineSourceGripTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;engine-grip;apl253"
+        TIMEOUT 120
+)
+
+# ============================================================================
 # Distributed AtomSpace Tests (inferno clusters as distributed ATenSpace)
 # ============================================================================
 add_executable(DistributedAtomSpaceTests
@@ -792,7 +820,7 @@ gtest_discover_tests(MembraneModuleTests
 # ============================================================================
 add_custom_target(run_all_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 4
-    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests LockFreeMessageQueueTests MessageProtocolTests InferenceModuleTests ExecutiveModuleTests EndocrineAvatarTests RelevanceKernelTests DistributedAtomSpaceTests MembraneModuleTests
+    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests LockFreeMessageQueueTests MessageProtocolTests InferenceModuleTests ExecutiveModuleTests EndocrineAvatarTests RelevanceKernelTests EngineSourceGripTests DistributedAtomSpaceTests MembraneModuleTests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running all DeepTreeEcho unit tests"
 )
@@ -822,7 +850,7 @@ endif()
 # ============================================================================
 # Installation
 # ============================================================================
-install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests LockFreeMessageQueueTests MessageProtocolTests InferenceModuleTests ExecutiveModuleTests EndocrineAvatarTests RelevanceKernelTests DistributedAtomSpaceTests MembraneModuleTests
+install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests LockFreeMessageQueueTests MessageProtocolTests InferenceModuleTests ExecutiveModuleTests EndocrineAvatarTests RelevanceKernelTests EngineSourceGripTests DistributedAtomSpaceTests MembraneModuleTests
     RUNTIME DESTINATION bin/tests
 )
 

@@ -18,6 +18,10 @@
 #include "Self/EchoSelf/ToroidalCognitiveAdapter.h"
 #include "Self/EchoSelf/HypergraphBridgeAdapter.h"
 #include "Self/EchoSelf/EchoSpaceMemoryBridge.h"
+#include "Enaction/EngineSourceGripAdapter.h"
+#include "Misc/Paths.h"
+
+#include <string>
 
 UDeepTreeEchoCore::UDeepTreeEchoCore()
 {
@@ -772,6 +776,14 @@ void UDeepTreeEchoCore::TickAutonomyPipeline(float DeltaTime)
         if (EchoSpace)
         {
             EchoSpace->StoreIdentitySnapshot(AutonomyLoop->GetCoreSelf());
+        }
+        // Directory-level Engine overlay: nine catalog terms + unclassified count.
+        // No Engine file walk. Missing Runtime/Core yields empty coverage.
+        {
+            const std::string RepoRoot = TCHAR_TO_UTF8(*FPaths::ProjectDir());
+            const dte::engine_grip::FDirectoryTermSnapshot Snap =
+                dte::engine_grip::InspectDirectoryTerms(RepoRoot);
+            (void)Snap;
         }
     }
 

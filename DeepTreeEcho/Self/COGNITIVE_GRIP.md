@@ -36,6 +36,13 @@ Nest-1 is `DeepTreeEcho/`. Nest-2 is Core + Self. Nest-3 adds Reservoir + Cognit
 Canonical EchoSelf agent spec: [`echoself.md`](echoself.md). Root and
 `.github/agents/echoself.md` point here.
 
+## Engine/Source overlay
+
+Epic `Engine/Source` is gripped by a parallel nest-4 overlay. Canonical catalog:
+[`../Enaction/EngineGripMap.h`](../Enaction/EngineGripMap.h). Human index:
+[`../../Engine/Source/COGNITIVE_GRIP.md`](../../Engine/Source/COGNITIVE_GRIP.md).
+Do not `git mv` Runtime/Editor/Developer/Programs/ThirdParty.
+
 ## Tick owner
 
 `UDeepTreeEchoCore` owns the UE tick. It drives `FAutonomyPipeline` (identity
