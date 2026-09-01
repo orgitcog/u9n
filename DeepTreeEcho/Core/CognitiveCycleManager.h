@@ -48,19 +48,6 @@ enum class ECognitiveModeType : uint8
 };
 
 /**
- * Legacy cognitive mode (for backward compatibility)
- */
-UENUM(BlueprintType)
-enum class ECognitiveMode : uint8
-{
-    /** Expressive mode - outward-directed processing */
-    Expressive UMETA(DisplayName = "Expressive"),
-    
-    /** Reflective mode - inward-directed processing */
-    Reflective UMETA(DisplayName = "Reflective")
-};
-
-/**
  * Cognitive step type enumeration (detailed)
  */
 UENUM(BlueprintType)
@@ -213,7 +200,7 @@ struct FStreamState
 
     /** Current cognitive mode */
     UPROPERTY(BlueprintReadWrite)
-    ECognitiveMode Mode = ECognitiveMode::Expressive;
+    ECognitiveModeType Mode = ECognitiveModeType::Expressive;
 
     /** Current step type */
     UPROPERTY(BlueprintReadWrite)
@@ -412,7 +399,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCycleCompleted, int32, CycleCount
  * MERGED VERSION: Contains all functionality from both Core and Cognitive implementations
  */
 UCLASS(ClassGroup=(DeepTreeEcho), meta=(BlueprintSpawnableComponent))
-class UNREALECHO_API UCognitiveCycleManager : public UActorComponent
+class DEEPTREEECHO_API UCognitiveCycleManager : public UActorComponent
 {
     GENERATED_BODY()
 
@@ -663,7 +650,7 @@ public:
 
     /** Get cognitive mode for given step number */
     UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|StepType")
-    ECognitiveMode GetStepMode(int32 Step) const;
+    ECognitiveModeType GetStepMode(int32 Step) const;
 
     /** Check if step is relevance realization step */
     UFUNCTION(BlueprintCallable, Category = "CognitiveCycle|StepType")
@@ -756,7 +743,7 @@ protected:
     void UpdateTriadActivations();
 
     ECognitiveStepType CalculateStepType(int32 Step) const;
-    ECognitiveMode CalculateStepMode(int32 Step) const;
+    ECognitiveModeType CalculateStepMode(int32 Step) const;
     ETriadGroup CalculateTriadGroup(int32 Step) const;
 
     void ApplyInterStreamFeedback();
