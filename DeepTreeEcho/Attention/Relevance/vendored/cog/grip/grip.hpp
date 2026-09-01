@@ -12,7 +12,7 @@
 #ifndef COG_GRIP_HPP
 #define COG_GRIP_HPP
 
-#include "../../core/core.hpp"
+#include "../core/core.hpp"
 #include <cstdint>
 #include <cmath>
 #include <string>
