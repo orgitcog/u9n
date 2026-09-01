@@ -1,5 +1,0 @@
-Intermediate/
-Saved/
-.vsconfig
-All-Verse.code-workspace
-/*.sln

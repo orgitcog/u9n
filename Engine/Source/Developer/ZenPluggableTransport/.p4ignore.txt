@@ -1,6 +1,0 @@
-.sarif/
-.vs/
-vcpkg_installed/
-build/
-.xmake/
-vsxmake*/
