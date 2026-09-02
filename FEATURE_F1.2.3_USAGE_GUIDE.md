@@ -388,6 +388,70 @@ FReservoirTopologyData Topology = TopologyGen->GenerateSmallWorld(
 9. **Test multiple topologies** before committing to one
 10. **Document your topology choice** in code comments
 
+## Reservoir Topology Manager (Dynamic Configuration)
+
+The **Reservoir Topology Manager** (`UReservoirTopologyManager`) complements the generator by owning the *runtime lifecycle* of a topology: applying generated topologies, switching named presets, dynamically adjusting spectral radius / weight scaling, validating before commit, and notifying listeners on change.
+
+### Apply a generated topology
+
+```cpp
+#include "DeepTreeEcho/Reservoir/ReservoirTopologyManager.h"
+
+UReservoirTopologyManager* Manager = NewObject<UReservoirTopologyManager>();
+
+// Generate + validate + apply in one call
+FReservoirTopologyConfig Config;
+Config.TopologyType = EReservoirTopologyType::SmallWorld;
+Config.NumNodes = 100;
+Config.MeanDegree = 6;
+Config.RewiringProbability = 0.1f;
+Config.SpectralRadius = 0.9f;
+Config.RandomSeed = 42;
+
+if (Manager->GenerateAndApply(Config))
+{
+    UE_LOG(LogTemp, Log, TEXT("Topology applied: %d nodes"),
+        Manager->GetManagerState().NumNodes);
+}
+```
+
+### Dynamic adjustment without a rebuild
+
+```cpp
+// Retune memory depth at runtime
+Manager->AdjustSpectralRadius(1.05f);
+
+// Or scale effective connectivity directly
+Manager->ScaleWeights(1.1f);
+```
+
+### Presets
+
+```cpp
+FReservoirTopologyPreset Preset;
+Preset.Name = TEXT("small_world_default");
+Preset.Description = TEXT("Small-world, 100 nodes");
+Preset.Config = Config;
+Manager->RegisterPreset(Preset);
+
+// Later, switch instantly
+Manager->ActivatePreset(TEXT("small_world_default"));
+```
+
+### React to changes
+
+```cpp
+Manager->OnTopologyChanged.AddDynamic(this, &UMyClass::HandleTopologyChanged);
+
+void UMyClass::HandleTopologyChanged(const FReservoirTopologyManagerState& State)
+{
+    UE_LOG(LogTemp, Log, TEXT("Topology changed (count=%d, nodes=%d)"),
+        State.ConfigurationChangeCount, State.NumNodes);
+}
+```
+
+See `/.github/agents/u9ci/reservoir-topology-manager.md` for the maintenance agent.
+
 ## References
 
 - **Watts-Strogatz:** Collective dynamics of 'small-world' networks (1998)
@@ -400,4 +464,6 @@ FReservoirTopologyData Topology = TopologyGen->GenerateSmallWorld(
 - Feature F1.2.1: Echo State Network Integration
 - Feature F1.2.2: Reservoir Dynamics
 - `/DeepTreeEcho/Reservoir/DeepTreeEchoReservoir.h`
+- `/DeepTreeEcho/Reservoir/ReservoirTopologyManager.h` (dynamic configuration)
 - `/.github/agents/u9ci/reservoir-topology-generator.md`
+- `/.github/agents/u9ci/reservoir-topology-manager.md`
