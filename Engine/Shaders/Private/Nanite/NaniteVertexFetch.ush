@@ -1,0 +1,131 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "NaniteSceneCommon.ush"
+
+// Represents vertex data for a Nanite mesh in local space
+struct FNaniteLocalVertex
+{
+	// Index of the vertex in the cluster
+	uint VertIndex;
+	// Decoded vertex position
+	float3 Position;
+	// Decoded vertex attribute data
+	FNaniteRawAttributeData RawAttributeData;
+};
+
+// Transforms a vertex that is part of an assembly into local space
+void TransformNaniteAssemblyVertex(float4x4 AssemblyTransform, inout FNaniteLocalVertex Vert)
+{
+	const float3x3 NormalTransform = float3x3(
+		normalize(AssemblyTransform[0].xyz),
+		normalize(AssemblyTransform[1].xyz),
+		normalize(AssemblyTransform[2].xyz)
+	);
+
+	// NOTE: We assume non-negative scale. Otherwise, we'd have to flip the binormal sign and reverse the winding order
+	Vert.Position = mul(float4(Vert.Position, 1.0f), AssemblyTransform).xyz;
+	Vert.RawAttributeData.TangentZ = mul(Vert.RawAttributeData.TangentZ, NormalTransform);
+	Vert.RawAttributeData.TangentXAndSign.xyz = mul(Vert.RawAttributeData.TangentXAndSign.xyz, NormalTransform);
+}
+
+// Decodes vertex data for the specified vertex in a cluster (and potentially transforms it into local space)
+FNaniteLocalVertex FetchLocalNaniteVertex(
+	FInstanceSceneData InstanceData,
+	FCluster Cluster,
+	FVisibleCluster VisibleCluster,
+	uint VertIndex,
+	uint CompileTimeMaxTexCoords)
+{
+	FNaniteLocalVertex Output = (FNaniteLocalVertex)0;
+	Output.VertIndex = VertIndex;
+	Output.Position = DecodePosition(VertIndex, Cluster);
+	Output.RawAttributeData = GetRawAttributeData(Cluster, VertIndex, CompileTimeMaxTexCoords);
+
+	if (IsAssemblyPartCluster(VisibleCluster))
+	{
+		TransformNaniteAssemblyVertex(LoadNaniteAssemblyTransform(InstanceData, VisibleCluster), Output);
+	}
+
+	return Output;
+}
+
+// Decodes vertex position for the specified vertex in a cluster (and potentially transforms it into local space)
+float3 FetchLocalNaniteVertexPosition(
+	FInstanceSceneData InstanceData,
+	FCluster Cluster,
+	FVisibleCluster VisibleCluster,
+	uint VertIndex)
+{
+	float3 Position = DecodePosition(VertIndex, Cluster);
+	
+	if (IsAssemblyPartCluster(VisibleCluster))
+	{
+		Position = mul(float4(Position, 1.0f), LoadNaniteAssemblyTransform(InstanceData, VisibleCluster)).xyz;
+	}
+	
+	return Position;
+}
+
+void FetchLocalNaniteTriangle(
+	FInstanceSceneData InstanceData,
+	FCluster Cluster,
+	FVisibleCluster VisibleCluster,
+	uint3 VertIndexes,
+	uint CompileTimeMaxTexCoords,
+	inout FNaniteLocalVertex OutVerts[3])
+{
+	const float3 Positions[3] = 
+	{
+		DecodePosition(VertIndexes.x, Cluster),
+		DecodePosition(VertIndexes.y, Cluster),
+		DecodePosition(VertIndexes.z, Cluster)
+	};
+
+	FNaniteRawAttributeData RawAttributeData[3];
+	GetRawAttributeData3(RawAttributeData, Cluster, VertIndexes, CompileTimeMaxTexCoords);
+
+	UNROLL_N(3)
+	for (uint i = 0; i < 3; ++i)
+	{
+		OutVerts[i].VertIndex			= VertIndexes[i];
+		OutVerts[i].Position			= Positions[i];
+		OutVerts[i].RawAttributeData	= RawAttributeData[i];
+	}
+
+	if (IsAssemblyPartCluster(VisibleCluster))
+	{
+		const float4x4 AssemblyTransform = LoadNaniteAssemblyTransform(InstanceData, VisibleCluster);
+
+		UNROLL_N(3)
+		for (uint i = 0; i < 3; ++i)
+		{
+			TransformNaniteAssemblyVertex(AssemblyTransform, OutVerts[i]);
+		}
+	}
+}
+
+void FetchLocalNaniteTrianglePositions(
+	FInstanceSceneData InstanceData,
+	FCluster Cluster,
+	FVisibleCluster VisibleCluster,
+	uint3 VertIndexes,
+	inout float3 OutPoints[3])
+{
+	OutPoints[0] = DecodePosition(VertIndexes.x, Cluster);
+	OutPoints[1] = DecodePosition(VertIndexes.y, Cluster);
+	OutPoints[2] = DecodePosition(VertIndexes.z, Cluster);
+
+	if (IsAssemblyPartCluster(VisibleCluster))
+	{
+		const float4x4 AssemblyTransform = LoadNaniteAssemblyTransform(InstanceData, VisibleCluster);
+
+		UNROLL_N(3)
+		for (uint i = 0; i < 3; ++i)
+		{
+			OutPoints[i] = mul(float4(OutPoints[i], 1), AssemblyTransform).xyz;
+		}
+	}
+}

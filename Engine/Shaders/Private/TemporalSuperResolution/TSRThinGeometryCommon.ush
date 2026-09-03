@@ -1,0 +1,50 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+//------------------------------------------------------- INCLUDES
+#include "TSRColorSpace.ush"
+#include "TSRConvolutionNetworkPass.ush"
+
+
+//-------------------------------------------------------UTIL FUNCTION
+
+float EncodeThinGeometryMaterial(uint ThinGeometryFlag)
+{
+	return ((float)ThinGeometryFlag) * rcp(2.0f);
+}
+
+CALL_SITE_DEBUGLOC
+tsr_tensor_bool IsThinGeometry(tsr_tensor_half CurrentCoverage)
+{
+	return CurrentCoverage == tsr_tensor_half::Const(1.0);
+}
+
+CALL_SITE_DEBUGLOC
+tsr_tensor_half ToBinaryCoverage(tsr_tensor_half EncodedThinGeometryMaterial)
+{
+	return floor(EncodedThinGeometryMaterial);
+}
+
+CALL_SITE_DEBUGLOC
+void DecodeThinGeometry(
+	tsr_tensor_ushort EncodedThinGeometryWeight,
+	out tsr_tensor_half HistoryRelaxationWeight,
+	out tsr_tensor_bool IsClusterHoleRegion)
+{
+	// use sign to encode?
+	HistoryRelaxationWeight = tsr_tensor_half::CastFrom<tsr_ushort>(
+		bit_shift_right(EncodedThinGeometryWeight, tsr_tensor_ushort::Const(tsr_ushort(0x1u)))) * rcp(tsr_half(127.0));
+	IsClusterHoleRegion = tsr_tensor_bool::CastFrom<tsr_ushort>(bit_and(EncodedThinGeometryWeight, tsr_tensor_ushort::Const(tsr_ushort(0x1u))));
+}
+
+CALL_SITE_DEBUGLOC
+tsr_tensor_ushort EncodeThinGeometry(
+	tsr_tensor_half HistoryRelaxationWeight,
+	tsr_tensor_bool IsClusterHoleRegion)
+{
+	tsr_tensor_ushort EncodedThinGeometry = bit_shift_left(
+		tsr_tensor_ushort::CastFrom<tsr_half>(HistoryRelaxationWeight * tsr_half(127.0)), tsr_tensor_ushort::Const(tsr_ushort(0x1u)));
+	EncodedThinGeometry = bit_or(EncodedThinGeometry,tsr_tensor_ushort::CastFrom<bool>(IsClusterHoleRegion));
+	return EncodedThinGeometry;
+}

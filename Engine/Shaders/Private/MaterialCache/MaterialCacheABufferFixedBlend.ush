@@ -1,0 +1,17 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+#pragma once
+
+#include "/Engine/Private/MaterialCache/MaterialCacheABuffer.ush"
+
+FMaterialCacheABuffer BlendMaterialCacheFixedFunctionLerp(in FMaterialCacheABuffer Bottom, in FMaterialCacheABuffer Top, float Weight)
+{
+	FMaterialCacheABuffer Out = (FMaterialCacheABuffer)0;
+	Out.BaseColor = lerp(Bottom.BaseColor, Top.BaseColor, Weight);
+	Out.Tangent = lerp(Bottom.Tangent, Top.Tangent, Weight);
+	Out.Roughness = lerp(Bottom.Roughness, Top.Roughness, Weight);
+	Out.Specular = lerp(Bottom.Specular, Top.Specular, Weight);
+	Out.Metallic = lerp(Bottom.Metallic, Top.Metallic, Weight);
+	Out.Opacity = lerp(Bottom.Opacity, Top.Opacity, Weight);
+	Out.WorldPositionOffset = lerp(Bottom.WorldPositionOffset, Top.WorldPositionOffset, Weight);
+	return Out;
+}

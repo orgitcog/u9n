@@ -1,0 +1,87 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+uint2 GetStochasticBilinearOffset(float RandomScalar, float4 UpsampleWeights, int2 SampleOffsets[4])
+{
+	int2 StochasticBilinearOffset = 0;
+
+	// Renormalize while guaranteeing RandomScaler = 1 is handled
+	float4 PreSum;
+	PreSum.x = UpsampleWeights.x;
+	PreSum.y = PreSum.x + UpsampleWeights.y;
+	PreSum.z = PreSum.y + UpsampleWeights.z;
+	PreSum.w = PreSum.z + UpsampleWeights.w;
+	float Epsilon = 0.00001f;
+	PreSum /= max(PreSum.w, Epsilon);
+
+	if (RandomScalar <= PreSum.x)
+	{
+		StochasticBilinearOffset = SampleOffsets[0];
+	}
+	else if (RandomScalar <= PreSum.y)
+	{
+		StochasticBilinearOffset = SampleOffsets[1];
+	}
+	else if (RandomScalar <= PreSum.z)
+	{
+		StochasticBilinearOffset = SampleOffsets[2];
+	}
+	else
+	{
+		StochasticBilinearOffset = SampleOffsets[3];
+	}
+	
+	return StochasticBilinearOffset;
+}
+
+// Stochastic bilinear 2x2 filter
+int2 GetStochasticBilinearOffset(float RandomScalar, float4 UpsampleWeights)
+{
+	int2 SampleOffsets[4];
+	SampleOffsets[0] = int2(0, 0);
+	SampleOffsets[1] = int2(1, 0);
+	SampleOffsets[2] = int2(0, 1);
+	SampleOffsets[3] = int2(1, 1);
+
+	return GetStochasticBilinearOffset(RandomScalar, UpsampleWeights, SampleOffsets);
+}
+
+// Stochastic trilinear 2x2x2 filter
+uint3 GetStochasticTrilinearOffset(float RandomScalar, float4 InterpolationWeights0, float4 InterpolationWeights1)
+{
+	uint3 StochasticTrilinearOffset = 0;
+	if (RandomScalar < InterpolationWeights0.x)
+	{
+		StochasticTrilinearOffset = uint3(0, 0, 0);
+	}
+	else if (RandomScalar < InterpolationWeights0.x + InterpolationWeights0.y)
+	{
+		StochasticTrilinearOffset = uint3(1, 0, 0);
+	}
+	else if (RandomScalar < InterpolationWeights0.x + InterpolationWeights0.y + InterpolationWeights0.z)
+	{
+		StochasticTrilinearOffset = uint3(0, 1, 0);
+	}
+	else if (RandomScalar < InterpolationWeights0.x + InterpolationWeights0.y + InterpolationWeights0.z + InterpolationWeights0.w)
+	{
+		StochasticTrilinearOffset = uint3(1, 1, 0);
+	}
+	else if (RandomScalar < InterpolationWeights0.x + InterpolationWeights0.y + InterpolationWeights0.z + InterpolationWeights0.w + InterpolationWeights1.x)
+	{
+		StochasticTrilinearOffset = uint3(0, 0, 1);
+	}
+	else if (RandomScalar < InterpolationWeights0.x + InterpolationWeights0.y + InterpolationWeights0.z + InterpolationWeights0.w + InterpolationWeights1.x + InterpolationWeights1.y)
+	{
+		StochasticTrilinearOffset = uint3(1, 0, 1);
+	}
+	else if (RandomScalar < InterpolationWeights0.x + InterpolationWeights0.y + InterpolationWeights0.z + InterpolationWeights0.w + InterpolationWeights1.x + InterpolationWeights1.y + InterpolationWeights1.z)
+	{
+		StochasticTrilinearOffset = uint3(0, 1, 1);
+	}
+	else
+	{
+		StochasticTrilinearOffset = uint3(1, 1, 1);
+	}
+	return StochasticTrilinearOffset;
+}

@@ -1,0 +1,124 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+// Change to force shader compilation of this shader
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/ComputeShaderUtils.ush"
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+ 
+#ifndef THREAD_GROUP_SIZE
+	#define THREAD_GROUP_SIZE 64
+#endif
+
+uint IsIndirectDraw;
+uint NumInstances;
+uint NumVerticesPerInstance;
+uint bApplyWPO;
+uint SectionInfoOutputOffset;
+
+uint VertexStride;
+uint VertexPositionOffset;
+uint VertexColorOffset;
+uint VertexTangentBasisOffset;
+uint VertexTexCoordOffset;
+uint VertexTexCoordNum;
+uint VertexOutputOffset;
+RWByteAddressBuffer	RWVertexData;
+
+static const uint INVALID_COMPONENT = 0xffffffff;
+
+void OutputPosition(uint VertexIndex, float3 Value)
+{
+	if ( VertexPositionOffset != INVALID_COMPONENT )
+	{
+		const uint OutputVertexIndex = VertexOutputOffset + VertexIndex;
+		const uint Offset = (OutputVertexIndex * VertexStride) + VertexPositionOffset;
+		RWVertexData.Store3(Offset, asuint(Value));
+	}
+}
+
+void OutputColor(uint VertexIndex, float4 Value)
+{
+	if ( VertexColorOffset != INVALID_COMPONENT )
+	{
+		const uint OutputVertexIndex = VertexOutputOffset + VertexIndex;
+		const uint Offset = (OutputVertexIndex * VertexStride) + VertexColorOffset;
+		RWVertexData.Store4(Offset, asuint(Value));
+	}
+}
+
+void OutputTangentBasis(uint VertexIndex, float3x3 Value)
+{
+	if ( VertexTangentBasisOffset != INVALID_COMPONENT )
+	{
+		const uint OutputVertexIndex = VertexOutputOffset + VertexIndex;
+		const uint Offset = (OutputVertexIndex * VertexStride) + VertexTangentBasisOffset;
+		RWVertexData.Store3(Offset, asuint(Value[0]));
+		RWVertexData.Store3(Offset + 12, asuint(Value[1]));
+		RWVertexData.Store3(Offset + 24, asuint(Value[2]));
+	}
+}
+
+void OutputTexCoord(uint VertexIndex, uint TexCoord, float2 Value)
+{
+	if ( VertexTexCoordOffset != INVALID_COMPONENT && TexCoord < VertexTexCoordNum )
+	{
+		const uint OutputVertexIndex = VertexOutputOffset + VertexIndex;
+		const uint Offset = (OutputVertexIndex * VertexStride) + VertexTexCoordOffset + (8 * TexCoord);
+		RWVertexData.Store2(Offset, asuint(Value));
+	}
+}
+
+[numthreads(THREAD_GROUP_SIZE, 1, 1)]
+void VertexFactoryExportCS(uint3 GroupId : SV_GroupID, int GroupThreadIndex : SV_GroupIndex)
+{
+	const uint VertexIndex = GetUnWrappedDispatchThreadId(GroupId, GroupThreadIndex, THREAD_GROUP_SIZE);
+	const uint MaxOrNumVertices = NumInstances * NumVerticesPerInstance;
+	const uint NumVertices = IsIndirectDraw == 0 ? MaxOrNumVertices : NiagaraVertexFactoryExport_GetIndirectVertexCount();
+	if (VertexIndex == 0)
+	{
+		RWVertexData.Store(SectionInfoOutputOffset, NumVertices);
+	}
+
+	if (VertexIndex >= NumVertices)
+	{
+		// Helpful for debugging as it is obvious the position is NaN
+		if (VertexIndex < MaxOrNumVertices)
+		{
+			uint4 NaN = uint4(0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF);
+			OutputPosition(VertexIndex, asfloat(NaN.xyz));
+		}
+		return;
+	}
+
+	// Genreate the vertex data
+	ResolvedView = ResolveView();
+
+	const uint	PrimitiveId = 0;
+	const int	InstanceId = VertexIndex / NumVerticesPerInstance;
+	const uint	InstanceVertexIndex = VertexIndex % NumVerticesPerInstance;
+	
+	FVertexFactoryInput Input = NiagaraVertexFactoryExport_InitVertexFactoryInput(InstanceVertexIndex / 3, InstanceVertexIndex % 3, PrimitiveId, InstanceId);
+
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+
+	float4 TranslatedWorldPosition = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
+	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, TranslatedWorldPosition.xyz, TangentToLocal);
+
+	float3 MaterialWPO = 0;
+	if (bApplyWPO)
+	{
+		MaterialWPO = MakeFinite(GetMaterialWorldPositionOffset(VertexParameters));
+	}
+
+	//-TODO: LWC issues
+	OutputPosition(VertexIndex, NiagaraVertexFactoryExport_GetPosition(Input, VFIntermediates) + MaterialWPO);
+	OutputColor(VertexIndex, NiagaraVertexFactoryExport_GetColor(Input, VFIntermediates));
+	OutputTangentBasis(VertexIndex, NiagaraVertexFactoryExport_GetTangentBasis(Input, VFIntermediates));
+	for ( uint i=0; i < VertexTexCoordNum; ++i )
+	{
+		OutputTexCoord(VertexIndex, i, NiagaraVertexFactoryExport_GetTexCoord(Input, VFIntermediates, i));
+	}
+}

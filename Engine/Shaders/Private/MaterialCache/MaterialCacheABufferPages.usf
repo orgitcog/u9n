@@ -1,0 +1,38 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Shared/MaterialCacheDefinitions.h"
+#include "/Engine/Private/GammaCorrectionCommon.ush"
+#include "/Engine/Private/MortonCode.ush"
+
+StructuredBuffer<FMaterialCachePageWriteData> PageWriteData;
+
+RWTexture2D<float4> RWVTLayer0;
+RWTexture2D<float4> RWVTLayer1;
+RWTexture2D<float4> RWVTLayer2;
+
+Texture2DArray<float4> ABuffer0;
+Texture2DArray<float4> ABuffer1;
+Texture2DArray<float4> ABuffer2;
+
+[numthreads(64, 1, 1)]
+void WritePagesMain(uint3 DTid : SV_DispatchThreadID)
+{
+	const FMaterialCachePageWriteData Data = PageWriteData[DTid.y];
+
+	// Tile width guaranteed to be power of two, Morton is fine
+	const uint2 PagePixelPos = MortonDecode(DTid.x);
+	
+	const uint3 ABufferPhysicalLocation = Data.ABufferPhysicalPosition + uint3(PagePixelPos, 0);
+	const uint2 VTPhysicalLocation      = Data.VTPhysicalPosition + PagePixelPos;
+
+	float4 ABufferValue0 = ABuffer0[ABufferPhysicalLocation];
+	float4 ABufferValue1 = ABuffer1[ABufferPhysicalLocation];
+	float4 ABufferValue2 = ABuffer2[ABufferPhysicalLocation];
+
+	// -- Platform Block Compression --
+	
+	RWVTLayer0[VTPhysicalLocation] = float4(LinearToSrgb(ABufferValue0.xyz), ABufferValue0.w);
+	RWVTLayer1[VTPhysicalLocation] = ABufferValue1;
+	RWVTLayer2[VTPhysicalLocation] = ABufferValue2;
+}

@@ -1,0 +1,26 @@
+{
+	"FileVersion": 3,
+	"FriendlyName": "PlainPropsUObject",
+	"Description": "New Serialization Stack Prototype - CoreUObject Bindings",
+	"Category": "Experimental",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"EnabledByDefault": false,
+	"IsExperimentalVersion": true,
+	"SupportedTargetPlatforms": [
+		"Win64"
+	],
+	"Modules": [
+		{
+			"Name": "PlainPropsUObject",
+			"Type": "Runtime",
+			"PlatformAllowList": [ "Win64" ]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "PlainProps",
+			"Enabled": true
+		}
+	]
+}

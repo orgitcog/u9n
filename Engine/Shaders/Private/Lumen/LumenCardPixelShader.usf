@@ -1,0 +1,53 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define LUMEN_CARD_CAPTURE 1
+
+#include "../Common.ush"
+#include "../BRDF.ush"
+ 
+#define SceneTexturesStruct LumenCardPass.SceneTextures 
+#define EyeAdaptationStruct LumenCardPass
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+#include "LumenCardBasePass.ush"
+
+struct FLumenCardInterpolantsVSToPS
+{
+
+};
+
+void Main(
+	FVertexFactoryInterpolantsVSToPS Interpolants,
+	FLumenCardInterpolantsVSToPS PassInterpolants,
+	in INPUT_POSITION_QUALIFIERS float4 SvPosition : SV_Position		// after all interpolators
+	OPTIONAL_IsFrontFace,
+	out float4 OutTarget0 : SV_Target0,
+	out float4 OutTarget1 : SV_Target1,
+	out float4 OutTarget2 : SV_Target2)
+{
+	ResolvedView = ResolveView();
+	FMaterialPixelParameters MaterialParameters;
+	MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	
+	{
+		float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+	}
+
+	FLumenCardBasePassOutput ShadedPixel = LumenCardBasePass(PixelMaterialInputs, MaterialParameters, SvPosition);
+
+#if MATERIAL_VIRTUALTEXTURE_FEEDBACK
+	FinalizeVirtualTextureFeedback(
+		MaterialParameters.VirtualTextureFeedback,
+		SvPosition,
+		View.VTFeedbackBuffer);
+#endif
+
+	OutTarget0 = ShadedPixel.Target0;
+	OutTarget1 = ShadedPixel.Target1;
+	OutTarget2 = ShadedPixel.Target2;
+}

@@ -1,0 +1,106 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Shared/MaterialCacheDefinitions.h"
+#include "/Engine/Private/GammaCorrectionCommon.ush"
+#include "/Engine/Private/MaterialCache/MaterialCacheCommon.ush"
+
+#define SceneTexturesStruct MaterialCachePass.SceneTextures 
+#define EyeAdaptationStruct MaterialCachePass
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+#include "/Engine/Private/Nanite/NaniteShadeCommon.ush"
+#include "/Engine/Private/MortonCode.ush"
+#include "/Engine/Public/RootConstants.ush"
+#include "/Engine/Public/BindlessResources.ush"
+#include "/Engine/Shared/MaterialCacheDefinitions.h"
+
+COMPILER_ALLOW_CS_DERIVATIVES
+
+Buffer<uint> PageIndirections;
+
+StructuredBuffer<FMaterialCacheBinData> ShadingBinData;
+
+FMaterialPixelParameters GetMaterialPixelParameters(in FMaterialCacheBinData BinData, uint2 ThreadIndex)
+{
+	FMaterialPixelParameters Out = (FMaterialPixelParameters)0;
+	Out.PrimitiveId = BinData.PrimitiveData.x;
+
+	// Scale the coordinate by the current thread
+	// TODO[MP]: Coordinate index
+#if NUM_TEX_COORD_INTERPOLATORS
+	Out.TexCoords[0] = BinData.UVMinAndThreadAdvance.xy + BinData.UVMinAndThreadAdvance.zw * ThreadIndex;
+#endif // NUM_TEX_COORD_INTERPOLATORS
+	
+	return Out;
+}
+
+float4 ShadeAttributes(in FMaterialCacheBinData BinData, uint2 ThreadIndex)
+{
+	ResolvedView = ResolveView();
+
+	FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+	Interpolants.PixelPos = ThreadIndex;
+
+	float4 SvPosition                    = float4(ThreadIndex + 0.5f.xx, 0.0f, 1.0f);
+	const float4 ScreenPosition          = SvPositionToResolvedScreenPosition(SvPosition);
+	const float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(BinData, ThreadIndex);
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, true, TranslatedWorldPosition, TranslatedWorldPosition);
+
+	// Handle opacity
+#if MATERIALBLENDING_ANY_TRANSLUCENT
+	bool bClipped = GetMaterialOpacity(PixelMaterialInputs) - 1e-2f < 0.0f;
+#elif MATERIALBLENDING_MASKED // MATERIALBLENDING_ANY_TRANSLUCENT
+	bool bClipped = GetMaterialMask(PixelMaterialInputs) < 0.0f;
+#else // MATERIALBLENDING_MASKED
+	bool bClipped = false;
+#endif // MATERIALBLENDING_MASKED
+
+	// If clipped, assume black
+	if (bClipped)
+	{
+		return 0.0f;
+	}
+	
+#if NUM_MATERIAL_OUTPUTS_GETMATERIALCACHE > 0
+	return float4(GetMaterialCache0(MaterialParameters).xyz, 1.0f);
+#else // NUM_MATERIAL_OUTPUTS_GETMATERIALCACHE > 0
+	return float4(1, 0, 0, 1);
+#endif // NUM_MATERIAL_OUTPUTS_GETMATERIALCACHE > 0
+}
+
+[numthreads(64, 1, 1)]
+void Main(uint3 DTid : SV_DispatchThreadID)
+{
+	const uint PageIndex = PageIndirections[GetRootConstant0() + DTid.y];
+
+	const FMaterialCacheFFBlend FFBlend = (FMaterialCacheFFBlend)GetRootConstant1();
+	const FMaterialCacheBinData BinData = ShadingBinData[PageIndex];
+	
+	// Tile width guaranteed to be power of two, Morton is fine
+	const uint2 PagePixelPos      = MortonDecode(DTid.x);
+	const uint2 PhysicalPixelPos  = BinData.PhysicalCoordinate + PagePixelPos;
+	
+	// Always uniform addressing
+	RWTexture2D<float4> PhysicalTarget = GetResourceFromHeap(RWTexture2D<float4>, BinData.PhysicalBindlessHandle);
+
+	// Shader against the current layer
+	float4 ShadedAttribute = ShadeAttributes(BinData, PagePixelPos);
+
+	// Development blending
+	switch (FFBlend)
+	{
+	case FMaterialCacheFFBlend::None:
+		break;
+	case FMaterialCacheFFBlend::Additive:
+		ShadedAttribute += PhysicalTarget[PhysicalPixelPos];
+		break;
+	}
+	
+	PhysicalTarget[PhysicalPixelPos] = float4(LinearToSrgbBranchless(ShadedAttribute.xyz), 1.0f);
+}

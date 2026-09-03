@@ -1,0 +1,27 @@
+﻿{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Music Environment",
+	"Description": "A Project-Wide source of musical information (musically synchronized clocks, events, etc.)",
+	"Category": "Audio",
+	"CreatedBy": "Epic Games, Inc. - Harmonix GenTech",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "MusicEnvironment",
+			"Type": "Runtime",
+			"LoadingPhase": "PreDefault"
+		}
+	],
+	"Plugins": [
+	]
+}

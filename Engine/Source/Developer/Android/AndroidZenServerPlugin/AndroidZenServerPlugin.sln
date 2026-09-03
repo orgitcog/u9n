@@ -1,0 +1,30 @@
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AndroidPortForwarder", "AndroidPortForwarder\AndroidPortForwarder.csproj", "{87196424-6FDB-43FF-A404-F247D2BAD418}"
+	ProjectSection(ProjectDependencies) = postProject
+		{3625EA60-DF1C-441B-90E4-3CE76D603296} = {3625EA60-DF1C-441B-90E4-3CE76D603296}
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ZenServerAdapter", "ZenServerAdapter\ZenServerAdapter.vcxproj", "{3625EA60-DF1C-441B-90E4-3CE76D603296}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{87196424-6FDB-43FF-A404-F247D2BAD418}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{87196424-6FDB-43FF-A404-F247D2BAD418}.Debug|x64.Build.0 = Debug|Any CPU
+		{87196424-6FDB-43FF-A404-F247D2BAD418}.Release|x64.ActiveCfg = Release|Any CPU
+		{87196424-6FDB-43FF-A404-F247D2BAD418}.Release|x64.Build.0 = Release|Any CPU
+		{3625EA60-DF1C-441B-90E4-3CE76D603296}.Debug|x64.ActiveCfg = Debug|x64
+		{3625EA60-DF1C-441B-90E4-3CE76D603296}.Debug|x64.Build.0 = Debug|x64
+		{3625EA60-DF1C-441B-90E4-3CE76D603296}.Release|x64.ActiveCfg = Release|x64
+		{3625EA60-DF1C-441B-90E4-3CE76D603296}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {317356B8-5492-4C74-84E9-B38483E1C9DD}
+	EndGlobalSection
+EndGlobal

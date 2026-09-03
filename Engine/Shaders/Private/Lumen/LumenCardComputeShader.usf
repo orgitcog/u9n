@@ -1,0 +1,127 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#define LUMEN_CARD_CAPTURE 1
+
+#include "../Common.ush"
+#include "../BRDF.ush"
+
+#define SceneTexturesStruct LumenCardPass.SceneTextures 
+#define EyeAdaptationStruct LumenCardPass
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+#include "../VariableRateShading/VRSShadingRateCommon.ush"
+#include "../Nanite/NaniteShadeCommon.ush"
+#include "../MortonCode.ush"
+
+COMPILER_ALLOW_CS_DERIVATIVES
+
+#include "/Engine/Public/RootConstants.ush"
+#include "LumenCardBasePass.ush"
+
+uint GetShadingBin()    { return GetRootConstant0(); }
+uint GetQuadBinning()   { return GetRootConstant1(); }
+uint GetMeshPassIndex() { return GetRootConstant2(); }
+
+void ExportPixel(const uint2 PixelPos, FLumenCardBasePassOutput ShadedPixel)
+{
+	LumenCardOutputs.OutTarget0[PixelPos] = ShadedPixel.Target0;
+	LumenCardOutputs.OutTarget1[PixelPos] = ShadedPixel.Target1;
+	LumenCardOutputs.OutTarget2[PixelPos] = ShadedPixel.Target2;
+}
+
+#if !IS_NANITE_PASS
+#error "Only Nanite is supported"
+#endif
+
+void ProcessPixel(const FPackedNaniteView PackedView, uint ShadingBin, const uint2 PixelPos, const float2 SVPositionXY, const uint ViewIndex)
+{
+	ResolvedView = ResolveView();
+
+	// TODO: Lumen does not appear to bind a valid view uniform buffer
+	// it's almost entirely zero-filled. Need to track this down to prevent
+	// future problems from Lumen accessing values from it.
+	ResolvedView.CullingSign = 1.0f;
+
+	FMaterialPixelParameters MaterialParameters;
+
+	FNaniteFullscreenVSToPS NaniteInterpolants = (FNaniteFullscreenVSToPS)0;
+	NaniteInterpolants.TileIndex = 0;
+
+	FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+	Interpolants.PixelPos = PixelPos;
+	Interpolants.ViewIndex = ViewIndex;
+
+	FNaniteView NaniteView = UnpackNaniteView(PackedView);
+	PatchViewState(NaniteView, ResolvedView);
+
+	float4 SvPosition = float4(SVPositionXY, 0.0f, 1.0f);
+	MaterialParameters = GetMaterialPixelParameters(NaniteView, Interpolants, SvPosition);
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	
+	// Nanite does not support OPTIONAL_IsFrontFace, Instead, Nanite determines this in GetMaterialPixelParameters().
+	const bool bIsFrontFace = false;
+
+	{
+		float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+	}
+
+	FLumenCardBasePassOutput ShadedPixel = LumenCardBasePass(PixelMaterialInputs, MaterialParameters, SvPosition);
+
+	ExportPixel(PixelPos, ShadedPixel);
+
+#if MATERIAL_VIRTUALTEXTURE_FEEDBACK
+	FinalizeVirtualTextureFeedback(
+		MaterialParameters.VirtualTextureFeedback,
+		SvPosition,
+		View.VTFeedbackBuffer);
+#endif
+}
+
+struct FLumenShadingBinMeta
+{
+	uint DataByteOffset;
+};
+
+[numthreads(64, 1, 1)]
+void Main(uint ThreadIndex : SV_GroupIndex, uint GroupID : SV_GroupID)
+{
+	const uint ShadingBin		= GetShadingBin();
+	const bool bQuadBinning		= GetQuadBinning() != 0u;
+	const uint MeshPassIndex	= GetMeshPassIndex();
+
+	const FLumenShadingBinMeta ShadingBinMeta = NaniteShading.ShadingBinData.Load<FLumenShadingBinMeta>(ShadingBin * (uint)sizeof(FLumenShadingBinMeta));
+
+	const uint PackedTile  = NaniteShading.ShadingBinData.Load(ShadingBinMeta.DataByteOffset + ((uint)sizeof(uint) * GroupID));
+	const uint  CardIndex  = BitFieldExtractU32(PackedTile, 16, 16);
+
+	const FPackedNaniteView PackedView = NaniteShading.InViews[CardIndex];
+
+	const uint  TopLeftX   = PackedView.ViewRect.x + (BitFieldExtractU32(PackedTile, 8, 0) * 8u);
+	const uint  TopLeftY   = PackedView.ViewRect.y + (BitFieldExtractU32(PackedTile, 8, 8) * 8u);
+
+	const uint2 PixelPos = uint2(TopLeftX, TopLeftY) + MortonDecode(ThreadIndex);
+	const UlongType VisPixel = NaniteShading.VisBuffer64[PixelPos];
+
+	uint DepthInt = 0;
+	uint VisibleClusterIndex = 0;
+	uint TriIndex = 0;
+	UnpackVisPixel(VisPixel, DepthInt, VisibleClusterIndex, TriIndex);
+
+	if (VisibleClusterIndex != 0xFFFFFFFF)
+	{
+		FVisibleCluster VisibleCluster = GetVisibleCluster(VisibleClusterIndex);
+		FInstanceSceneData InstanceData = GetInstanceSceneDataUnchecked(VisibleCluster);
+		FCluster ClusterData = GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+		const uint PixelShadingBin = GetMaterialShadingBin(ClusterData, InstanceData.PrimitiveId, MeshPassIndex, TriIndex);
+		if (PixelShadingBin == ShadingBin)
+		{
+			const float2 SVPositionXY = float2(PixelPos) + 0.5f;
+			ProcessPixel(PackedView, ShadingBin, PixelPos, SVPositionXY, CardIndex);
+		}
+	}
+}

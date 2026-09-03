@@ -1,0 +1,48 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Weapons"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for Weapons"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "FPWeapon.png",
+	"Screenshots":
+	[
+		"FPWeapon_Preview.png"
+	],
+	"Ident": "WeaponsStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "Weapons",
+		"AdditionalFilesList":
+		[
+			"Templates/TemplateResources/Standard/Weapons/Content/*.*"
+		]
+	}
+}
+

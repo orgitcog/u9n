@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.11.35327.3
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "VSPerfExternalProfiler", "VSPerfExternalProfiler.vcxproj", "{21040F74-30CD-426D-A206-9DE6FDD5FBF5}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|ARM64 = Debug|ARM64
+		Debug|x64 = Debug|x64
+		Release|ARM64 = Release|ARM64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{21040F74-30CD-426D-A206-9DE6FDD5FBF5}.Debug|ARM64.ActiveCfg = Debug|ARM64
+		{21040F74-30CD-426D-A206-9DE6FDD5FBF5}.Debug|ARM64.Build.0 = Debug|ARM64
+		{21040F74-30CD-426D-A206-9DE6FDD5FBF5}.Debug|x64.ActiveCfg = Debug|x64
+		{21040F74-30CD-426D-A206-9DE6FDD5FBF5}.Debug|x64.Build.0 = Debug|x64
+		{21040F74-30CD-426D-A206-9DE6FDD5FBF5}.Release|ARM64.ActiveCfg = Release|ARM64
+		{21040F74-30CD-426D-A206-9DE6FDD5FBF5}.Release|ARM64.Build.0 = Release|ARM64
+		{21040F74-30CD-426D-A206-9DE6FDD5FBF5}.Release|x64.ActiveCfg = Release|x64
+		{21040F74-30CD-426D-A206-9DE6FDD5FBF5}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {FCD45476-6F72-46D6-BF14-234A9D7A6899}
+	EndGlobalSection
+EndGlobal

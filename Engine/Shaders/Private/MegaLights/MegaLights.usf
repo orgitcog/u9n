@@ -1,0 +1,370 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+// When loading SSS checkerboard pixel, do not adjust DiffuseColor/SpecularColor to preserve specular and diffuse lighting values for each pixel
+#define ALLOW_SSS_MATERIAL_OVERRIDE 0
+
+#include "../Common.ush"
+#include "MegaLightsShading.ush"
+
+groupshared uint SharedTileMode[THREADGROUP_SIZE * THREADGROUP_SIZE];
+
+RWStructuredBuffer<uint> RWTileAllocator;
+RWStructuredBuffer<uint> RWTileData;
+uint TileDataStride;
+uint DownsampledTileDataStride;
+uint2 DownsampledViewMin;
+uint2 DownsampledViewSize;
+uint EnableTexturedRectLights;
+uint DebugMode;
+
+uint GetTileMode(uint InShading, uint InShadingRect, uint InShadingRectTextured)
+{
+	uint Out;
+	Out = InShading;
+	if (SharedTileMode[0] & 0x20) // Rect light
+	{
+		if (SharedTileMode[0] & 0x40) // Rect light with texture
+		{
+			Out = InShadingRectTextured;
+		}
+		else
+		{
+			Out = InShadingRect;
+		}
+	}
+	return Out;
+}
+
+#ifdef TileClassificationCS
+
+/**
+ * Run tile classification to generate tiles for each subsequent pass
+ */
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void TileClassificationCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint LinearThreadIndex = GroupThreadId.x + THREADGROUP_SIZE * GroupThreadId.y;
+
+	SharedTileMode[LinearThreadIndex] = 0;
+	
+	GroupMemoryBarrierWithGroupSync();
+
+#if DOWNSAMPLED_CLASSIFICATION
+	uint2 ScreenCoord = DispatchThreadId.xy + DownsampledViewMin;
+	if (all(ScreenCoord < DownsampledViewMin + DownsampledViewSize))
+#else
+	uint2 ScreenCoord = DispatchThreadId.xy + View.ViewRectMinAndSize.xy;
+	if (all(ScreenCoord < View.ViewRectMinAndSize.xy + View.ViewRectMinAndSize.zw))
+#endif
+	{
+#if DOWNSAMPLED_CLASSIFICATION
+		float2 ScreenUV = DownsampledScreenCoordToScreenUV(ScreenCoord);
+		uint2 EffectiveScreenCoord = DownsampledScreenCoordToScreenCoord(ScreenCoord);
+#else
+		float2 ScreenUV = (ScreenCoord + 0.5f) * View.BufferSizeAndInvSize.zw;
+		uint2 EffectiveScreenCoord = ScreenCoord;
+#endif
+		FMegaLightsMaterial Material = LoadMaterial(ScreenUV, EffectiveScreenCoord);
+
+		uint TileMode = 0;
+
+		if (!Material.IsValid())
+		{
+			TileMode = 0x1;
+		}
+		else if (Material.IsSimple())
+		{
+			TileMode = 0x2;
+		}
+		else if (Material.IsSingle())
+		{
+			TileMode = 0x4;
+		}
+		else if (Material.IsComplexSpecial())
+		{
+			TileMode = 0x10;
+		}
+		else // Complex
+		{
+			TileMode = 0x8;
+		}
+
+		const float SceneDepth = Material.Depth;
+
+		const uint EyeIndex = 0;
+		const uint GridIndex = ComputeLightGridCellIndex(EffectiveScreenCoord - View.ViewRectMin.xy, SceneDepth, EyeIndex);
+		const FCulledLightsGridHeader CulledLightGridHeader = GetCulledLightsGridHeader(GridIndex);
+
+		if (CulledLightGridHeader.bHasRectLight)
+		{
+			TileMode |= 0x20;
+		}
+
+		if (CulledLightGridHeader.bHasTexturedLight && EnableTexturedRectLights != 0)
+		{
+			TileMode |= 0x40;
+		}
+
+		SharedTileMode[LinearThreadIndex] = TileMode;
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	// GroupShared reduction
+	if (LinearThreadIndex < 32)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 32];
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (LinearThreadIndex < 16)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 16];
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (LinearThreadIndex < 8)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 8];
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (LinearThreadIndex < 4)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 4];
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (LinearThreadIndex < 2)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 2];
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (LinearThreadIndex < 1)
+	{
+		SharedTileMode[LinearThreadIndex] = SharedTileMode[LinearThreadIndex] | SharedTileMode[LinearThreadIndex + 1];
+	}
+
+	if (LinearThreadIndex == 0)
+	{
+#if DOWNSAMPLED_CLASSIFICATION
+		const uint DataStride = DownsampledTileDataStride;
+#else
+		const uint DataStride = TileDataStride;
+#endif
+
+		uint2 TileCoord = ScreenCoord / TILE_SIZE;
+
+		int TileMode = -1;
+
+		if (SharedTileMode[0] & 0x10) // ComplexSpecial
+		{
+			TileMode = GetTileMode(TILE_MODE_COMPLEX_SPECIAL_SHADING, TILE_MODE_COMPLEX_SPECIAL_SHADING_RECT, TILE_MODE_COMPLEX_SPECIAL_SHADING_RECT_TEXTURED);
+		}
+		else if (SharedTileMode[0] & 0x8) // Complex
+		{
+			TileMode = GetTileMode(TILE_MODE_COMPLEX_SHADING, TILE_MODE_COMPLEX_SHADING_RECT, TILE_MODE_COMPLEX_SHADING_RECT_TEXTURED);
+		}
+		else if (SharedTileMode[0] & 0x4) // Single
+		{
+			TileMode = GetTileMode(TILE_MODE_SINGLE_SHADING, TILE_MODE_SINGLE_SHADING_RECT, TILE_MODE_SINGLE_SHADING_RECT_TEXTURED);
+		}
+		else if (SharedTileMode[0] & 0x2) // Simple
+		{
+			TileMode = GetTileMode(TILE_MODE_SIMPLE_SHADING, TILE_MODE_SIMPLE_SHADING_RECT, TILE_MODE_SIMPLE_SHADING_RECT_TEXTURED);
+		}
+		else if (SharedTileMode[0] & 0x1)
+		{
+			TileMode = TILE_MODE_EMPTY;
+		}
+
+		if (TileMode >= 0)
+		{
+			uint MegaLightsTileIndex;
+			InterlockedAdd(RWTileAllocator[TileMode], 1, MegaLightsTileIndex);
+			RWTileData[DataStride * TileMode + MegaLightsTileIndex] = PackTile(TileCoord);
+
+			#if DEBUG_MODE && !DOWNSAMPLED_CLASSIFICATION
+			if (DebugMode == DEBUG_MODE_TILE_CLASSIFICATION)
+			{
+				FShaderPrintContext Ctx = InitShaderPrintContext(true, uint2(50, 50));
+				float4 Color = ColorWhite;
+				switch (TileMode)
+				{
+					case TILE_MODE_SIMPLE_SHADING				:
+					case TILE_MODE_SIMPLE_SHADING_RECT			:
+					case TILE_MODE_SIMPLE_SHADING_RECT_TEXTURED	:
+						Color = ColorLightGreen; break;
+					case TILE_MODE_SINGLE_SHADING				:
+					case TILE_MODE_SINGLE_SHADING_RECT			:
+					case TILE_MODE_SINGLE_SHADING_RECT_TEXTURED	:
+						Color = ColorYellow; break;
+					case TILE_MODE_COMPLEX_SHADING				:
+					case TILE_MODE_COMPLEX_SHADING_RECT			:
+					case TILE_MODE_COMPLEX_SHADING_RECT_TEXTURED:
+						Color = ColorLightRed; break;
+					case TILE_MODE_COMPLEX_SPECIAL_SHADING		:
+					case TILE_MODE_COMPLEX_SPECIAL_SHADING_RECT	:
+					case TILE_MODE_COMPLEX_SPECIAL_SHADING_RECT_TEXTURED:
+						Color = ColorPurple; break;
+					case TILE_MODE_EMPTY						:
+					case TILE_MODE_MAX							:
+						Color = ColorSilver; break;
+				};
+				Color.a = 0.25f;
+				AddQuadSS(Ctx, TileCoord * TILE_SIZE, TileCoord * TILE_SIZE + TILE_SIZE, Color);
+				Color.a = 0.5f;
+				AddFilledQuadSS(Ctx, TileCoord * TILE_SIZE, TileCoord * TILE_SIZE + TILE_SIZE, Color);
+			}
+			#endif
+		}
+	}
+}
+
+#endif
+
+RWBuffer<uint> RWTileIndirectArgs;
+RWBuffer<uint> RWDownsampledTileIndirectArgs;
+StructuredBuffer<uint> TileAllocator;
+StructuredBuffer<uint> DownsampledTileAllocator;
+
+#ifdef InitTileIndirectArgsCS
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void InitTileIndirectArgsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint TileMode = DispatchThreadId.x;
+	if (TileMode < TILE_MODE_MAX)
+	{
+		WriteDispatchIndirectArgs(RWTileIndirectArgs, TileMode, TileAllocator[TileMode], 1, 1);
+		WriteDispatchIndirectArgs(RWDownsampledTileIndirectArgs, TileMode, DownsampledTileAllocator[TileMode], 1, 1);
+	}
+}
+
+#endif
+
+#ifdef HairTransmittanceCS
+
+#define VOXEL_TRAVERSAL_DEBUG 0
+#define VOXEL_TRAVERSAL_TYPE VOXEL_TRAVERSAL_LINEAR_MIPMAP
+#include "../BlueNoise.ush"
+#include "MegaLightsRayTracing.ush"
+#include "../HairStrands/HairStrandsDeepShadowCommon.ush"
+#include "../HairStrands/HairStrandsCommon.ush"
+#include "../HairStrands/HairStrandsDeepTransmittanceCommon.ush"
+#include "../HairStrands/HairStrandsVisibilityCommon.ush"
+#include "../HairStrands/HairStrandsVoxelPageCommon.ush"
+#include "../HairStrands/HairStrandsVoxelPageTraversal.ush"
+
+#if INPUT_TYPE != INPUT_TYPE_HAIRSTRANDS
+#error INPUT_TYPE is required to be set to INPUT_TYPE_HAIRSTRANDS
+#endif
+
+uint2 NumSamplesPerPixel;
+int2 SampleViewMin;
+int2 SampleViewSize;
+Texture2D<uint> LightSamples;
+Texture2D<uint> LightSampleRays;
+RWTexture2D<uint> RWTransmittanceMaskTexture;
+
+#define USE_BLUE_NOISE 1
+DEFINE_HAIR_BLUE_NOISE_JITTER_FUNCTION
+
+float3 InternalGetHairVoxelJitter(uint2 PixelCoord, uint SampleIndex, uint MaxSampleCount, uint TimeIndex, uint JitterMode)
+{
+	// Blue noise is cheaper to compute and h
+	float3 RandomSample = GetHairBlueNoiseJitter(PixelCoord, SampleIndex, MaxSampleCount, JitterMode > 1 ? 0 : TimeIndex).xyz;
+	return JitterMode > 0 ? RandomSample : float3(0,0,0);
+}
+
+/**
+ * Compute hair transmittance
+ */
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)] 
+void HairTransmittanceCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint2 SampleCoord = DispatchThreadId.xy + SampleViewMin;
+	const uint2 DownsampledScreenCoord = uint2(SampleCoord.x >> NumSamplesPerPixelDivideShift.x, SampleCoord.y >> NumSamplesPerPixelDivideShift.y);
+	const uint2 ScreenCoord = DownsampledScreenCoordToScreenCoord(DownsampledScreenCoord);
+	const float2 ScreenUV = DownsampledScreenCoordToScreenUV(DownsampledScreenCoord);
+
+	if (all(SampleCoord < SampleViewMin + SampleViewSize))
+	{
+		const FMegaLightsMaterial Material = LoadMaterial(ScreenUV, ScreenCoord);	
+		if (Material.bIsValid)
+		{
+			const uint2 PixelCoord		= ScreenCoord;
+			const float2 UV				= (PixelCoord.xy + float2(0.5f, 0.5f)) / float2(View.BufferSizeAndInvSize.xy);
+			const float PixelRadius		= ConvertGivenDepthRadiusForProjectionType(VirtualVoxel.HairCoveragePixelRadiusAtDepth1, Material.Depth);
+
+			const float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, Material.Depth);
+
+			const FLightSample LightSample = UnpackLightSample(LightSamples[SampleCoord]);
+			const FLightSampleRay LightSampleRay = UnpackLightSampleRay(LightSampleRays[SampleCoord]);
+			const FLightSampleTrace LightSampleTrace = GetLightSampleTrace(TranslatedWorldPosition, LightSample.LocalLightIndex, LightSampleRay.UV);
+
+			// Early out when the ray is already occluded
+			if (LightSampleRay.bCompleted)
+			{
+				RWTransmittanceMaskTexture[SampleCoord] = 0;					
+				return;
+			}
+
+			const float3 TranslatedLightPosition= TranslatedWorldPosition + LightSampleTrace.Direction * LightSampleTrace.Distance;
+			const float3 LightDirection			= LightSampleTrace.Direction;
+
+			const FVirtualVoxelNodeDesc NodeDesc = UnpackVoxelNode(VirtualVoxel.NodeDescBuffer[Material.MacroGroupId], VirtualVoxel.PageResolution);
+
+			FVirtualVoxelCommonDesc CommonDesc;
+			CommonDesc.PageCountResolution	= VirtualVoxel.PageCountResolution;
+			CommonDesc.PageTextureResolution= VirtualVoxel.PageTextureResolution;
+			CommonDesc.PageResolution		= VirtualVoxel.PageResolution;
+			CommonDesc.PageResolutionLog2	= VirtualVoxel.PageResolutionLog2;
+
+			const uint SampleCount = 1; 
+			const uint SampleIt = 0;
+			float3 SampleRandom = InternalGetHairVoxelJitter(PixelCoord, SampleIt, SampleCount, View.StateFrameIndexMod8, VirtualVoxel.JitterMode);
+	
+			const float PositionBiasScale = 0.5f;
+			const float3 DepthBias = NodeDesc.VoxelWorldSize * (VirtualVoxel.DepthBiasScale_Transmittance * LightDirection + PositionBiasScale*(SampleRandom*2-1));
+			const float3 SampleTranslatedWorldPosition = TranslatedWorldPosition + DepthBias;
+
+			FHairTraversalSettings TraversalSettings = InitHairTraversalSettings();
+			TraversalSettings.DensityScale = VirtualVoxel.DensityScale_Transmittance;
+			TraversalSettings.CountThreshold = GetOpaqueVoxelValue();
+			TraversalSettings.DistanceThreshold = 100000;
+			TraversalSettings.bDebugEnabled = false;
+			TraversalSettings.SteppingScale = VirtualVoxel.SteppingScale_Transmittance;
+			TraversalSettings.Random = GetHairVoxelJitter(PixelCoord.xy, View.StateFrameIndexMod8, VirtualVoxel.JitterMode);
+			TraversalSettings.TanConeAngle = 0 /*TanLightAngle*/;
+
+			const FHairTraversalResult Result = ComputeHairCountVirtualVoxel(
+				SampleTranslatedWorldPosition,
+				TranslatedLightPosition,
+				CommonDesc,
+				NodeDesc,
+				VirtualVoxel.PageIndexBuffer,
+				VirtualVoxel.PageTexture,
+				TraversalSettings);
+
+			FHairTransmittanceMask Out;
+			Out.HairCount = Result.HairCount;
+			Out.Visibility = Result.Visibility;
+			RWTransmittanceMaskTexture[SampleCoord] = PackTransmittanceMask(Out);
+		}
+	}
+}
+
+#endif

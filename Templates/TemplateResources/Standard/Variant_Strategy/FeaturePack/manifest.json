@@ -1,0 +1,49 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "Strategy Variant Shared Resource Standard"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for TopDown Strategy Variant"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "Variant_Strategy.png",
+	"Screenshots":
+	[
+		"Variant_Strategy_Preview.png"
+	],
+	"Ident": "Variant_StrategyStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "Variant_Strategy",
+		"AdditionalFilesList": [
+			"Templates/TemplateResources/Standard/Variant_Strategy/Content/*.*",
+			"Templates/TemplateResources/Standard/Variant_Strategy/__ExternalActors__/*.*",
+			"Templates/TemplateResources/Standard/Variant_Strategy/__ExternalObjects__/*.*"
+		]
+	}
+}
+
