@@ -1,0 +1,170 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+// Mirrors EPCGCopyPointsInheritanceMode
+#define COPY_POINTS_INHERITANCE_MODE_Relative 0
+#define COPY_POINTS_INHERITANCE_MODE_Source 1
+#define COPY_POINTS_INHERITANCE_MODE_Target 2
+
+// Mirrors EPCGCopyPointsMetadataInheritanceMode
+#define COPY_POINTS_METADATA_INHERITANCE_MODE_SourceFirst 0
+#define COPY_POINTS_METADATA_INHERITANCE_MODE_TargetFirst 1
+#define COPY_POINTS_METADATA_INHERITANCE_MODE_SourceOnly 2
+#define COPY_POINTS_METADATA_INHERITANCE_MODE_TargetOnly 3
+#define COPY_POINTS_METADATA_INHERITANCE_MODE_None 4
+
+[numthreads(64, 1, 1)]
+void PCGCopyPointsCS(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_GroupIndex)
+{
+	// Mark the kernel as having executed. Must run before we early out via thread index, because the kernel is still 'executed' even if the number of
+	// threads to iterate on is zero. Even if GetNumThreads() returns 0, the kernel will still have been dispatched on a single thread to set this flag.
+	if (all(GroupId == 0) && GroupIndex == 0)
+	{
+		Out_SetAsExecutedInternal();
+	}
+
+	const uint ThreadIndex = GetUnWrappedDispatchThreadId(GroupId, GroupIndex, 64);
+	if (ThreadIndex >= GetNumThreads().x) return;
+
+	uint Out_DataIndex, Out_ElemIndex;
+	if (!Out_GetThreadData(ThreadIndex, Out_DataIndex, Out_ElemIndex))
+	{
+		return;
+	}
+
+	const uint SourceNumData = Source_GetNumData();
+	const uint TargetNumData = Target_GetNumData();
+	const uint CopyEachSourceOnEveryTarget = CopyPoints_GetCopyEachSourceOnEveryTarget();
+
+	// Get source and target data indices for this output data index.
+	uint SourceDataIndex, TargetDataIndex;
+	CopyPoints_GetSourceAndTargetDataIndices(Out_DataIndex, SourceNumData, TargetNumData, SourceDataIndex, TargetDataIndex);
+
+	const uint NumTargetPoints = Target_GetNumElements(TargetDataIndex);
+	uint SourcePointIndexInData = Out_ElemIndex / NumTargetPoints;
+	uint TargetPointIndexInData = Out_ElemIndex % NumTargetPoints;
+
+	// Propagate the 'Removed' status to the output point if either source or target point is removed. Otherwise, this point will not be culled.
+	if (Source_IsPointRemoved(SourceDataIndex, SourcePointIndexInData) || Target_IsPointRemoved(TargetDataIndex, TargetPointIndexInData))
+	{
+		Out_RemovePoint(Out_DataIndex, Out_ElemIndex);
+		return;
+	}
+
+	const float3 SourcePosition = Source_GetPosition(SourceDataIndex, SourcePointIndexInData);
+	const float4 SourceRotation = Source_GetRotation(SourceDataIndex, SourcePointIndexInData);
+	const float3 SourceScale = Source_GetScale(SourceDataIndex, SourcePointIndexInData);
+	const float4 SourceColor = Source_GetColor(SourceDataIndex, SourcePointIndexInData);
+	const uint SourceSeed = Source_GetSeed(SourceDataIndex, SourcePointIndexInData);
+	
+	const float3 TargetPosition = Target_GetPosition(TargetDataIndex, TargetPointIndexInData);
+	const float4 TargetRotation = Target_GetRotation(TargetDataIndex, TargetPointIndexInData);
+	const float3 TargetScale = Target_GetScale(TargetDataIndex, TargetPointIndexInData);
+	const float4 TargetColor = Target_GetColor(TargetDataIndex, TargetPointIndexInData);
+	const uint TargetSeed = Target_GetSeed(TargetDataIndex, TargetPointIndexInData);
+
+	const uint RotationInheritance = CopyPoints_GetRotationInheritance();
+	const uint ApplyTargetRotationToPositions = CopyPoints_GetApplyTargetRotationToPositions();
+	const uint ScaleInheritance = CopyPoints_GetScaleInheritance();
+	const uint ApplyTargetScaleToPositions = CopyPoints_GetApplyTargetScaleToPositions();
+	const uint ColorInheritance = CopyPoints_GetColorInheritance();
+	const uint SeedInheritance = CopyPoints_GetSeedInheritance();
+	const uint AttributeInheritance = CopyPoints_GetAttributeInheritance();
+
+	const float3 ScaleForPosition = ApplyTargetScaleToPositions > 0 ? TargetScale : float3(1, 1, 1);
+
+	const float3 OutPosition = TargetPosition + (ApplyTargetRotationToPositions > 0 ? QuatRotateVector(TargetRotation, (SourcePosition * ScaleForPosition)) : (SourcePosition * ScaleForPosition));
+
+	float4 OutRotation = float4(0, 0, 0, 1);
+	float3 OutScale = (float3)0;
+	float4 OutColor = (float4)0;
+	uint OutSeed = 0;
+
+	if (RotationInheritance == COPY_POINTS_INHERITANCE_MODE_Relative)
+	{
+		OutRotation = QuatMultiply(TargetRotation, SourceRotation);
+	}
+	else if (RotationInheritance == COPY_POINTS_INHERITANCE_MODE_Source)
+	{
+		OutRotation = SourceRotation;
+	}
+	else if (RotationInheritance == COPY_POINTS_INHERITANCE_MODE_Target)
+	{
+		OutRotation = TargetRotation;
+	}
+
+	if (ScaleInheritance == COPY_POINTS_INHERITANCE_MODE_Relative)
+	{
+		OutScale = SourceScale * TargetScale;
+	}
+	else if (ScaleInheritance == COPY_POINTS_INHERITANCE_MODE_Source)
+	{
+		OutScale = SourceScale;
+	}
+	else if (ScaleInheritance == COPY_POINTS_INHERITANCE_MODE_Target)
+	{
+		OutScale = TargetScale;
+	}
+
+	if (ColorInheritance == COPY_POINTS_INHERITANCE_MODE_Relative)
+	{
+		OutColor = SourceColor * TargetColor;
+	}
+	else if (ColorInheritance == COPY_POINTS_INHERITANCE_MODE_Source)
+	{
+		OutColor = SourceColor;
+	}
+	else if (ColorInheritance == COPY_POINTS_INHERITANCE_MODE_Target)
+	{
+		OutColor = TargetColor;
+	}
+
+	if (SeedInheritance == COPY_POINTS_INHERITANCE_MODE_Relative)
+	{
+		OutSeed = ComputeSeed(SourceSeed, TargetSeed);
+	}
+	else if (SeedInheritance == COPY_POINTS_INHERITANCE_MODE_Source)
+	{
+		OutSeed = SourceSeed;
+	}
+	else if (SeedInheritance == COPY_POINTS_INHERITANCE_MODE_Target)
+	{
+		OutSeed = TargetSeed;
+	}
+	
+	// Write output
+	Out_SetPosition(Out_DataIndex, Out_ElemIndex, OutPosition);
+	Out_SetRotation(Out_DataIndex, Out_ElemIndex, OutRotation);
+	Out_SetScale(Out_DataIndex, Out_ElemIndex, OutScale);
+	Out_SetColor(Out_DataIndex, Out_ElemIndex, OutColor);
+	Out_SetSeed(Out_DataIndex, Out_ElemIndex, OutSeed);
+
+	// These properties do not have an inheritance mode, simply copy from the source data.
+	Out_SetBoundsMin(Out_DataIndex, Out_ElemIndex, Source_GetBoundsMin(SourceDataIndex, SourcePointIndexInData));
+	Out_SetBoundsMax(Out_DataIndex, Out_ElemIndex, Source_GetBoundsMax(SourceDataIndex, SourcePointIndexInData));
+	Out_SetDensity(Out_DataIndex, Out_ElemIndex, Source_GetDensity(SourceDataIndex, SourcePointIndexInData));
+	Out_SetSteepness(Out_DataIndex, Out_ElemIndex, Source_GetSteepness(SourceDataIndex, SourcePointIndexInData));
+
+	// Copy attributes
+	if (AttributeInheritance == COPY_POINTS_METADATA_INHERITANCE_MODE_SourceOnly)
+	{
+		PCG_COPY_ATTRIBUTES_TO_OUTPUT(Out, Source, Out_DataIndex, Out_ElemIndex, SourceDataIndex, SourcePointIndexInData, /*bMetadataOnly=*/true, /*bInitNonCopiedAttributes=*/true);
+	}
+	else if (AttributeInheritance == COPY_POINTS_METADATA_INHERITANCE_MODE_TargetOnly)
+	{
+		PCG_COPY_ATTRIBUTES_TO_OUTPUT(Out, Target, Out_DataIndex, Out_ElemIndex, TargetDataIndex, TargetPointIndexInData, /*bMetadataOnly=*/true, /*bInitNonCopiedAttributes=*/true);
+	}
+	else if (AttributeInheritance == COPY_POINTS_METADATA_INHERITANCE_MODE_SourceFirst)
+	{
+		PCG_COPY_ATTRIBUTES_TO_OUTPUT(Out, Target, Out_DataIndex, Out_ElemIndex, TargetDataIndex, TargetPointIndexInData, /*bMetadataOnly=*/true, /*bInitNonCopiedAttributes=*/true);
+
+		// Don't allow Source to initialize non-copied attributes in the output, otherwise it will overwrite attributes from Target.
+		PCG_COPY_ATTRIBUTES_TO_OUTPUT(Out, Source, Out_DataIndex, Out_ElemIndex, SourceDataIndex, SourcePointIndexInData, /*bMetadataOnly=*/true, /*bInitNonCopiedAttributes=*/false);
+	}
+	else if (AttributeInheritance == COPY_POINTS_METADATA_INHERITANCE_MODE_TargetFirst)
+	{
+		PCG_COPY_ATTRIBUTES_TO_OUTPUT(Out, Source, Out_DataIndex, Out_ElemIndex, SourceDataIndex, SourcePointIndexInData, /*bMetadataOnly=*/true, /*bInitNonCopiedAttributes=*/true);
+
+		// Don't allow Target to initialize non-copied attributes in the output, otherwise it will overwrite attributes from Source.
+		PCG_COPY_ATTRIBUTES_TO_OUTPUT(Out, Target, Out_DataIndex, Out_ElemIndex, TargetDataIndex, TargetPointIndexInData, /*bMetadataOnly=*/true, /*bInitNonCopiedAttributes=*/false);
+	}
+}

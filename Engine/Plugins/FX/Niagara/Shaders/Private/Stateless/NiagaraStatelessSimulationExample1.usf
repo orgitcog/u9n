@@ -1,0 +1,47 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+// Defines all paricles attributes
+// - PARTICLE_ATTRIBUTE_OUTPUT - Defines an output variable
+// - PARTICLE_ATTRIBUTE_OUTPUT_IMPLICIT - Defines an output variable which is already part of the main particle payload (i.e. always present)
+// - PARTICLE_ATTRIBUTE_TRANSIENT - Defines an output that is temporary and not output
+#define PARTICLE_ATTRIBUTES \
+	PARTICLE_ATTRIBUTE_OUTPUT_IMPLICIT(int,		UniqueIndex) \
+	PARTICLE_ATTRIBUTE_OUTPUT_IMPLICIT(float,	MaterialRandom) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float3,	Position) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float4,	Color) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float,	RibbonWidth) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float3,	Scale) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float2,	SpriteSize) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float,	SpriteRotation) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float3,	Velocity) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float3,	PreviousPosition) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float,	PreviousRibbonWidth) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float3,	PreviousScale) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float2,	PreviousSpriteSize) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float,	PreviousSpriteRotation) \
+	PARTICLE_ATTRIBUTE_OUTPUT(float3,	PreviousVelocity) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float,		CameraOffset) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float4,	DynamicMaterialParameter0) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float4,	DynamicMaterialParameter1) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float4,	DynamicMaterialParameter2) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float4,	DynamicMaterialParameter3) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(int,		MeshIndex) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float4,	MeshOrientation) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float3,	SpriteFacing) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float3,	SpriteAlignment) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float,		SubImageIndex) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float,		PreviousCameraOffset) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float4,	PreviousMeshOrientation) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float3,	PreviousSpriteFacing) \
+	PARTICLE_ATTRIBUTE_TRANSIENT(float3,	PreviousSpriteAlignment) \
+
+// Defines modules and order of execution
+#define PARTICLE_MODULES \
+	PARTICLE_MODULE(InitializeParticle) \
+	PARTICLE_MODULE(ShapeLocation) \
+	PARTICLE_MODULE(ScaleColor) \
+	PARTICLE_MODULE(ScaleSpriteSize) \
+	PARTICLE_MODULE(RotateAroundPoint) \
+	PARTICLE_MODULE(CalculateAccurateVelocity) \
+
+#include "NiagaraStatelessSimulationTemplate.ush"

@@ -1,0 +1,282 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "LandscapeCommon.ush"
+
+// ----------------------------------------------------------------------------------
+
+#if defined (__INTELLISENSE__)
+// Uncomment the appropriate define for enabling syntax highlighting with HLSL Tools for Visual Studio : 
+//#define MERGE_EDIT_LAYER 1
+//#define PERFORM_LEGACY_WEIGHT_BLENDING 1
+//#define PACK_WEIGHTMAP 1
+//#define GENERATE_MIPS 1
+#endif // defined (__INTELLISENSE__)
+
+
+// ----------------------------------------------------------------------------------
+
+/** EWeightmapBlendMode enum */
+#define EWEIGHTMAPBLENDMODE_ADDITIVE 0
+#define EWEIGHTMAPBLENDMODE_SUBTRACTIVE 1
+#define EWEIGHTMAPBLENDMODE_PASSTHROUGH 2
+#define EWEIGHTMAPBLENDMODE_ALPHABLEND 3
+
+/** EWeightmapTargetLayerFlags enum */
+#define EWEIGHTMAPTARGETLAYERFLAGS_ISVISIBILITYLAYER (1 << 0)
+#define EWEIGHTMAPTARGETLAYERFLAGS_ISWEIGHTBLENDED (1 << 1)
+
+#if MERGE_EDIT_LAYER
+// MergeEditLayerPS inputs/outputs :
+
+uint InTargetLayerIndex; // Index of the target layer being processed
+uint InEditLayerTargetLayerBlendMode; // See EWeightmapBlendMode. Target layer's blend mode, which is per-edit layer and per-target layer and can therefore differ from one edit layer to another
+float InEditLayerAlpha; // Global alpha value of the edit layer currently being merged
+
+Texture2DArray<float4> InCurrentEditLayerWeightmaps; // The target layers of the current edit layer to merge (1 slice per weightmap in the target layer group)
+Texture2DArray<float4> InPreviousEditLayersWeightmaps; // The result from the merge of all prior edit layers (1 slice per weightmap in the target layer group)
+// Array that contains per-edit layer / per-target layer information (e.g. the target layer's blend mode, which is per-edit layer and can therefore differ from one edit layer to another)
+#endif // MERGE_EDIT_LAYER
+
+#if PERFORM_LEGACY_WEIGHT_BLENDING
+// PerformLegacyWeightBlendingPS inputs/outputs :
+
+// Per-target layer information : 
+struct FWeightmapTargetLayerInfo
+{
+	uint Flags; // See EWeightmapTargetLayerFlags
+};
+
+uint InTargetLayerIndex; // Index of the target layer being processed
+uint InNumTargetLayers; // Number of target layers (i.e. == InTargetLayerInfos.Num())
+// Array that contains per-target layer information (e.g. target layer's flags)
+StructuredBuffer<FWeightmapTargetLayerInfo> InTargetLayerInfos;
+Texture2DArray<float4> InCurrentEditLayerWeightmaps; // The texture to horizontally blend (1 slice per weightmap in the target layer group)
+#endif // PERFORM_LEGACY_WEIGHT_BLENDING
+
+#if PACK_WEIGHTMAP
+// PackWeightmapPS inputs/outputs :
+
+int4 InSourceSliceIndices; // For each channel of the output texture (rgba), this indicates the slice index in InSourceWeightmaps where to read from
+uint4 InSourcePixelOffsets[4];  // For each channel, offset to add to the pixel's coordinates to load the proper sample in InSourceWeightmaps (.xy, .zw is unused, only there for alignment purposes)
+uint2 InSubsectionPixelOffset; // Offset of the subsection currently being rendered
+uint InIsAdditive; // = 1 if some channels of this texture have been packed in a previous draw, 0 otherwise
+
+Texture2DArray<float4> InSourceWeightmaps; // Source, single-channel (we don't care about the alpha flags at this point), texture to pack
+Texture2D<float4> InWeightmapBeingPacked; // The weightmap being packed, in case the packing operation is additive, i.e. it occurs across multiple draws (contains the channels that have previously been packed)
+#endif // PACK_WEIGHTMAP
+
+#if GENERATE_MIPS
+// GenerateMipsPS inputs/outputs :
+
+uint2 InCurrentMipSubsectionSize; // Size of the the subsection at the currently generated mip level
+
+Texture2D<float4> InSourceWeightmap; // Source weightmap (containing the current mip level - 1)
+#endif // GENERATE_MIPS
+
+
+// ----------------------------------------------------------------------------------
+// Util functions : 
+
+#if PERFORM_LEGACY_WEIGHT_BLENDING
+bool IsWeightBlendedTargetLayer(FWeightmapTargetLayerInfo InTargetLayerInfo)
+{
+	// For the visibility layer, deactivate weight blending altogether : 
+	return (((InTargetLayerInfo.Flags & EWEIGHTMAPTARGETLAYERFLAGS_ISVISIBILITYLAYER) == 0)
+		&& (InTargetLayerInfo.Flags & EWEIGHTMAPTARGETLAYERFLAGS_ISWEIGHTBLENDED));
+}
+#endif // PERFORM_LEGACY_WEIGHT_BLENDING
+
+
+// ----------------------------------------------------------------------------------
+// Pixel shaders : 
+
+#if MERGE_EDIT_LAYER
+void MergeEditLayerPS(in float4 SVPos : SV_POSITION, out float4 OutPackedWeight : SV_Target0)
+{
+	uint2 TextureCoordinates = floor(SVPos.xy);
+		
+	float4 CurrentLayerWeightSample = 0.0f; 
+	if (InEditLayerTargetLayerBlendMode != EWEIGHTMAPBLENDMODE_PASSTHROUGH)
+	{
+		CurrentLayerWeightSample = InCurrentEditLayerWeightmaps.Load(int4(TextureCoordinates, InTargetLayerIndex, 0)); // xy = relative coordinates, z = index in texture array, w = mip level
+	}
+	float CurrentLayerWeight = UnpackWeight(CurrentLayerWeightSample.xy);
+	float CurrentLayerWeightAlpha = 1.0f;
+	uint CurrentLayerWeightFlags = EWEIGHTMAPALPHAFLAGS_NONE;
+	UnpackWeightAlpha(CurrentLayerWeightSample.zw, CurrentLayerWeightAlpha, CurrentLayerWeightFlags);
+
+	float2 PreviousLayersWeightSample = InPreviousEditLayersWeightmaps.Load(int4(TextureCoordinates, InTargetLayerIndex, 0)).xy; // xy = relative coordinates, z = index in texture array, w = mip level
+	float PreviousLayersWeight = UnpackWeight(PreviousLayersWeightSample);
+
+	float FinalWeight = PreviousLayersWeight;
+	
+	if (InEditLayerTargetLayerBlendMode == EWEIGHTMAPBLENDMODE_ADDITIVE)
+	{
+		FinalWeight += CurrentLayerWeight * InEditLayerAlpha;
+	}
+	else if (InEditLayerTargetLayerBlendMode == EWEIGHTMAPBLENDMODE_SUBTRACTIVE)
+	{
+		FinalWeight -= CurrentLayerWeight * InEditLayerAlpha;
+	}
+	else if (InEditLayerTargetLayerBlendMode == EWEIGHTMAPBLENDMODE_ALPHABLEND)
+	{
+		float FinalAlpha = InEditLayerAlpha * CurrentLayerWeightAlpha;
+		if (CurrentLayerWeightFlags == EWEIGHTMAPALPHAFLAGS_ALPHABLEND)
+		{
+			FinalWeight = lerp(PreviousLayersWeight, CurrentLayerWeight, FinalAlpha);
+		}
+		else if (CurrentLayerWeightFlags & EWEIGHTMAPALPHAFLAGS_MIN)
+		{
+			FinalWeight = lerp(PreviousLayersWeight, min(PreviousLayersWeight, CurrentLayerWeight), FinalAlpha);
+		}
+		else if (CurrentLayerWeightFlags & EWEIGHTMAPALPHAFLAGS_MAX)
+		{
+			FinalWeight = lerp(PreviousLayersWeight, max(PreviousLayersWeight, CurrentLayerWeight), FinalAlpha);
+		}
+		// Additive case (== no flag) :
+		// TODO [jonathan.bard] : remove InEditLayerTargetLayerBlendMode == EWEIGHTMAPBLENDMODE_SUBTRACTIVE and add the EWEIGHTMAPBLENDMODE_SUBTRACTIVE flag
+		else if (CurrentLayerWeightFlags == EWEIGHTMAPALPHAFLAGS_ADDITIVE)
+		{
+			FinalWeight += CurrentLayerWeight * FinalAlpha;
+		}
+	}
+
+	OutPackedWeight = float4(PackWeight(FinalWeight), 0.0f, 0.0f);
+}
+#endif // MERGE_EDIT_LAYER
+
+#if PERFORM_LEGACY_WEIGHT_BLENDING
+void PerformLegacyWeightBlendingPS(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	uint2 TextureCoordinates = floor(SVPos.xy);
+	float FinalWeight = 0.0f;
+	
+	FWeightmapTargetLayerInfo ActiveTargetLayerInfo = InTargetLayerInfos[InTargetLayerIndex];
+	if (!IsWeightBlendedTargetLayer(ActiveTargetLayerInfo))
+	{
+		FinalWeight = UnpackWeight(InCurrentEditLayerWeightmaps.Load(int4(TextureCoordinates, InTargetLayerIndex, 0)).xy); // xy = relative coordinates, z = index in texture array, w = mip level
+	}
+	else
+	{
+		float ActiveTargetLayerWeight = 0.0f;
+		float BlendedWeightsSum = 0.0f;
+
+		LOOP
+		for (uint i = 0; i < InNumTargetLayers; ++i)
+		{
+			bool bIsOutputTargetLayer = (i == InTargetLayerIndex);
+			FWeightmapTargetLayerInfo TargetLayerInfo = InTargetLayerInfos[i];
+
+			// Only weight blended (and non-visibility) target layers participate to weight blending : 
+			if (IsWeightBlendedTargetLayer(TargetLayerInfo))
+			{
+				float Weight = UnpackWeight(InCurrentEditLayerWeightmaps.Load(int4(TextureCoordinates, i, 0)).xy); // xy = relative coordinates, z = index in texture array, w = mip level
+				if (bIsOutputTargetLayer)
+				{
+					ActiveTargetLayerWeight = Weight;
+				}
+				BlendedWeightsSum += Weight;
+			}
+		}
+
+		FinalWeight = (BlendedWeightsSum > 0.0f) ? saturate(ActiveTargetLayerWeight / BlendedWeightsSum) : ActiveTargetLayerWeight;
+	}
+
+	OutColor = float4(PackWeight(FinalWeight), 0.0f, 0.0f);
+}
+#endif // PERFORM_LEGACY_WEIGHT_BLENDING
+
+// ----------------------------------------------------------------------------------
+
+#if PACK_WEIGHTMAP
+void PackWeightmapPS(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	uint2 LocalCoordinates = floor(SVPos.xy);
+	uint2 SubsectionRelativeTextureCoordinates = LocalCoordinates - InSubsectionPixelOffset;
+	OutColor = 0.0f;
+	
+	if (InIsAdditive != 0)
+	{
+		OutColor = InWeightmapBeingPacked.Load(int3(LocalCoordinates, 0)); // xy = relative coordinates, z = mip level
+	}
+	
+	UNROLL
+	for (uint i = 0; i < 4; ++i)
+	{
+		if (InSourceSliceIndices[i] >= 0)
+		{
+			uint2 TextureCoordinates = SubsectionRelativeTextureCoordinates + InSourcePixelOffsets[i].xy;
+			OutColor[i] = UnpackWeight(InSourceWeightmaps.Load(int4(TextureCoordinates, InSourceSliceIndices[i], 0)).xy); // xy = relative coordinates, z = index in texture array, w = mip level
+		}
+	}
+}
+#endif // PACK_WEIGHTMAP
+
+
+// ----------------------------------------------------------------------------------
+#if GENERATE_MIPS
+void GenerateMipsPS(in float4 SVPos : SV_POSITION, out float4 OutColor : SV_Target0)
+{
+	uint2 TextureCoordinates = floor(SVPos.xy);
+	
+	float4 SourceSamples[4] =
+	{
+		InSourceWeightmap.Load(int3(2 * TextureCoordinates + int2(+0, +0), 0)),
+		InSourceWeightmap.Load(int3(2 * TextureCoordinates + int2(+1, +0), 0)),
+		InSourceWeightmap.Load(int3(2 * TextureCoordinates + int2(+0, +1), 0)),
+		InSourceWeightmap.Load(int3(2 * TextureCoordinates + int2(+1, +1), 0)),
+	};
+		
+	// Because the borders of each landscape subsection are shared between neighbors, we must ensure that the parent mip's inner row/column of pixels don't contribute, 
+	//  so that pixels on the subsection borders for neighboring subsections for mips have an equal value : 
+	//  9 possible cases (only the samples marked with a * must be kept): 
+	//      bIsMinBorder.x = true
+	//     |                        bIsMaxBorder.x = true
+	//     |                       |
+	//     v                       v
+	// +-------+   +-------+   +-------+
+	// | * :   |   | * : * |   |   : * |
+	// | - + - |...| - + - |...| - + - | <-- bIsMinBorder.y = true
+	// |   :   |   |   :   |   |   :   |
+	// +-------+   +-------+   +-------+
+	//    ...         ...	      ...
+	// +-------+   +-------+   +-------+
+	// | * :   |   | * : * |   |   : * |
+	// | - + - |...| - + - |...| - + - |
+	// | * :   |   | * : * |   |   : * |
+	// +-------+   +-------+   +-------+
+	//    ...         ...	      ...
+	// +-------+   +-------+   +-------+
+	// |   :   |   |   :   |   |   :   |
+	// | - + - |...| - + - |...| - + - | <-- bIsMaxBorder.y = true
+	// | * :   |   | * : * |   |   : * | 
+	// +-------+   +-------+   +-------+
+
+	bool bIsLastMip = all(InCurrentMipSubsectionSize == 1);
+
+	uint2 SubsectionRelativeTextureCoordinates = TextureCoordinates % InCurrentMipSubsectionSize;
+	bool2 bIsMinBorder = (SubsectionRelativeTextureCoordinates == 0);
+	bool2 bIsMaxBorder = (SubsectionRelativeTextureCoordinates == (InCurrentMipSubsectionSize - 1));
+		
+	float SampleWeights[4] =
+	{ 
+		// On the last mip, it's ok to keep all 4 samples : all neighbors components share them : 
+		((bIsMaxBorder.x || bIsMaxBorder.y) && !bIsLastMip) ? 0.0f : 1.0f,
+		((bIsMinBorder.x || bIsMaxBorder.y) && !bIsLastMip) ? 0.0f : 1.0f,
+		((bIsMaxBorder.x || bIsMinBorder.y) && !bIsLastMip) ? 0.0f : 1.0f,
+		((bIsMinBorder.x || bIsMinBorder.y) && !bIsLastMip) ? 0.0f : 1.0f,
+	};
+	
+	float TotalSampleWeight = 0.0f;
+	OutColor = 0.0f;
+	
+	UNROLL
+	for (int i = 0; i < 4; ++i)
+	{
+		OutColor += SourceSamples[i] * SampleWeights[i];
+		TotalSampleWeight += SampleWeights[i];
+	}
+	OutColor /= TotalSampleWeight;
+}
+#endif // GENERATE_MIPS

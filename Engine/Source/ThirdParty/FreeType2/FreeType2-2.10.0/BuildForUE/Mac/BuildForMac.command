@@ -1,0 +1,42 @@
+#!/bin/zsh -eux
+# Copyright Epic Games, Inc. All Rights Reserved.
+
+ENGINE_ROOT=${0:a:h:h:h:h:h:h:h}
+THIRD_PARTY_DIRECTORY=${ENGINE_ROOT}/Source/ThirdParty
+
+ZLIB_VERSION=1.3
+PATH_TO_ZLIB=${THIRD_PARTY_DIRECTORY}/zlib/${ZLIB_VERSION}
+PATH_TO_ZLIB_SRC=${PATH_TO_ZLIB}/include
+# This is just a stub in path so cmake is able to find something and not fail 
+PATH_TO_ZLIB_LIB=${PATH_TO_ZLIB}/lib
+
+LIBPNG_VERSION=libPNG-1.6.44
+PATH_TO_LIBPNG=${THIRD_PARTY_DIRECTORY}/libPNG/${LIBPNG_VERSION}
+PATH_TO_PNG_SRC=${PATH_TO_LIBPNG}
+# This is just a stub in path so that cmake is able to find a libpng library file to satisfy find_package etc 
+# This is not used for actual linking etc 
+PATH_TO_PNG_LIB=${PATH_TO_LIBPNG}/lib/IOS/Device/libpng.a
+
+TOOLCHAIN_FILE=${ENGINE_ROOT}/Source/ThirdParty/CMake/PlatformScripts/Mac/Mac.cmake
+FREETYPE_MAC_VERSION=FreeType2-2.10.0
+PATH_TO_FREETYPE=${THIRD_PARTY_DIRECTORY}/FreeType2/${FREETYPE_MAC_VERSION}
+
+CMAKE_ADDITIONAL_ARGUMENTS=-DFT_WITH_ZLIB=ON
+CMAKE_ADDITIONAL_ARGUMENTS+=" -DFT_WITH_PNG=ON"
+# We do not want to use HB 
+CMAKE_ADDITIONAL_ARGUMENTS+=" -DFT_WITH_HARFBUZZ=OFF"
+CMAKE_ADDITIONAL_ARGUMENTS+=" -DCMAKE_DISABLE_FIND_PACKAGE_HarfBuzz=TRUE"
+CMAKE_ADDITIONAL_ARGUMENTS+=" -DCMAKE_DISABLE_FIND_PACKAGE_BZip2=TRUE"
+CMAKE_ADDITIONAL_ARGUMENTS+=" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
+# Uncomment this to output debug messages while building the library 
+#CMAKE_ADDITIONAL_ARGUMENTS+=" -DCMAKE_FIND_DEBUG_MODE=ON"
+CMAKE_ADDITIONAL_ARGUMENTS+=" -DZLIB_INCLUDE_DIR=${PATH_TO_ZLIB_SRC}"
+CMAKE_ADDITIONAL_ARGUMENTS+=" -DZLIB_LIBRARY=${PATH_TO_ZLIB_LIB}"
+CMAKE_ADDITIONAL_ARGUMENTS+=" -DPNG_PNG_INCLUDE_DIR=${PATH_TO_PNG_SRC}"
+CMAKE_ADDITIONAL_ARGUMENTS+=" -DPNG_LIBRARY=${PATH_TO_PNG_LIB}"
+CMAKE_ADDITIONAL_ARGUMENTS+=" -DCMAKE_TOOLCHAIN_FILE=${TOOLCHAIN_FILE}"
+
+MAKE_TARGET=freetype
+
+"${ENGINE_ROOT}/Source/ThirdParty/CMake/PlatformScripts/Mac/BuildLibForMac.command" FreeType2 ${FREETYPE_MAC_VERSION} --cmake-args="${CMAKE_ADDITIONAL_ARGUMENTS}" --make-target=${MAKE_TARGET}
+#rm "${ENGINE_ROOT}/Source/ThirdParty/FreeType2/${FREETYPE_MAC_VERSION}/lib/Mac"/{Debug/libfreetyped.a,Release/libfreetype.a}

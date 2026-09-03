@@ -1,0 +1,69 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#if RAY_TRACING_USE_SER
+
+#define NV_HITOBJECT_USE_MACRO_API
+#include "/Engine/Shared/ThirdParty/NVIDIA/nvHLSLExtns.h"
+
+#endif
+
+
+#ifdef OVERRIDE_LUMENHARDWARERAYTRACINGPLATFORMCOMMON_USH
+#include "/Platform/Private/LumenHardwareRayTracingPlatformCommon.ush"
+#else
+
+#define TraceLumenRay(TLAS, RayFlags, InstanceInclusionMask, ShaderSlot, NumShaderSlots, MissIndex, Ray, InOutPayload, OutBookmark){\
+	TraceRay(TLAS, RayFlags, InstanceInclusionMask, ShaderSlot, NumShaderSlots, MissIndex, Ray, InOutPayload);\
+}
+
+void TraceLumenShadingRay(
+	RaytracingAccelerationStructure AccelerationStructure,
+	uint RayFlags,
+	uint InstanceInclusionMask,
+	uint RayContributionToHitGroupIndex,
+	uint MultiplierForGeometryContributionToHitGroupIndex,
+	uint MissShaderIndex,
+	RayDesc Ray,
+	inout FPackedMaterialClosestHitPayload Payload)
+{
+#if RAY_TRACING_USE_SER
+	NvHitObject Hit;
+	NvTraceRayHitObject(AccelerationStructure, RayFlags, InstanceInclusionMask, RayContributionToHitGroupIndex, MultiplierForGeometryContributionToHitGroupIndex, MissShaderIndex, Ray, Payload, Hit);
+	NvReorderThread(Hit);
+	NvInvokeHitObject(AccelerationStructure, Hit, Payload);
+#else
+	TraceRay(AccelerationStructure, RayFlags, InstanceInclusionMask, RayContributionToHitGroupIndex, MultiplierForGeometryContributionToHitGroupIndex, MissShaderIndex, Ray, Payload);
+#endif
+}
+
+void TraceLumenShadingRay(
+	RaytracingAccelerationStructure AccelerationStructure,
+	uint RayFlags,
+	uint InstanceInclusionMask,
+	uint RayContributionToHitGroupIndex,
+	uint MultiplierForGeometryContributionToHitGroupIndex,
+	uint MissShaderIndex,
+	RayDesc Ray,
+	inout FLumenRayHitBookmark Bookmark,
+	inout FPackedMaterialClosestHitPayload Payload)
+{
+#if RAY_TRACING_USE_SER
+	NvHitObject Hit;
+	NvTraceRayHitObject(AccelerationStructure, RayFlags, InstanceInclusionMask, RayContributionToHitGroupIndex, MultiplierForGeometryContributionToHitGroupIndex, MissShaderIndex, Ray, Payload, Hit);
+	NvReorderThread(Hit);
+	NvInvokeHitObject(AccelerationStructure, Hit, Payload);
+#else
+	TraceRay(AccelerationStructure, RayFlags, InstanceInclusionMask, RayContributionToHitGroupIndex, MultiplierForGeometryContributionToHitGroupIndex, MissShaderIndex, Ray, Payload);
+#endif
+}
+
+#ifndef LUMEN_HARDWARE_RAYTRACING
+float3 ComputeWorldNormal(uint PrimitiveIndex)
+{
+	return GetGeometryNormalFromTriangleBaseAttributes(PrimitiveIndex);
+}
+#endif // LUMEN_HARDWARE_RAYTRACING
+
+#endif

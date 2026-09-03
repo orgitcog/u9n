@@ -1,0 +1,3 @@
+LIBRARY libtcpinfo.dll
+EXPORTS
+    GetLinuxTcpInfo @1    ; stdcall decoration unnecessary for x64

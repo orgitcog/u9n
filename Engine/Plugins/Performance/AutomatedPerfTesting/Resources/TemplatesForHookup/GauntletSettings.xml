@@ -1,0 +1,14 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Schema.xsd" >
+
+	<!-- Gauntlet additional arguments - use dx12 RHI -->
+	<!-- Using BuildNamePath specifically as we want the preflight suffix if it exists (cargo cult?). -->
+	<Option Name="ExtraGauntletCommonArgs" DefaultValue="-BuildName=$(BuildNamePath)" Description="Additional Common arguments passed to Gauntlet command line"/>
+
+	<!-- Common AutoTestPerf Gauntlet settings -->
+	<Include Script="$(RootDir)/Engine/Plugins/Performance/AutomatedPerfTesting/Build/Inc/AutomatedPerfTestCommonSettings.xml" />
+
+	<!-- Common Gauntlet settings -->
+	<Include Script="$(RootDir)/Engine/Build/Graph/Tasks/Inc/GauntletSettings.xml" />
+
+</BuildGraph>

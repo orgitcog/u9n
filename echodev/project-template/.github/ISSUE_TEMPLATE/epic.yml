@@ -1,0 +1,104 @@
+name: "🎯 Epic"
+description: "Create a new Epic for the Unreal-Echo development roadmap"
+title: "[EPIC] "
+labels: ["epic", "roadmap"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Epic Definition
+        An Epic represents a major development initiative spanning multiple phases and features.
+        
+  - type: input
+    id: epic_id
+    attributes:
+      label: Epic ID
+      description: "Unique identifier (e.g., E1, E2, E3)"
+      placeholder: "E1"
+    validations:
+      required: true
+      
+  - type: input
+    id: duration
+    attributes:
+      label: Estimated Duration
+      description: "Expected duration in months"
+      placeholder: "6 months"
+    validations:
+      required: true
+      
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Critical
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+      
+  - type: textarea
+    id: description
+    attributes:
+      label: Epic Description
+      description: "Detailed description of the epic's goals and scope"
+      placeholder: "Describe the epic..."
+    validations:
+      required: true
+      
+  - type: textarea
+    id: objectives
+    attributes:
+      label: Key Objectives
+      description: "List the main objectives this epic aims to achieve"
+      placeholder: |
+        - Objective 1
+        - Objective 2
+        - Objective 3
+    validations:
+      required: true
+      
+  - type: textarea
+    id: phases
+    attributes:
+      label: Phases
+      description: "List the phases within this epic"
+      placeholder: |
+        - Phase 1.1: Title
+        - Phase 1.2: Title
+    validations:
+      required: true
+      
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: "List any epic or external dependencies"
+      placeholder: "Depends on E0 completion"
+      
+  - type: textarea
+    id: success_criteria
+    attributes:
+      label: Success Criteria
+      description: "How will we know this epic is complete?"
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+        
+  - type: input
+    id: assigned_orgs
+    attributes:
+      label: Assigned Organizations
+      description: "Comma-separated list of organizations responsible"
+      placeholder: "orgitcog, cogpy"
+      
+  - type: textarea
+    id: related_repos
+    attributes:
+      label: Related Repositories
+      description: "List repositories involved in this epic"
+      placeholder: |
+        - orgitcog/u9n
+        - cogpy/cogplan9

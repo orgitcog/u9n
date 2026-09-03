@@ -1,0 +1,2 @@
+# CogEngine Plugin Icon
+# This directory contains plugin resources and assets

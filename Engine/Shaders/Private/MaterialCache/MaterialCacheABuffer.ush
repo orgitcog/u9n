@@ -1,0 +1,102 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+#pragma once
+
+#include "/Engine/Private/OctahedralCommon.ush"
+
+// TODO: Conditional channels for DCE
+// TODO: WPO encoding is pending, and may be removed
+
+static const float MaterialCacheClearEpsilon = 1e-6f;
+
+struct FMaterialCacheABuffer
+{
+	float3 BaseColor;
+	float3 Tangent;
+	float3 WorldPositionOffset;
+	float  Roughness;
+	float  Specular;
+	float  Metallic;
+	float  Opacity;
+	bool   Clipped;
+};
+
+float3 PackMaterialCacheWorldPositionOffset(float3 Offset)
+{
+	return 0.0f;
+}
+
+float3 UnpackMaterialCacheWorldPositionOffset(float3 Offset)
+{
+	return 0.0f;
+}
+
+void PackMaterialCacheABuffer(in FMaterialCacheABuffer ABuffer, out float4 ABuffer0, out float4 ABuffer1, out float4 ABuffer2)
+{
+	ABuffer0 = float4(
+		ABuffer.BaseColor.xyz,
+		ABuffer.Roughness
+	);
+	
+	ABuffer1 = float4(
+		UnitVectorToOctahedron(ABuffer.Tangent.xyz) * 0.5f + 0.5f,
+		ABuffer.Specular,
+		ABuffer.Opacity
+	);
+
+	ABuffer2 = float4(
+		ABuffer.Metallic,
+		PackMaterialCacheWorldPositionOffset(ABuffer.WorldPositionOffset)
+	);
+}
+
+FMaterialCacheABuffer UnpackMaterialCacheABuffer(float4 ABuffer0, float4 ABuffer1, float4 ABuffer2)
+{
+	FMaterialCacheABuffer ABuffer = (FMaterialCacheABuffer)0;
+	
+	ABuffer.BaseColor = ABuffer0.xyz;
+	ABuffer.Roughness = ABuffer0.w;
+
+	ABuffer.Tangent = OctahedronToUnitVector(ABuffer1.xy * 2.0f - 1.0f);
+	ABuffer.Specular = ABuffer1.z;
+	ABuffer.Opacity = ABuffer1.w;
+
+	ABuffer.Metallic = ABuffer2.x;
+	ABuffer.WorldPositionOffset = UnpackMaterialCacheWorldPositionOffset(ABuffer2.yzw);
+
+	if (ABuffer.Tangent.z < MaterialCacheClearEpsilon)
+	{
+		ABuffer.Tangent = float3(0, 0, 1);
+	}
+
+	return ABuffer;
+}
+
+FMaterialCacheABuffer DefaultMaterialCacheABuffer()
+{
+	FMaterialCacheABuffer ABuffer = (FMaterialCacheABuffer)0;
+	ABuffer.Tangent = float3(0, 0, 1);
+	return ABuffer;
+}
+
+FMaterialCacheABuffer LoadMaterialCacheABufferPixel(uint3 PhysicalLocation, uint2 PagePixel)
+{
+	PhysicalLocation.xy += PagePixel;
+	
+	return UnpackMaterialCacheABuffer(
+		MaterialCachePass.RWABuffer0[PhysicalLocation],
+		MaterialCachePass.RWABuffer1[PhysicalLocation],
+		MaterialCachePass.RWABuffer2[PhysicalLocation]
+	);
+}
+
+void StoreMaterialCacheABufferPixel(in FMaterialCacheABuffer ABuffer, uint3 PhysicalLocation, uint2 PagePixel)
+{
+	PhysicalLocation.xy += PagePixel;
+
+	PackMaterialCacheABuffer(
+		ABuffer,
+		MaterialCachePass.RWABuffer0[PhysicalLocation],
+		MaterialCachePass.RWABuffer1[PhysicalLocation],
+		MaterialCachePass.RWABuffer2[PhysicalLocation]
+	);
+}

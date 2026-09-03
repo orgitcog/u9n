@@ -1,0 +1,39 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "FriendlyName": "Text 3D",
+  "Description": "Tool to create 3D Text with advanced options",
+  "Category": "Text",
+  "CreatedBy": "Epic Games, Inc.",
+  "CreatedByURL": "https://epicgames.com",
+  "DocsURL": "",
+  "MarketplaceURL": "",
+  "SupportURL": "",
+  "CanContainContent": true,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "Text3D",
+      "Type": "Runtime",
+      "LoadingPhase": "Default",
+	  "TargetDenyList": [ "Server" ]
+    },
+	{
+	  "Name":  "Text3DEditor",
+	  "Type":  "Editor",
+	  "LoadingPhase": "Default"
+	}
+  ],
+  "Plugins": [
+    {
+      "Name": "GeometryProcessing",
+      "Enabled": true,
+	  "TargetDenyList": [ "Server" ]
+    },
+    {
+      "Name": "GeometryMask",
+      "Enabled": true
+    }
+  ]
+}

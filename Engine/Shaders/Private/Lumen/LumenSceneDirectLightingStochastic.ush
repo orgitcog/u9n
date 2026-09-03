@@ -1,0 +1,67 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../LightGridCommon.ush"
+#define SUPPORT_CONTACT_SHADOWS 0
+#define NON_DIRECTIONAL_DIRECT_LIGHTING 0
+#include "../DeferredLightingCommon.ush"
+
+#define DOWNSAMPLE_FACTOR		2
+#define MAX_LOCAL_LIGHT_NUM		1024
+#define MAX_LOCAL_LIGHT_INDEX	(MAX_LOCAL_LIGHT_NUM - 1)
+#define SHARED_LIGHT_MASK_SIZE	(MAX_LOCAL_LIGHT_NUM / 32)
+
+struct FLightSample
+{
+	uint LocalLightIndex;
+	float Weight;
+	bool bVisible;
+	bool bCompleted;
+};
+
+FLightSample InitLightSample()
+{
+	FLightSample LightSample;
+	LightSample.LocalLightIndex = MAX_LOCAL_LIGHT_INDEX;
+	LightSample.Weight = 0.0f;
+	LightSample.bVisible = false;
+	LightSample.bCompleted = true;
+	return LightSample;
+}
+
+uint PackLightSample(FLightSample LightSample)
+{
+	uint PackedLightSample = LightSample.LocalLightIndex & 0xFFF;
+	PackedLightSample |= LightSample.bVisible ? 0x8000 : 0;
+	PackedLightSample |= LightSample.bCompleted ? 0x4000 : 0;
+	PackedLightSample |= f32tof16(LightSample.Weight) << 16;
+	return PackedLightSample;
+}
+
+FLightSample UnpackLightSample(uint PackedLightSample)
+{
+	FLightSample LightSample;
+	LightSample.LocalLightIndex = PackedLightSample & 0xFFF;
+	LightSample.bVisible = PackedLightSample & 0x8000 ? true : false;
+	LightSample.bCompleted = PackedLightSample & 0x4000 ? true : false;
+	LightSample.Weight = f16tof32(PackedLightSample >> 16);
+	return LightSample;
+}
+
+uint MegaLightsStateFrameIndex;
+uint DownsampleFactorMultShift;
+
+/** 
+ * Returns sample jitter offset in the range [0, DOWNSAMPLE_FACTOR - 1]
+ */
+uint2 GetSampleScreenCoordJitter(uint2 DownsampledScreenCoord)
+{
+	uint2 CellIndex = DownsampledScreenCoord % 2;
+	uint LinearIndex = CellIndex.x + CellIndex.y * 2;
+	LinearIndex = (LinearIndex + MegaLightsStateFrameIndex) % 4;
+
+	// 4-rooks sampling pattern
+	uint2 Jitter;
+	Jitter.x = LinearIndex & 0x02 ? 1 : 0;
+	Jitter.y = LinearIndex & 0x01 ? 0 : 1;
+	return Jitter;
+}

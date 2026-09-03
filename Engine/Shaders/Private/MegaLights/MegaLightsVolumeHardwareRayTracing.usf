@@ -1,0 +1,140 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Shared/RayTracingTypes.h"
+#include "../Common.ush"
+#include "../BlueNoise.ush"
+#include "../RayTracing/RayTracingCommon.ush"
+#include "MegaLights.ush"
+#include "MegaLightsVolume.ush"
+#include "MegaLightsRayTracing.ush"
+#include "../Lumen/LumenHardwareRayTracingPayloadCommon.ush"
+#include "../Lumen/LumenHardwareRayTracingCommon.ush"
+
+float RayTracingBias;
+float RayTracingEndBias;
+float RayTracingNormalBias;
+uint VolumeDebugMode;
+float3 VolumeFrameJitterOffset;
+uint MaxTraversalIterations;
+uint MeshSectionVisibilityTest;
+RaytracingAccelerationStructure TLAS;
+RaytracingAccelerationStructure FarFieldTLAS;
+
+float NearFieldSceneRadius;
+float NearFieldMaxTraceDistance;
+float NearFieldMaxTraceDistanceDitherScale;
+float FarFieldBias;
+float FarFieldMaxTraceDistance;
+
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+	StructuredBuffer<FHitGroupRootConstants> HitGroupData;
+	StructuredBuffer<FRayTracingSceneMetadataRecord> RayTracingSceneMetadata;
+	RWStructuredBuffer<uint> RWInstanceHitCountBuffer;
+#endif
+
+RWTexture3D<uint> RWVolumeLightSamples;
+
+Buffer<uint> CompactedTraceTexelData;
+Buffer<uint> CompactedTraceTexelAllocator;
+
+RAY_TRACING_ENTRY_RAYGEN_OR_INLINE(VolumeHardwareRayTraceLightSamples)
+{
+	uint ThreadIndex = DispatchThreadIndex.x;
+	uint GroupIndex = DispatchThreadIndex.y;
+	uint TraceTexelIndex = GroupIndex * 64 + ThreadIndex;
+
+	if (TraceTexelIndex < CompactedTraceTexelAllocator[0])
+	{
+		const uint3 SampleCoord = UnpackTraceVoxel(CompactedTraceTexelData[TraceTexelIndex]);
+		const uint3 DownsampledVolumeCoord = SampleCoordToDownsampledVolumeCoord(SampleCoord);
+		const uint3 VolumeCoord = DownsampledVolumeCoordToVolumeCoord(DownsampledVolumeCoord);
+
+		FShaderPrintContext DebugContext = InitVolumeDebugContext(DownsampledVolumeCoord, /*bDownsampled*/ true, float2(0.5, 0.5));
+
+		float SceneDepth;
+		float3 TranslatedWorldPosition = ComputeCellTranslatedWorldPosition(VolumeCoord, VolumeFrameJitterOffset, SceneDepth);
+
+		FLightSample LightSample = UnpackLightSample(RWVolumeLightSamples[SampleCoord]);
+		const float2 LightSampleUV = BlueNoiseVec2(VolumeCoordToNoiseCoord(SampleCoord), MegaLightsStateFrameIndex);
+		FLightSampleTrace LightSampleTrace = GetLightSampleTrace(TranslatedWorldPosition, LightSample.LocalLightIndex, LightSampleUV);
+
+		const float ClippedNearFieldMaxTraceDistance = ClipAndDitherNearFieldMaxTraceDistance(
+			TranslatedWorldPosition,
+			LightSampleTrace.Direction,
+			SampleCoord.xy,
+			NearFieldSceneRadius,
+			NearFieldMaxTraceDistance,
+			NearFieldMaxTraceDistanceDitherScale);
+
+		const float MaxTraceDistance = LightSampleTrace.Distance - RayTracingEndBias;
+
+		FRayDesc Ray = (FRayDesc)0;
+		Ray.Origin = TranslatedWorldPosition;
+		Ray.Direction = LightSampleTrace.Direction;
+		Ray.TMin = RayTracingBias;
+		Ray.TMax = max(Ray.TMin, min(MaxTraceDistance, ClippedNearFieldMaxTraceDistance));
+
+		FRayCone RayCone = (FRayCone)0;
+		FRayTracedLightingContext LightingContext = CreateRayTracedLightingContext(
+			RayCone,
+			0,
+			0, // dummy coordinate
+			/*CullingMode*/ RAY_FLAG_CULL_FRONT_FACING_TRIANGLES,
+			MaxTraversalIterations,
+			MeshSectionVisibilityTest != 0 || MEGA_LIGHTS_LIGHTING_CHANNELS);
+
+		const FForwardLightData ForwardLightData = GetForwardLightData(LightSample.LocalLightIndex, 0);
+		LightingContext.LightingChannelMask = UnpackLightingChannelMask(ForwardLightData);
+
+		// Shadows don't need closest hit distance
+		LightingContext.bAcceptFirstHitAndEndSearch = true;
+
+#if LUMEN_HARDWARE_INLINE_RAYTRACING
+		LightingContext.HitGroupData = HitGroupData;
+		LightingContext.RayTracingSceneMetadata = RayTracingSceneMetadata;
+		LightingContext.RWInstanceHitCountBuffer = RWInstanceHitCountBuffer;
+#endif // LUMEN_HARDWARE_INLINE_RAYTRACING
+
+		LightingContext.InstanceMask = RAY_TRACING_MASK_OPAQUE_SHADOW;
+		LightingContext.bIsShadowRay = true;
+
+		// by default bIsShadowRay causes RAY_FLAG_SKIP_CLOSEST_HIT_SHADER to be used, but for visualizations we need CHS to run to get hit data such as HitT
+		LightingContext.bForceClosestHitShader = DebugContext.bIsActive && VolumeDebugMode == DEBUG_MODE_VISUALIZE_TRACING;
+
+		FLumenMinimalRayResult TraceResult = TraceLumenMinimalRay(TLAS, Ray, LightingContext);
+
+		#if ENABLE_FAR_FIELD_TRACING
+		{
+			if (!TraceResult.bHit && Ray.TMax < MaxTraceDistance)
+			{
+				FRayDesc FarFieldRay = Ray;
+				FarFieldRay.TMin = max(Ray.TMax, FarFieldBias);
+				FarFieldRay.TMax = max(FarFieldRay.TMin, min(MaxTraceDistance, FarFieldMaxTraceDistance));
+
+				LightingContext.bIsFarFieldRay = true;
+
+				TraceResult = TraceLumenMinimalRay(FarFieldTLAS, FarFieldRay, LightingContext);
+			}
+		}
+		#endif
+
+		if (DebugContext.bIsActive && VolumeDebugMode == DEBUG_MODE_VISUALIZE_TRACING)
+		{
+			const FForwardLightData ForwardLightData = GetForwardLightData(LightSample.LocalLightIndex, 0);
+			const FDeferredLightData LightData = ConvertToDeferredLight(ForwardLightData);
+
+			float3 RayStart = Ray.Origin + Ray.Direction * Ray.TMin;
+			float3 RayEnd = Ray.Origin + Ray.Direction * (TraceResult.bHit ? TraceResult.HitT : Ray.TMax);
+			float4 RayColor = float4(LightData.Color.xyz / Luminance(LightData.Color.xyz), 1.0f);
+
+			AddLineTWS(DebugContext, RayStart, RayEnd, RayColor);	
+			AddCrossTWS(DebugContext, RayEnd, 2.0f, RayColor);
+		}
+
+		if (TraceResult.bHit)
+		{
+			LightSample.bVisible = false;
+			RWVolumeLightSamples[SampleCoord] = PackLightSample(LightSample);
+		}
+	}
+}

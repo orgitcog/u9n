@@ -1,0 +1,72 @@
+****** Celestial Vault Plugin ******
+*             Credits              *
+************************************
+
+##############
+### Assets ###
+##############
+
+-------------------------------------------------------------------------
+-- Milky Way, Constellation Lines, RADEC Grid in Celestial coordinates -- 
+-------------------------------------------------------------------------
+
+Credits: NASA/Goddard Space Flight Center Scientific Visualization Studio. Gaia DR2: ESA/Gaia/DPAC. Constellation figures based on those developed for the IAU by Alan MacRobert of Sky and Telescope magazine (Roger Sinnott and Rick Fienberg).
+
+Note - You can download a higher resolution of these textures at https://svs.gsfc.nasa.gov/4851/
+
+-------------------
+-- Moon Textures --
+-------------------
+
+Credits: NASA's Scientific Visualization Studio 
+
+Note - You can download a higher resolution of these textures at https://svs.gsfc.nasa.gov/4720/ 
+(The Normal Map has been created from the Displacement map)
+
+-----------------------
+-- Fictional Planets --
+-----------------------
+Various sources from public domain or Creative Commons Attribution 4.0 International
+Provided as an implementation example. Please do use your own in production. 
+
+https://opengameart.org/content/planets-6x3000x3000
+https://commons.wikimedia.org/wiki/File:Fictional_Planet_Andoria.png
+https://commons.wikimedia.org/wiki/File:Fictional_Planet_Qo%27noS.png
+
+--------------------
+-- Stars Catalogs --
+--------------------
+
+HYG Database : Current version (2024), containing all stars in Hipparcos, Yale Bright Star, and Gliese catalogs (almost 120,000 stars)
+
+The HYG database is licensed with the Creative Commons Attribution-ShareAlike 4.0 license.
+https://www.astronexus.com/projects/hyg
+
+There have been filtered and processed to a CSV file imported as a DataTable. One containing the full catalog, another limited to the first 10K brightests (~Mag 6)
+
+
+##############################
+### Celestial Computations ###
+##############################
+
+Big shoutout to Greg's Miller for his awesome Astronomy Programming Page 
+https://www.celestialprogramming.com/
+
+
+VSOP Computations have been adapted from https://github.com/gmiller123456/vsop87-multilang
+License : 
+Author: Greg A Miller (gmiller@gregmiller.net)
+I release all of my work in this project to the public domain.
+Note, though, not everything here can be considered my work.  The VSOP87 theory is the work of Bureau des Longitudes. https://site.bdlg.fr/
+
+
+Other algorithms have been implementated following the equations described in 
+- Jean Meeus : Astronomical Algorithms Second Edition
+- James L. Hilton : Computing Apparent Planetary Magnitudes for The Astronomical Almanac
+- George H. Kaplan : The IAU Resolutions on Astronomical Reference Systems, Time Scales, and Earth Rotation Models
+- https://en.wikipedia.org/wiki/Color_index
+- https://ftp.imcce.fr/pub/ephem/planets/vsop87/vsop87.doc
+- https://aa.usno.navy.mil/faq/GAST
+- http://maia.usno.navy.mil/ser7/tai-utc.dat
+- https://www2.mps.mpg.de/homes/fraenz/systems/systems2art/node2.html
+
