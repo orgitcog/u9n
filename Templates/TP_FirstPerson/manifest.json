@@ -1,0 +1,84 @@
+﻿{
+	"Version": 1,
+	"Name": [
+		{
+			"Language": "en",
+			"Text": "First Person"
+		},
+		{
+			"Language": "ko",
+			"Text": "1인칭"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "第一人称模板"
+		},
+		{
+			"Language": "ja",
+			"Text": "一人称"
+		}
+	],
+	"Description": [
+		{
+			"Language": "en",
+			"Text": "This pack features a player character which is viewed from first person perspective. The player can look and move around using mouse, controller or virtual joystick on a touch device."
+		},
+		{
+			"Language": "ko",
+			"Text": "이 팩에는 1인칭 시점으로 보는 플레이어 캐릭터가 등장합니다. 플레이어는 마우스, 컨트롤러 또는 터치 디바이스의 가상 조이스틱을 사용하여 주변을 둘러보고 이동할 수 있습니다."
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "此模板包含一个以第一人称视角呈现的玩家角色。玩家可以通过鼠标、控制器或触控设备上的虚拟摇杆来观察和移动。"
+		},
+		{
+			"Language": "ja",
+			"Text": "このパックには、一人称視点で表示されるプレイヤー キャラクターが含まれています。プレイヤーは、マウス、コントローラー、またはタッチ デバイスのバーチャル ジョイスティックを使用して、周囲を見渡したり、移動したりできます"
+		}
+	],
+	"AssetTypes": [
+		{
+			"Language": "en",
+			"Text": "Animation Sequence, Skeletal Mesh, Animation Blueprint, Skeleton, Static Mesh"
+		}
+	],
+	"SearchTags": [
+		{
+			"Language": "en",
+			"Text": "First Person,Shoot,Fire,Aim"
+		}
+	],
+	"ClassTypes": "Actor, Character, GameMode, PlayerController",
+	"Category": "CodeFeature",
+	"FocusAsset": "/Game/FirstPerson/Blueprints/BP_FirstPersonCharacter.BP_FirstPersonCharacter",
+	"Thumbnail": "TP_FirstPerson.png",
+	"Screenshots": [
+		"TP_FirstPerson_Preview.png"
+	],
+	"AdditionalFeaturePacks": [
+		{
+			"MountName": "Characters",
+			"DetailLevels": [
+				"High"
+			]
+		},
+		{
+			"MountName": "LevelPrototyping",
+			"DetailLevels": [
+				"High"
+			]
+		},
+		{
+			"MountName": "Input",
+			"DetailLevels": [
+				"High"
+			]
+		},
+		{
+			"MountName": "Weapons",
+			"DetailLevels": [
+				"Standard"
+			]
+		}
+	]
+}

@@ -1,0 +1,697 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+
+#if SHADER_PRINT_STATS
+#include "../ShaderPrint.ush"
+#endif
+
+#include "NaniteCulling.ush"
+
+#ifndef VIRTUAL_TEXTURE_TARGET
+#define VIRTUAL_TEXTURE_TARGET 0
+#endif
+
+uint PackedClusterSize;
+
+uint NumMainPassRasterBins;
+uint NumPostPassRasterBins;
+uint NumShadingBins;
+
+StructuredBuffer<FQueueState>				QueueState;
+Buffer<uint>								MainPassRasterizeArgsSWHW;
+Buffer<uint>								PostPassRasterizeArgsSWHW;
+
+StructuredBuffer<FNaniteRasterBinMeta>		MainPassRasterBinMeta;
+StructuredBuffer<FNaniteRasterBinMeta>		PostPassRasterBinMeta;
+
+ByteAddressBuffer							ShadingBinArgs;
+
+ByteAddressBuffer							ShadingBinData;
+StructuredBuffer<FNaniteShadingBinStats>	ShadingBinStats;
+
+StructuredBuffer<FNaniteStats>				InStatsBuffer;
+RWStructuredBuffer<FNaniteStats>			OutStatsBuffer;
+
+RWBuffer<uint>								OutClusterStatsArgs;
+RWStructuredBuffer<uint>					OutClusterStats;
+StructuredBuffer<uint>						InClusterStats;
+
+#if SHADER_PRINT_STATS
+
+void PrintLeftAlign(inout FShaderPrintContext Context, uint Value)
+{
+	int Len = 9;
+	
+	uint Tmp = Value;
+	while (Tmp >= 10)
+	{
+		Tmp /= 10;
+		Len--;
+	}
+
+	while (Len > 0)
+	{
+		PrintSymbol(Context, _SPC_);
+		Len--;
+	}
+		
+
+	Print(Context, Value);
+}
+
+[numthreads(1, 1, 1)]
+void PrintStats()
+{
+	const uint HWClusterCounterIndex = GetHWClusterCounterIndex(RenderFlags);
+
+	const float TopMargin = 0.05f;
+	const float HeadlineX = 0.77f;
+	const float ItemX = 0.78f;
+
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(HeadlineX, TopMargin));
+
+#if PRINT_PASS == 0
+	// Main Pass
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Main"), FontOrange);
+	Newline(Context);
+
+	if (InStatsBuffer[0].NumPrimaryViews > 0)
+	{
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Pri Views "), FontYellow);
+		PrintLeftAlign(Context, InStatsBuffer[0].NumPrimaryViews);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("Views     "), FontYellow);
+		PrintLeftAlign(Context, InStatsBuffer[0].NumTotalViews);
+		Newline(Context);
+	}
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  H-Chunks"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainHierarchyChunksPreCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Pre-Cull"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainInstancesPreCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT(" Post-Cull"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainInstancesPostCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("NodeVisits"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainVisitedNodes);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("Candidates"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainCandidateClusters);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("ClustersSW"), FontYellow);
+	PrintLeftAlign(Context, MainPassRasterizeArgsSWHW[0]);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("ClustersHW"), FontYellow);
+	PrintLeftAlign(Context, MainPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+	Newline(Context);
+	
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Clusters"), FontYellow);
+	PrintLeftAlign(Context, MainPassRasterizeArgsSWHW[0] + MainPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+	Newline(Context);
+	Newline(Context);
+#else
+	Context.Pos.y += (InStatsBuffer[0].NumPrimaryViews > 0 ? 11 : 9) * ShaderPrintData.FontSpacing.y;
+#endif // PRINT_PASS == 0
+
+#if TWO_PASS_CULLING
+#if PRINT_PASS == 1
+	// Post Pass
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Post"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  H-Chunks"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostHierarchyChunksPreCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Pre-Cull"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostInstancesPreCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT(" Post-Cull"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostInstancesPostCull);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("NodeVisits"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostVisitedNodes);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("Candidates"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostCandidateClusters);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("ClustersSW"), FontYellow);
+	PrintLeftAlign(Context, PostPassRasterizeArgsSWHW[0]);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("ClustersHW"), FontYellow);
+	PrintLeftAlign(Context, PostPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Clusters"), FontYellow);
+	PrintLeftAlign(Context, PostPassRasterizeArgsSWHW[0] + PostPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+	Newline(Context);
+	Newline(Context);
+#else
+	Context.Pos.y += 9 * ShaderPrintData.FontSpacing.y;
+#endif // PRINT_PASS == 1
+#endif
+
+#if PRINT_PASS == 2
+	// Total
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Total"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Clusters"), FontYellow);
+#if TWO_PASS_CULLING
+	PrintLeftAlign(Context, MainPassRasterizeArgsSWHW[0] + MainPassRasterizeArgsSWHW[HWClusterCounterIndex] + PostPassRasterizeArgsSWHW[0] + PostPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+#else
+	PrintLeftAlign(Context, MainPassRasterizeArgsSWHW[0] + MainPassRasterizeArgsSWHW[HWClusterCounterIndex]);
+#endif
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("      Tris"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumTris);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("     Verts"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumVerts);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("    Bricks"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumBricks);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("    BrickT"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumBrickThreads);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("LGE P-RECT"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumLargePageRectClusters);
+#else
+	Context.Pos.y += 8 * ShaderPrintData.FontSpacing.y;
+#endif // PRINT_PASS == 2
+
+#if PRINT_PASS == 3
+	// Tessellation
+
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Immediate"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   Patches"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumImmediatePatches);
+	Newline(Context);
+
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Diced Tris"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Clusters"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumDicedTrianglesClusters);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   Patches"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumDicedTrianglesPatches);
+	Newline(Context);
+
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Split Patches"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT(" Candidate"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumCandidateSplitPatches);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   Visible"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumVisibleSplitPatches);
+	Newline(Context);
+#else
+	Context.Pos.y += 9 * ShaderPrintData.FontSpacing.y;
+#endif // PRINT_PASS == 3
+
+#if PRINT_PASS == 4
+	// Materials: Raster Bins
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Raster Bins"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("     Total"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumTotalRasterBins);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  SW Empty"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumEmptySWRasterBins);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  HW Empty"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumEmptyHWRasterBins);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   MainInd"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumMainPassIndirections);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   PostInd"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumPostPassIndirections);
+	Newline(Context);
+	Newline(Context);
+
+	// Materials: Shading Bins
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Shading Bins"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("     Total"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumTotalShadingBins);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("     Empty"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumEmptyShadingBins);
+	Newline(Context);
+	Newline(Context);
+
+	// Materials: Shading
+	Context.Pos.x = HeadlineX;
+	Print(Context, TEXT("Shading"), FontOrange);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("    Pixels"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumNanitePixels);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT(" QuadEvals"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumShadedQuads);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("PixelEvals"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumShadedPixels);
+	Newline(Context);
+
+	const uint NumEvals = InStatsBuffer[0].NumShadedPixels + InStatsBuffer[0].NumShadedQuads * 4;
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("TotalEvals"), FontYellow);
+	PrintLeftAlign(Context, NumEvals);
+	Newline(Context);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("   Helpers"), FontYellow);
+	PrintLeftAlign(Context, InStatsBuffer[0].NumHelperLanes);
+	Newline(Context);
+
+	const float HelperPct = float(InStatsBuffer[0].NumHelperLanes) / float(NumEvals);
+
+	Context.Pos.x = ItemX;
+	Print(Context, TEXT("  Helper %"), FontYellow);
+	PrintLeftAlign(Context, uint(round(HelperPct * 100.0f)));
+#else
+	Context.Pos.y += 17 * ShaderPrintData.FontSpacing.y;
+#endif // PRINT_PASS == 4
+
+#if PRINT_PASS == 5
+	if(InStatsBuffer[0].Debug[0] || InStatsBuffer[0].Debug[1] || InStatsBuffer[0].Debug[2] || InStatsBuffer[0].Debug[3])
+	{
+		// Debug counters: Only shown when actually used to not clutter UI
+		Context.Pos.x = HeadlineX;
+		Print(Context, TEXT("Debug"), FontOrange);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("    Debug0"), FontYellow);
+		PrintLeftAlign(Context, InStatsBuffer[0].Debug[0]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("    Debug1"), FontYellow);
+		PrintLeftAlign(Context, InStatsBuffer[0].Debug[1]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("    Debug2"), FontYellow);
+		PrintLeftAlign(Context, InStatsBuffer[0].Debug[2]);
+		Newline(Context);
+
+		Context.Pos.x = ItemX;
+		Print(Context, TEXT("    Debug3"), FontYellow);
+		PrintLeftAlign(Context, InStatsBuffer[0].Debug[3]);
+		Newline(Context);
+		Newline(Context);
+	}
+#endif // PRINT_PASS == 5
+}
+
+#endif // SHADER_PRINT_STATS
+
+#ifdef CalculateClusterIndirectArgs
+
+[numthreads(1, 1, 1)]
+void CalculateClusterIndirectArgs()
+{
+	const uint HWClusterCounterIndex = GetHWClusterCounterIndex(RenderFlags);
+
+	uint NumClustersSW = MainPassRasterizeArgsSWHW[0];
+	uint NumClustersHW = MainPassRasterizeArgsSWHW[HWClusterCounterIndex];
+
+#if TWO_PASS_CULLING
+	NumClustersSW += PostPassRasterizeArgsSWHW[0];
+	NumClustersHW += PostPassRasterizeArgsSWHW[HWClusterCounterIndex];
+#endif
+
+	uint NumClusters = NumClustersSW + NumClustersHW;
+	
+	OutClusterStatsArgs[0] = (NumClusters + 63) / 64;
+	OutClusterStatsArgs[1] = 1;
+	OutClusterStatsArgs[2] = 1;
+
+	OutClusterStats[0] = NumClustersHW;
+	OutClusterStats[1] = NumClustersSW;
+}
+
+#endif // CalculateClusterIndirectArgs
+
+#if SHADER_CALCULATE_STATS
+
+[numthreads(1, 1, 1)]
+void CalculateRasterStats()
+{
+	// Other stuff that needs to happen only once
+	OutStatsBuffer[0].NumMainVisitedNodes		= QueueState[0].PassState[0].NodeWriteOffset;
+	OutStatsBuffer[0].NumMainCandidateClusters	= QueueState[0].PassState[0].ClusterWriteOffset;
+	OutStatsBuffer[0].NumPostVisitedNodes		= QueueState[0].PassState[1].NodeWriteOffset;
+	OutStatsBuffer[0].NumPostCandidateClusters	= QueueState[0].PassState[1].ClusterWriteOffset;
+
+	uint NumEmptySWRasterBins = 0;
+	uint NumEmptyHWRasterBins = 0;
+
+	uint NumTotalRasterBins = NumMainPassRasterBins;
+	uint NumMainPassIndirections = 0;
+	uint NumPostPassIndirections = 0;
+
+	LOOP
+	for (uint RasterBinIndex = 0; RasterBinIndex < NumMainPassRasterBins; ++RasterBinIndex)
+	{
+		const uint BinSWCount = MainPassRasterBinMeta[RasterBinIndex].BinSWCount;
+		const uint BinHWCount = MainPassRasterBinMeta[RasterBinIndex].BinHWCount;
+
+		if (BinSWCount == 0)
+		{
+			++NumEmptySWRasterBins;
+		}
+
+		if (BinHWCount == 0)
+		{
+			++NumEmptyHWRasterBins;
+		}
+		
+		const uint BinIndirections = BinSWCount + BinHWCount;
+		if (BinIndirections > 0)
+		{
+			NumMainPassIndirections += BinIndirections;
+		}
+	}
+
+#if TWO_PASS_CULLING
+	NumTotalRasterBins += NumPostPassRasterBins;
+
+	LOOP
+	for (uint RasterBinIndex = 0; RasterBinIndex < NumPostPassRasterBins; ++RasterBinIndex)
+	{
+		const uint BinSWCount = PostPassRasterBinMeta[RasterBinIndex].BinSWCount;
+		const uint BinHWCount = PostPassRasterBinMeta[RasterBinIndex].BinHWCount;
+
+		if (BinSWCount == 0)
+		{
+			++NumEmptySWRasterBins;
+		}
+
+		if (BinHWCount == 0)
+		{
+			++NumEmptyHWRasterBins;
+		}
+
+		const uint BinIndirections = BinSWCount + BinHWCount;
+		if (BinIndirections > 0)
+		{
+			NumPostPassIndirections += BinIndirections;
+		}
+	}
+#endif
+
+	OutStatsBuffer[0].NumTotalRasterBins		= NumTotalRasterBins;
+	OutStatsBuffer[0].NumEmptySWRasterBins		= NumEmptySWRasterBins;
+	OutStatsBuffer[0].NumEmptyHWRasterBins		= NumEmptyHWRasterBins;
+	OutStatsBuffer[0].NumTotalShadingBins		= 0;
+	OutStatsBuffer[0].NumEmptyShadingBins		= 0;
+	OutStatsBuffer[0].NumShadedQuads			= 0;
+	OutStatsBuffer[0].NumShadedPixels			= 0;
+	OutStatsBuffer[0].NumHelperLanes			= 0;
+	OutStatsBuffer[0].NumMainPassIndirections	= NumMainPassIndirections;
+	OutStatsBuffer[0].NumPostPassIndirections	= NumPostPassIndirections;
+}
+
+[numthreads(1, 1, 1)]
+void CalculateShadingStats()
+{
+	uint NumEmptyShadingBins = 0;
+
+	LOOP
+	for (uint ShadingBinIndex = 0; ShadingBinIndex < NumShadingBins; ++ShadingBinIndex)
+	{
+		const uint ArgCount = 4u;
+		if (ShadingBinArgs.Load(ShadingBinIndex * ArgCount * 4u) == 0)
+		{
+			++NumEmptyShadingBins;
+		}
+	}
+
+	OutStatsBuffer[0].NumTotalShadingBins = NumShadingBins;
+	OutStatsBuffer[0].NumEmptyShadingBins = NumEmptyShadingBins;
+
+	OutStatsBuffer[0].NumNanitePixels = ShadingBinStats[0].TotalNanitePixels;
+	OutStatsBuffer[0].NumShadedQuads  = ShadingBinStats[0].TotalShadedQuads;
+	OutStatsBuffer[0].NumShadedPixels = ShadingBinStats[0].TotalShadedPixels;
+	OutStatsBuffer[0].NumHelperLanes  = ShadingBinStats[0].TotalHelperCount;
+}
+
+#endif // SHADER_CALCULATE_STATS
+
+#ifdef ExtractVSMPerformanceFeedback
+
+#include "/Engine/Shared/VirtualShadowMapDefinitions.h"
+
+RWStructuredBuffer<uint> OutPerformanceFeedbackBuffer;
+
+#define THREADGROUP_SIZE 64 // Could be larger if we modified the indirect args
+#define GROUP_COUNTER_ENTRIES_SINGLE_PAGE 64
+#define GROUP_COUNTER_ENTRIES_MULTI_PAGE 128
+#define GROUP_COUNTER_ENTRIES (GROUP_COUNTER_ENTRIES_SINGLE_PAGE + GROUP_COUNTER_ENTRIES_MULTI_PAGE)
+#define GROUP_COUNTER_SIZE (GROUP_COUNTER_ENTRIES * VSM_NPF_SIZEOF_ENTRY)
+groupshared uint LDS[GROUP_COUNTER_SIZE];
+
+[numthreads(THREADGROUP_SIZE, 1, 1)]
+void ExtractVSMPerformanceFeedback(
+	uint DispatchThreadIndex : SV_DispatchThreadID,
+	uint GroupIndex : SV_GroupIndex,
+	uint GroupThreadIndex : SV_GroupThreadID
+)
+{
+	uint NumClustersHW = InClusterStats[0];
+	uint NumClustersSW = InClusterStats[1];
+
+	if (DispatchThreadIndex == 0)
+	{
+		OutPerformanceFeedbackBuffer[VSM_NPF_HEADER_TOTAL_HW_CLUSTERS] = NumClustersHW;
+		OutPerformanceFeedbackBuffer[VSM_NPF_HEADER_TOTAL_SW_CLUSTERS] = NumClustersSW;
+	}
+
+	// Clear LDS
+	for (int Index = GroupThreadIndex; Index < GROUP_COUNTER_ENTRIES; Index += THREADGROUP_SIZE)
+	{
+		uint LDSEntryOffset = VSM_NPF_SIZEOF_ENTRY * Index;
+
+		UNROLL
+		for (int Field = 0; Field < VSM_NPF_SIZEOF_ENTRY; ++Field)
+		{
+			LDS[LDSEntryOffset + Field] = 0;
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	// Accumulate cluster data
+	if (DispatchThreadIndex < NumClustersSW + NumClustersHW)
+	{
+		FVisibleCluster VisCluster = GetVisibleCluster((DispatchThreadIndex < NumClustersSW) ? DispatchThreadIndex : ((MaxVisibleClusters - 1) - (DispatchThreadIndex - NumClustersSW)), VIRTUAL_TEXTURE_TARGET != 0);
+
+		FNaniteView NaniteView = GetNaniteView(VisCluster.ViewId);
+		int VirtualShadowMapId = NaniteView.TargetLayerIndex;
+		bool bIsHWCluster = DispatchThreadIndex >= NumClustersSW;
+
+		// Cluster data is accumulated first in LDS, and then in global memory for reduced global atomics
+		// Due to limited LDS size, counters that do not fit in LDS are flushed to global memory directly.
+
+		bool bIsSinglePageVSM = VirtualShadowMapId < VSM_MAX_SINGLE_PAGE_SHADOW_MAPS;
+		bool bUseGroupCounterSinglePage = bIsSinglePageVSM && VirtualShadowMapId < GROUP_COUNTER_ENTRIES_SINGLE_PAGE;
+		bool bUseGroupCounterMultiPage = !bIsSinglePageVSM && (VirtualShadowMapId - VSM_MAX_SINGLE_PAGE_SHADOW_MAPS) < GROUP_COUNTER_ENTRIES_MULTI_PAGE;
+		if (bUseGroupCounterSinglePage || bUseGroupCounterMultiPage)
+		{
+			uint LDSEntryIndex = bIsSinglePageVSM ? VirtualShadowMapId : (GROUP_COUNTER_ENTRIES_SINGLE_PAGE + (VirtualShadowMapId - VSM_MAX_SINGLE_PAGE_SHADOW_MAPS));
+			uint EntryOffset = VSM_NPF_SIZEOF_ENTRY * LDSEntryIndex;
+
+			uint ClusterCounterOffset = bIsHWCluster ? VSM_NPF_ENTRY_HW_CLUSTERS : VSM_NPF_ENTRY_SW_CLUSTERS;
+			InterlockedAdd(LDS[EntryOffset + ClusterCounterOffset], 1);
+		}
+		else
+		{
+			uint EntryOffset = VSM_NPF_SIZEOF_HEADER + VSM_NPF_SIZEOF_ENTRY * VirtualShadowMapId;
+
+			uint ClusterCounterOffset = bIsHWCluster ? VSM_NPF_ENTRY_HW_CLUSTERS : VSM_NPF_ENTRY_SW_CLUSTERS;
+			InterlockedAdd(OutPerformanceFeedbackBuffer[EntryOffset + ClusterCounterOffset], 1);
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	// Flush from LDS to global memory
+	for (int Index = GroupThreadIndex; Index < GROUP_COUNTER_ENTRIES; Index += THREADGROUP_SIZE)
+	{
+		bool bIsSinglePageVSM = Index < GROUP_COUNTER_ENTRIES_SINGLE_PAGE;
+		uint VirtualShadowMapId = bIsSinglePageVSM ? Index : (Index - GROUP_COUNTER_ENTRIES_SINGLE_PAGE + VSM_MAX_SINGLE_PAGE_SHADOW_MAPS);
+		
+		uint LDSEntryOffset = VSM_NPF_SIZEOF_ENTRY * Index;
+		uint BufEntryOffset = VSM_NPF_SIZEOF_HEADER + VSM_NPF_SIZEOF_ENTRY * VirtualShadowMapId;
+
+		uint ClustersHW = LDS[LDSEntryOffset + VSM_NPF_ENTRY_HW_CLUSTERS];
+		uint ClustersSW = LDS[LDSEntryOffset + VSM_NPF_ENTRY_SW_CLUSTERS];
+		if (ClustersHW)
+		{
+			InterlockedAdd(OutPerformanceFeedbackBuffer[BufEntryOffset + VSM_NPF_ENTRY_HW_CLUSTERS], ClustersHW);
+		}
+		if (ClustersSW)
+		{
+			InterlockedAdd(OutPerformanceFeedbackBuffer[BufEntryOffset + VSM_NPF_ENTRY_SW_CLUSTERS], ClustersSW);
+		}
+	}
+}
+
+#endif // ExtractVSMPerformanceFeedback
+
+#if SHADER_CALCULATE_CLUSTER_STATS
+
+groupshared uint GroupNumTris;
+groupshared uint GroupNumVerts;
+groupshared uint GroupNumBricks;
+groupshared uint GroupNumBrickThreads;
+groupshared uint GroupIndexDataSize;
+groupshared uint GroupPositionDataSize;
+groupshared uint GroupAttribDataSize;
+
+[numthreads(64, 1, 1)]
+void CalculateClusterStats(
+	uint DispatchThreadIndex : SV_DispatchThreadID,
+	uint GroupIndex : SV_GroupIndex
+	)
+{
+	const uint HWClusterCounterIndex = GetHWClusterCounterIndex(RenderFlags);
+
+	if (GroupIndex == 0)
+	{
+		GroupNumTris = 0;
+		GroupNumVerts = 0;
+		GroupNumBricks = 0;
+		GroupNumBrickThreads = 0;
+		GroupIndexDataSize = 0;
+		GroupPositionDataSize = 0;
+		GroupAttribDataSize = 0;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	uint NumClustersSW = MainPassRasterizeArgsSWHW[0];
+	uint NumClustersHW = MainPassRasterizeArgsSWHW[HWClusterCounterIndex];
+
+#if TWO_PASS_CULLING
+	NumClustersSW += PostPassRasterizeArgsSWHW[0];
+	NumClustersHW += PostPassRasterizeArgsSWHW[HWClusterCounterIndex];
+#endif
+
+	if (DispatchThreadIndex < NumClustersSW + NumClustersHW)
+	{
+		FVisibleCluster VisCluster = GetVisibleCluster((DispatchThreadIndex < NumClustersSW) ? DispatchThreadIndex : ( (MaxVisibleClusters - 1) - (DispatchThreadIndex - NumClustersSW) ), VIRTUAL_TEXTURE_TARGET != 0);
+		
+		FCluster Cluster = GetCluster(VisCluster.PageIndex, VisCluster.ClusterIndex);
+
+		InterlockedAdd(GroupNumTris,  Cluster.NumTris);
+		
+		if(Cluster.NumTris > 0)
+		{
+			InterlockedAdd(GroupNumVerts, Cluster.NumVerts);
+		}
+		else
+		{
+			InterlockedAdd(GroupNumBricks, Cluster.BrickDataNum);
+			InterlockedAdd(GroupNumBrickThreads, (Cluster.BrickDataNum + 31) & ~31);
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	if (GroupIndex == 0)
+	{
+		InterlockedAdd(OutStatsBuffer[0].NumTris,  GroupNumTris);
+		InterlockedAdd(OutStatsBuffer[0].NumVerts, GroupNumVerts);
+		InterlockedAdd(OutStatsBuffer[0].NumBricks, GroupNumBricks);
+		InterlockedAdd(OutStatsBuffer[0].NumBrickThreads, GroupNumBrickThreads);
+	}
+}
+
+#endif // SHADER_CALCULATE_CLUSTER_STATS

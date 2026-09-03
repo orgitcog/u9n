@@ -1,0 +1,506 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+// Do not use shared samplers as it requires the View uniform buffer, which is not bound for this shader.
+#define USE_HZB_SHARED_SAMPLERS 0
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../WaveOpUtil.ush"
+#include "../ComputeShaderUtils.ush"
+#include "../VirtualShadowMaps/VirtualShadowMapPageOverlap.ush"
+#include "../VirtualShadowMaps/VirtualShadowMapPageCacheCommon.ush"
+
+#include "NaniteCullingCommon.ush"
+#include "NaniteCulling.ush"
+#include "NaniteDataDecode.ush"
+#include "NaniteHZBCull.ush"
+#include "NaniteWritePixel.ush"
+#include "NaniteImposter.ush"
+
+#include "../SceneCulling/SceneCulling.ush"
+
+#if VIRTUAL_TEXTURE_TARGET
+MAX_OCCUPANCY
+DISABLE_TARGET_OCCUPANCY_WARNING
+#endif
+
+void DrawImposter( FNaniteView NaniteView, FInstanceSceneData InstanceData, uint InstanceId, float3 BoundsCenter, float3 BoundsExtent, uint ImposterIndex, FScreenRect Rect )
+{
+	// High bit flags it as an imposter
+	uint ImposterPixelCode = (1u << 31) | (InstanceId << 8) | (1u << 7);
+
+	bool bOrtho = NaniteView.ViewToClip[3][3] >= 1;
+
+	for( int y = Rect.Pixels.y; y <= Rect.Pixels.w; y++ )
+	{
+		for( int x = Rect.Pixels.x; x <= Rect.Pixels.z; x++ )
+		{
+			uint2 PixelPos = uint2(x,y);
+
+			// FIXME
+			float2 Jitter = NaniteView.ViewToClip[2].xy * 0.5 * NaniteView.ViewSizeAndInvSize.xy;
+			int FrameRand = (int)(Jitter.x * 417.0f);
+
+			float2 Noise = Rand3DPCG16( int3( PixelPos, FrameRand ) ).xy / 65535.0;
+			float2 PixelClip = ( ( PixelPos + 0.5 ) * NaniteView.ViewSizeAndInvSize.zw - 0.5 ) * float2(2, -2);
+
+			FDFVector3 RayWorldOrigin;
+			float3 RayWorldDirection;
+			if( bOrtho )
+			{
+				float3 NearPoint = mul( float4( PixelPos + 0.5, 1, 1 ), NaniteView.SVPositionToTranslatedWorld ).xyz;
+				float3 FarPoint  = mul( float4( PixelPos + 0.5, 0, 1 ), NaniteView.SVPositionToTranslatedWorld ).xyz;
+				RayWorldOrigin = DFFastSubtract( NearPoint, NaniteView.PreViewTranslation );
+				RayWorldDirection = FarPoint - NearPoint;
+				Noise = 0.5;
+			}
+			else
+			{
+				RayWorldOrigin = NaniteView.WorldCameraOrigin;
+				RayWorldDirection = mul( float4( PixelPos + 0.5, 0, 1 ), NaniteView.SVPositionToTranslatedWorld ).xyz;
+			}
+	
+			FRay RayLocal;
+			RayLocal.Origin		= DFMultiplyDemote( RayWorldOrigin, InstanceData.WorldToLocal );
+			RayLocal.Direction	= DFMultiplyVector( RayWorldDirection, InstanceData.WorldToLocal );
+
+			uint2 ImposterPixel = RayIntersectImposter( RayLocal, ImposterIndex, BoundsCenter, BoundsExtent, Noise );
+
+			if( ImposterPixel.y != 0 )
+			{
+				float Depth = asfloat( ImposterPixel.y );
+				//float4 HitClip = mul( float4( 0, 0, Depth, 1 ), NaniteView.ViewToClip );
+				//float DeviceZ = HitClip.z / HitClip.w;
+				float DeviceZ = NaniteView.ViewToClip[3][2] / Depth + NaniteView.ViewToClip[2][2];
+				
+				if( bOrtho )
+					DeviceZ = 1 - Depth;
+
+				uint TriIndex = ImposterPixel.x;
+				uint PixelValue = ImposterPixelCode + TriIndex;
+				WritePixel( OutVisBuffer64, PixelValue, NaniteView.ViewRect.xy + PixelPos, asuint( DeviceZ ) );
+
+				#if 0//VISUALIZE
+					WritePixel( OutDbgBuffer64, 0, PixelPos, asuint( DeviceZ ) );
+					InterlockedAdd(OutDbgBuffer32[ PixelPos ], 1);
+				#endif
+			}
+		}
+	}
+}
+
+// Partially implements FPrimitiveSceneProxy::IsShown() - missing view filter lists and some misc. tests
+bool IsPrimitiveShown(FPrimitiveSceneData PrimitiveData, uint RenderFlags, bool bIsShadowPass)
+{
+	const bool bCastShadow						= (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_CAST_SHADOWS) != 0u;
+	
+	const bool bForceHidden						= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_FORCE_HIDDEN) != 0u;
+	const bool bVisibleInGame					= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_VISIBLE_IN_GAME) != 0u;
+	const bool bVisibleInEditor					= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_VISIBLE_IN_EDITOR) != 0u;
+	const bool bVisibleInReflectionCaptures		= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_VISIBLE_IN_REFLECTION_CAPTURES) != 0u;
+	//const bool bVisibleInRealTimeSkyCaptures	= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_VISIBLE_IN_REAL_TIME_SKY_CAPTURES) != 0u;
+	//const bool bVisibleInRayTracing			= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_VISIBLE_IN_RAY_TRACING) != 0u;
+	const bool bVisibleInSceneCaptureOnly		= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_VISIBLE_IN_SCENE_CAPTURE_ONLY) != 0u;
+	const bool bHiddenInSceneCapture			= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_HIDDEN_IN_SCENE_CAPTURE) != 0u;
+	const bool bVisibleInRayTracing				= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_VISIBLE_IN_RAY_TRACING) != 0u;
+	const bool bCastHiddenShadow				= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_CAST_HIDDEN_SHADOW) != 0u;
+	const bool bVisibleInLumenScene				= (PrimitiveData.VisibilityFlags & PRIMITIVE_VISIBILITY_FLAG_VISIBLE_IN_LUMEN_SCENE) != 0u;
+
+	const bool bIsSceneCapture					= (RenderFlags & NANITE_RENDER_FLAG_IS_SCENE_CAPTURE) != 0u;
+	const bool bIsReflectionCapture				= (RenderFlags & NANITE_RENDER_FLAG_IS_REFLECTION_CAPTURE) != 0u;
+	const bool bIsGameView						= (RenderFlags & NANITE_RENDER_FLAG_IS_GAME_VIEW) != 0u;
+	const bool bEditorShowFlag					= (RenderFlags & NANITE_RENDER_FLAG_EDITOR_SHOW_FLAG_ENABLED) != 0u;
+	const bool bGameShowFlag					= (RenderFlags & NANITE_RENDER_FLAG_GAME_SHOW_FLAG_ENABLED) != 0u;
+	const bool bIsLumenCapture					= (RenderFlags & NANITE_RENDER_FLAG_IS_LUMEN_CAPTURE) != 0u;
+
+	if (bForceHidden)
+	{
+		// Primitive is forcibly hidden
+		return false;
+	}
+
+	if (bIsShadowPass && !bCastShadow)
+	{
+		// Only shadow casting primitives are visible in a shadow pass
+		return false;
+	}
+
+	if (bIsLumenCapture)
+	{
+		// No need to capture this primitive, as it isn't tracked by Lumen scene
+		if (!bVisibleInLumenScene)
+		{
+			return false;
+		}
+
+		// Primitives may be visible only in ray tracing, but we still want to capture them into surface cache
+		if (bVisibleInRayTracing)
+		{
+			return true;
+		}
+	}
+
+	if (bIsSceneCapture)
+	{
+		if (bHiddenInSceneCapture)
+		{
+			return false;
+		}
+	}
+	else if (bVisibleInSceneCaptureOnly)
+	{
+		return false;
+	}
+
+	if (bIsShadowPass && bCastHiddenShadow)
+	{
+		return true;
+	}
+
+	if (bEditorShowFlag)
+	{
+		if (!bVisibleInEditor)
+		{
+			return false;
+		}
+	}
+	else
+	{
+		if (!bVisibleInGame)
+		{
+			return false;
+		}
+
+		// "G" mode in editor viewport
+		if (!bIsGameView && bGameShowFlag && !bVisibleInEditor)
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+//======================
+// Instance culling
+//
+// Culls instances and outputs list of clusters to further cull.
+//======================
+
+uint NumInstances;
+uint NumViews;
+int ImposterMaxPixels;
+
+StructuredBuffer<FInstanceDraw>			InInstanceDraws;
+Buffer<uint>							InOccludedInstancesArgs;
+
+#if INSTANCE_CULL_USE_WORK_GROUP_BUFFER
+uint MaxInstanceWorkGroups;
+Buffer<uint>								InInstanceWorkArgs;
+StructuredBuffer<FInstanceCullingGroupWork> InInstanceWorkGroups;
+
+// These paths are coupled for the time being
+StructuredBuffer<FViewDrawGroup> InViewDrawRanges;
+
+#endif 
+
+#if PRIMITIVE_FILTER
+StructuredBuffer<uint>					InPrimitiveFilterBuffer;
+#endif
+
+RWStructuredBuffer<FInstanceDraw>		OutOccludedInstances;
+RWBuffer<uint>							OutOccludedInstancesArgs;
+RWByteAddressBuffer						OutMainAndPostNodesAndClusterBatches;
+RWStructuredBuffer<FQueueState>			OutQueueState;
+
+#if DEBUG_FLAGS
+RWStructuredBuffer<FNaniteStats>		OutStatsBuffer;
+#endif
+
+
+void WriteOccludedInstance(uint ViewId, uint InstanceId)
+{
+	uint OccludedInstanceOffset = 0;
+	WaveInterlockedAddScalarInGroups(OutOccludedInstancesArgs[3], OutOccludedInstancesArgs[0], 64, 1, OccludedInstanceOffset);
+	OutOccludedInstances[OccludedInstanceOffset].ViewId = ViewId;
+	OutOccludedInstances[OccludedInstanceOffset].InstanceId = InstanceId;
+}
+
+[numthreads(64, 1, 1)]
+void InstanceCull(
+	uint3 GroupId : SV_GroupID,
+	uint GroupThreadIndex : SV_GroupIndex)
+{
+	const uint DispatchIndex = GetUnWrappedDispatchThreadId(GroupId, GroupThreadIndex, 64);
+
+	FViewDrawGroup ViewDrawGroup;
+	ViewDrawGroup.FirstView = 0;
+	ViewDrawGroup.NumViews = 1U;
+
+	const bool bIsPostPass = (CULLING_PASS == CULLING_PASS_OCCLUSION_POST);
+
+#if INSTANCE_CULL_USE_WORK_GROUP_BUFFER
+
+#if DEBUG_FLAGS && CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+	uint NumInstanceWorkGroups = InInstanceWorkArgs[STATIC_GEOMETRY_ONLY ? 0 : 4];
+	if ((RenderFlags & NANITE_RENDER_FLAG_WRITE_STATS) != 0u && DispatchIndex == 0)
+	{
+		InterlockedAdd(OutStatsBuffer[0].NumPostInstancesPreCull, NumInstanceWorkGroups);
+	}
+#endif
+
+#if STATIC_GEOMETRY_ONLY
+	uint WorkItemIndex = GroupId.x;
+#else
+	uint WorkItemIndex = MaxInstanceWorkGroups - 1 - GroupId.x;
+#endif
+	FInstanceCullingGroupWork GroupWorkItem = InInstanceWorkGroups[WorkItemIndex];
+
+	bool bIsRLEPackedChunk = false;
+	uint GroupNumInstances =  UnpackChunkInstanceCount(GroupWorkItem.PackedItemChunkDesc, bIsRLEPackedChunk);
+
+	uint ActiveViewMask = 1u;
+	ViewDrawGroup.FirstView = InViewDrawRanges[GroupWorkItem.ViewGroupId].FirstView;
+#if NANITE_MULTI_VIEW
+	ViewDrawGroup.NumViews = InViewDrawRanges[GroupWorkItem.ViewGroupId].NumViews;
+	ActiveViewMask = GroupWorkItem.ActiveViewMask;
+#endif	
+
+#if DEBUG_FLAGS 
+	if ((RenderFlags & NANITE_RENDER_FLAG_WRITE_STATS) != 0u && GroupThreadIndex == 0)
+	{
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+		// Add the occluded instances to the count
+		InterlockedAdd(OutStatsBuffer[0].NumPostInstancesPreCull, GroupNumInstances);
+#else // CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN/NO_OCCLUSION
+		InterlockedAdd(OutStatsBuffer[0].NumMainInstancesPreCull, GroupNumInstances * countbits(ActiveViewMask));
+#endif
+	}
+#endif
+
+	// Kill overflowing threads.
+	if (GroupThreadIndex >= GroupNumInstances)
+	{
+		return;
+	}
+
+
+	// Unpack compressed ID OR load the instance ID from the buffer (this is the ID buffer prepped during hierarchy build).
+	uint InstanceId = UnpackChunkInstanceId(bIsRLEPackedChunk, GroupWorkItem.PackedItemChunkDesc, GroupThreadIndex);
+	{
+
+#else // !INSTANCE_CULL_USE_WORK_GROUP_BUFFER
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+	uint NumInstancesLocal = InOccludedInstancesArgs[3];
+
+#if DEBUG_FLAGS
+	if ((RenderFlags & NANITE_RENDER_FLAG_WRITE_STATS) != 0u && DispatchIndex == 0)
+	{
+		InterlockedAdd(OutStatsBuffer[0].NumPostInstancesPreCull, NumInstancesLocal);
+	}
+#endif
+
+#else
+	uint NumInstancesLocal = NumInstances;
+#endif
+
+	if (DispatchIndex < NumInstancesLocal)
+	{
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST || CULLING_PASS == CULLING_PASS_EXPLICIT_LIST
+		uint InstanceId = InInstanceDraws[DispatchIndex].InstanceId;
+		ViewDrawGroup.FirstView = InInstanceDraws[DispatchIndex].ViewId;
+#else
+		uint InstanceId = DispatchIndex;
+#endif
+#if NANITE_MULTI_VIEW
+	#if CULLING_PASS == CULLING_PASS_NO_OCCLUSION || CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+		ViewDrawGroup.NumViews = NumViews;
+	#endif
+#endif
+
+#endif // INSTANCE_CULL_USE_WORK_GROUP_BUFFER
+
+		uint PrimitiveId;
+		uint InstanceFlags;
+		LoadInstancePrimitiveIdAndFlags(InstanceId, PrimitiveId, InstanceFlags);
+
+		if (PrimitiveId == INVALID_PRIMITIVE_ID || (InstanceFlags & INSTANCE_SCENE_DATA_FLAG_HIDDEN) != 0u)
+		{
+			return;
+		}
+
+		FInstanceSceneData InstanceData = GetInstanceSceneDataUnchecked(InstanceId);
+
+		BRANCH
+		if (InstanceData.NaniteRuntimeResourceID == 0xFFFFFFFFu)
+		{
+			// Only process valid Nanite instances
+			return;
+		}
+
+		FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
+
+	#if PRIMITIVE_FILTER
+		BRANCH
+		if ((InPrimitiveFilterBuffer[InstanceData.PrimitiveId >> 5u] & BitFieldMaskU32(1u, InstanceData.PrimitiveId & 31u)) != 0u)
+		{
+			// Primitive has been filtered out
+			return;
+		}
+	#endif
+
+		const bool bIsShadowPass = (DEPTH_ONLY != 0);
+		
+		BRANCH
+		if (!IsPrimitiveShown(PrimitiveData, RenderFlags, bIsShadowPass))
+		{
+			// Primitive is not visible - cull it
+			return;
+		}
+
+		const float3 LocalBoundsCenter = InstanceData.LocalBoundsCenter;
+		const float3 LocalBoundsExtent = InstanceData.LocalBoundsExtent;
+
+		const uint PrimLightingChannelMask = GetPrimitive_LightingChannelMask_FromFlags(PrimitiveData.Flags);
+
+#if INSTANCE_CULL_USE_WORK_GROUP_BUFFER
+
+		while (ActiveViewMask != 0u)
+		{
+			uint ViewIndex = firstbitlow(ActiveViewMask);
+			ActiveViewMask ^= 1u << ViewIndex;
+#else
+		for (uint ViewIndex = 0; ViewIndex < ViewDrawGroup.NumViews; ++ViewIndex)
+		{
+#endif
+			uint ViewId = ViewDrawGroup.FirstView + ViewIndex;
+
+			FNaniteView NaniteView = GetNaniteView(ViewId);
+			FInstanceDynamicData DynamicData = CalculateInstanceDynamicData(NaniteView, InstanceData);
+
+			const bool bLightingChannelMismatch = NaniteView.bUseLightingChannelMask && ((NaniteView.LightingChannelMask & PrimLightingChannelMask) == 0u);
+
+			BRANCH
+			if (bLightingChannelMismatch)
+			{
+				continue;
+			}
+
+			FBoxCull Cull;
+			// If we know there is only static geometry, then previous-LTW == LocalToTranslatedWorld, this cuts a lot of state especially for the VSM cull that performs looping
+#if STATIC_GEOMETRY_ONLY
+			Cull.Init( NaniteView, LocalBoundsCenter, LocalBoundsExtent, InstanceData.NonUniformScale, DynamicData.LocalToTranslatedWorld, DynamicData.LocalToTranslatedWorld );
+#else
+			Cull.Init( NaniteView, LocalBoundsCenter, LocalBoundsExtent, InstanceData.NonUniformScale, DynamicData.LocalToTranslatedWorld, DynamicData.PrevLocalToTranslatedWorld );
+#endif
+			if( CULLING_PASS == CULLING_PASS_OCCLUSION_POST )
+			{
+				Cull.bSkipCullFrustum = true;
+				Cull.bSkipCullGlobalClipPlane = true;
+			}
+
+#if SUPPORT_FIRST_PERSON_RENDERING
+			if ((PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_IS_FIRST_PERSON) != 0)
+			{
+				// First person primitives potentially deform the geometry outside of its bounds in a view dependent way. They are very unlikely to be occluded anyways,
+				// so to avoid falsely culling them, it is better to simply don't occlusion cull them at all.
+				Cull.bSkipCullHZB = true;
+			}
+#endif // SUPPORT_FIRST_PERSON_RENDERING
+
+			Cull.Distance(PrimitiveData);
+			bool bCacheAsStatic = false;
+
+			Cull.GlobalClipPlane();
+
+			BRANCH
+			if( Cull.bIsVisible )
+			{
+#if VIRTUAL_TEXTURE_TARGET
+				const bool bAllowWPO = VirtualShadowMapIsWPOAllowed(PrimitiveData, NaniteView.TargetLayerIndex);
+				Cull.bEnableWPO = Cull.bEnableWPO && bAllowWPO;
+				
+				bCacheAsStatic = ShouldCacheInstanceAsStatic(InstanceId, (NaniteView.Flags & NANITE_VIEW_FLAG_UNCACHED), bAllowWPO, NaniteView.SceneRendererPrimaryViewId);
+				// If we're rendering into the static cache, it's not safe to use the receiver mask as we may cache that (full) page
+				Cull.bUseReceiverMask = Cull.bUseReceiverMask && !bCacheAsStatic;
+				Cull.PageFlagMask = GetPageFlagMaskForRendering(bCacheAsStatic, InstanceId, NaniteView.SceneRendererPrimaryViewId);
+				Cull.bIsStaticGeometry = bCacheAsStatic;
+				
+				float PixelEstRadius = CalcClipSpaceRadiusEstimate(Cull.bIsOrtho, InstanceData, DynamicData.LocalToTranslatedWorld, NaniteView.ViewToClip) * float(VSM_VIRTUAL_MAX_RESOLUTION_XY);
+				Cull.bDetailGeometry = IsDetailGeometry(bCacheAsStatic, true, PixelEstRadius);
+#endif
+				Cull.FrustumHZB( false );
+			}
+
+		#if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+			if( Cull.bWasOccluded )
+			{
+				WriteOccludedInstance(ViewId, InstanceId);
+			}
+		#endif
+
+			// NOTE: Imposters not supported currently with virtual targets
+#if CULLING_PASS != CULLING_PASS_EXPLICIT_LIST && !VIRTUAL_TEXTURE_TARGET && NANITE_IMPOSTERS_SUPPORTED
+			// Draw imposters
+			const bool bHasNaniteImposter = (PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_NANITE_IMPOSTER) != 0u;
+			if (bHasNaniteImposter && Cull.bIsVisible && !Cull.bWasOccluded)
+			{
+				FFrustumCullData FrustumCull = BoxCullFrustum(LocalBoundsCenter, LocalBoundsExtent, DynamicData.LocalToTranslatedWorld, NaniteView.TranslatedWorldToClip, NaniteView.ViewToClip, Cull.bIsOrtho, Cull.bNearClip, true);
+				FScreenRect Rect = GetScreenRect( NaniteView.ViewRect, FrustumCull, 4 );
+
+				if( all( Rect.Pixels.zw - Rect.Pixels.xy <= ImposterMaxPixels ) )
+				{
+					uint ImposterIndex = PrimitiveData.PackedNaniteFlags & NANITE_IMPOSTER_INDEX_MASK;
+					ImposterIndex = CondMask(ImposterIndex == NANITE_IMPOSTER_INDEX_MASK, INVALID_NANITE_IMPOSTER_INDEX, ImposterIndex);
+					DrawImposter(NaniteView, InstanceData, InstanceId, LocalBoundsCenter, LocalBoundsExtent, ImposterIndex, Rect);
+					Cull.bIsVisible = false;
+				}
+			}
+#endif
+		
+			if( Cull.bIsVisible && !Cull.bWasOccluded )
+			{
+				uint NodeOffset = 0;
+				uint QueueStateIndex = ( CULLING_PASS == CULLING_PASS_OCCLUSION_POST );
+				WaveInterlockedAddScalar_( OutQueueState[ 0 ].PassState[ QueueStateIndex ].NodeWriteOffset, 1, NodeOffset );
+				WaveInterlockedAddScalar(  OutQueueState[ 0 ].PassState[ QueueStateIndex ].NodeCount, 1 );
+
+#if DEBUG_FLAGS
+				if ((RenderFlags & NANITE_RENDER_FLAG_WRITE_STATS) != 0u)
+				{
+				#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+					WaveInterlockedAddScalar( OutStatsBuffer[0].NumPostInstancesPostCull, 1 );
+				#else
+					WaveInterlockedAddScalar( OutStatsBuffer[0].NumMainInstancesPostCull, 1 );
+				#endif
+				}
+#endif
+
+				if(NodeOffset < MaxNodes)
+				{
+					uint Flags = NANITE_CULLING_FLAG_TEST_LOD;
+					if (Cull.bFallbackRaster)
+					{
+						Flags |= NANITE_CULLING_FLAG_FALLBACK_RASTER;
+					}
+					if (Cull.bEnableWPO)
+					{
+						Flags |= NANITE_CULLING_FLAG_ENABLE_WPO;
+					}
+					if (bCacheAsStatic)
+					{
+						Flags |= NANITE_CULLING_FLAG_CACHE_AS_STATIC;
+					}
+
+					FCandidateNode Node;
+					Node.Flags = Flags;
+					Node.ViewId = ViewId;
+					Node.InstanceId = InstanceId;
+					Node.NodeIndex = 0;
+					Node.EnabledBitmask = NANITE_BVH_NODE_ENABLE_MASK;
+					StoreCandidateNode( OutMainAndPostNodesAndClusterBatches, NodeOffset, Node, bIsPostPass );
+				}
+			}
+		}
+	}
+}

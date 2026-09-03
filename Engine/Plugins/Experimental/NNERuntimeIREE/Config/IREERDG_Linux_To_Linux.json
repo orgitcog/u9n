@@ -1,0 +1,11 @@
+{
+	"ImporterCommand": [ "${PLUGIN_DIR}/Binaries/ThirdParty/IREE/Linux/torch-mlir-import-onnx" ],
+	"ImporterArguments": "-o ${OUTPUT_PATH} --opset-version 21 ${INPUT_PATH}",
+	"CompilerCommand": [ "${PLUGIN_DIR}/Binaries/ThirdParty/IREE/Linux/iree-compile" ],
+	"Targets": [
+		{
+			"ShaderPlatform": "VULKAN_SM6",
+			"CompilerArguments": "--iree-hal-target-backends=unreal-shader --iree-unreal-target=sm_75 --iree-unreal-use-structured-buffers --iree-hal-dump-executable-binaries-to=${BINARIES_PATH} -o ${VMFB_PATH} ${INPUT_PATH}"
+		}
+	]
+}

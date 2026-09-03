@@ -1,0 +1,208 @@
+{
+  "chart_of_accounts": {
+    "name": "Standard Business Chart of Accounts",
+    "description": "Hardware architecture model for financial circuit simulation",
+    "accounts": [
+      {
+        "code": "1000",
+        "name": "Assets",
+        "type": "ASSET",
+        "hardware_description": "Primary input/storage subsystem",
+        "parent": null,
+        "children": ["1100", "1200"]
+      },
+      {
+        "code": "1100", 
+        "name": "Current Assets",
+        "type": "ASSET",
+        "hardware_description": "High-speed storage registers",
+        "parent": "1000",
+        "children": ["1101", "1102", "1103"]
+      },
+      {
+        "code": "1101",
+        "name": "Cash",
+        "type": "ASSET", 
+        "hardware_description": "Primary voltage/signal storage register",
+        "parent": "1100",
+        "children": []
+      },
+      {
+        "code": "1102",
+        "name": "Accounts Receivable",
+        "type": "ASSET",
+        "hardware_description": "Pending input signal buffer",
+        "parent": "1100", 
+        "children": []
+      },
+      {
+        "code": "1103",
+        "name": "Inventory",
+        "type": "ASSET",
+        "hardware_description": "Material storage buffer",
+        "parent": "1100",
+        "children": []
+      },
+      {
+        "code": "1200",
+        "name": "Fixed Assets", 
+        "type": "ASSET",
+        "hardware_description": "Permanent infrastructure components",
+        "parent": "1000",
+        "children": ["1201", "1202"]
+      },
+      {
+        "code": "1201",
+        "name": "Equipment",
+        "type": "ASSET",
+        "hardware_description": "Processing equipment nodes",
+        "parent": "1200",
+        "children": []
+      },
+      {
+        "code": "1202",
+        "name": "Buildings",
+        "type": "ASSET", 
+        "hardware_description": "Housing infrastructure modules",
+        "parent": "1200",
+        "children": []
+      },
+      {
+        "code": "2000",
+        "name": "Liabilities",
+        "type": "LIABILITY",
+        "hardware_description": "Output obligation subsystem",
+        "parent": null,
+        "children": ["2100", "2200"]
+      },
+      {
+        "code": "2100",
+        "name": "Current Liabilities",
+        "type": "LIABILITY",
+        "hardware_description": "Short-term output buffers",
+        "parent": "2000",
+        "children": ["2101", "2102"]
+      },
+      {
+        "code": "2101",
+        "name": "Accounts Payable",
+        "type": "LIABILITY",
+        "hardware_description": "Pending output signal queue",
+        "parent": "2100",
+        "children": []
+      },
+      {
+        "code": "2102", 
+        "name": "Short-term Loans",
+        "type": "LIABILITY",
+        "hardware_description": "Temporary power injection points",
+        "parent": "2100",
+        "children": []
+      },
+      {
+        "code": "2200",
+        "name": "Long-term Liabilities",
+        "type": "LIABILITY",
+        "hardware_description": "Permanent output commitment modules",
+        "parent": "2000", 
+        "children": ["2201"]
+      },
+      {
+        "code": "2201",
+        "name": "Long-term Loans",
+        "type": "LIABILITY",
+        "hardware_description": "Extended power supply contracts",
+        "parent": "2200",
+        "children": []
+      },
+      {
+        "code": "3000",
+        "name": "Equity",
+        "type": "EQUITY",
+        "hardware_description": "Core processing unit",
+        "parent": null,
+        "children": ["3100", "3200"]
+      },
+      {
+        "code": "3100",
+        "name": "Owner's Equity", 
+        "type": "EQUITY",
+        "hardware_description": "Primary control processor",
+        "parent": "3000",
+        "children": []
+      },
+      {
+        "code": "3200",
+        "name": "Retained Earnings",
+        "type": "EQUITY",
+        "hardware_description": "Accumulated processing gains storage",
+        "parent": "3000",
+        "children": []
+      },
+      {
+        "code": "4000",
+        "name": "Revenue",
+        "type": "REVENUE",
+        "hardware_description": "Signal generation subsystem",
+        "parent": null,
+        "children": ["4100", "4200"]
+      },
+      {
+        "code": "4100",
+        "name": "Sales Revenue",
+        "type": "REVENUE",
+        "hardware_description": "Primary signal generators",
+        "parent": "4000",
+        "children": []
+      },
+      {
+        "code": "4200",
+        "name": "Service Revenue",
+        "type": "REVENUE", 
+        "hardware_description": "Secondary signal generators",
+        "parent": "4000",
+        "children": []
+      },
+      {
+        "code": "5000",
+        "name": "Expenses",
+        "type": "EXPENSE",
+        "hardware_description": "Signal consumption subsystem",
+        "parent": null,
+        "children": ["5100"]
+      },
+      {
+        "code": "5100",
+        "name": "Operating Expenses",
+        "type": "EXPENSE",
+        "hardware_description": "Primary signal consumption modules",
+        "parent": "5000",
+        "children": ["5101", "5102", "5103"]
+      },
+      {
+        "code": "5101",
+        "name": "Salaries Expense",
+        "type": "EXPENSE",
+        "hardware_description": "Human resource power consumption",
+        "parent": "5100",
+        "children": []
+      },
+      {
+        "code": "5102",
+        "name": "Rent Expense", 
+        "type": "EXPENSE",
+        "hardware_description": "Infrastructure power consumption",
+        "parent": "5100",
+        "children": []
+      },
+      {
+        "code": "5103",
+        "name": "Utilities Expense",
+        "type": "EXPENSE",
+        "hardware_description": "Utility power consumption nodes",
+        "parent": "5100",
+        "children": []
+      }
+    ]
+  }
+}

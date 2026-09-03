@@ -1,0 +1,18 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+// Optionally boost albedo, but don't allow it to reach 1 as multi-bounce would explode
+float3 ApplyDiffuseColorBoost(float3 DiffuseColor, float DiffuseColorBoost)
+{
+	if (DiffuseColorBoost < 1.0f)
+	{
+		float DiffuseLum = Luminance(DiffuseColor);
+		float DiffuseLumBoost = pow(DiffuseLum, DiffuseColorBoost);
+		DiffuseColor = min(saturate(DiffuseColor * (DiffuseLumBoost / max(DiffuseLum, 1e-8f))), 0.99f);
+	}
+
+	DiffuseColor = DiffuseColor.rgb * View.DiffuseOverrideParameter.w + View.DiffuseOverrideParameter.xyz;
+
+	return DiffuseColor;
+}

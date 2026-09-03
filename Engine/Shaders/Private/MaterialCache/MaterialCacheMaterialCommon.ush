@@ -1,0 +1,69 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#pragma once
+
+#include "/Engine/Private/SceneData.ush"
+#include "/Engine/Private/MaterialCache/MaterialCacheABuffer.ush"
+
+bool GetMaterialCacheState()
+{
+#if MATERIAL_CACHE
+	return true;
+#else // MATERIAL_CACHE
+	return false;
+#endif // MATERIAL_CACHE
+}
+
+uint2 GetMaterialCacheTextureDescriptor(FPrimitiveSceneData PrimitiveData)
+{
+	return PrimitiveData.MaterialCacheTextureDescriptor;
+}
+
+uint GetMaterialCacheTextureCoordinateIndex(FPrimitiveSceneData PrimitiveData)
+{
+	return GetMaterialCacheTextureDescriptor(PrimitiveData).y >> 30;
+}
+
+bool GetMaterialCacheTextureDescriptorIsValid(FPrimitiveSceneData PrimitiveData)
+{
+	return GetMaterialCacheTextureDescriptor(PrimitiveData).x != 0;
+}
+
+/** 
+ * Material virtual getters
+ * VT schema currently just stores the ABuffer, will probably change
+ */
+
+float3 GetMaterialCacheBaseColor(float4 Layer)
+{
+	return Layer.xyz;
+}
+
+float3 GetMaterialCacheRoughness(float4 Layer)
+{
+	return Layer.w;
+}
+
+float3 GetMaterialCacheWorldNormal(float4 Layer)
+{
+	return OctahedronToUnitVector(Layer.xy * 2.0f - 1.0f);
+}
+
+float3 GetMaterialCacheSpecular(float4 Layer)
+{
+	return Layer.z;
+}
+
+float3 GetMaterialCacheOpacity(float4 Layer)
+{
+	return Layer.w;
+}
+
+float3 GetMaterialCacheMetallic(float4 Layer)
+{
+	return Layer.x;
+}
+
+float3 GetMaterialCacheWorldPositionOffset(float4 Layer)
+{
+	return UnpackMaterialCacheWorldPositionOffset(Layer.zyw);
+}

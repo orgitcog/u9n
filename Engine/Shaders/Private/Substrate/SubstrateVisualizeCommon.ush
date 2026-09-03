@@ -1,0 +1,306 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+
+#if SUBSTRATE_ENABLED
+
+#include "/Engine/Private/ShaderPrint.ush"
+
+#ifndef SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+#error SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE needs to be defined
+#endif
+
+void DrawReferentialTWS(float3 P /*In Translated World Space*/, float3 X, float3 Y, float3 N, float3 InColor)
+{
+	const float Size = 10.f;
+	const float SizeWithTip = 12.0f;
+	const float4 Color = float4(InColor, 1);
+	const float4 ColorX = float4(1, 0, 0, 1);
+	const float4 ColorY = float4(0, 1, 0, 1);
+	const float4 ColorZ = float4(0, 0, 1, 1);
+
+	// Core
+	AddLineTWS(P, P + X * Size, Color, Color);
+	AddLineTWS(P, P + Y * Size, Color, Color);
+	AddLineTWS(P, P + N * Size, Color, Color);
+	// Tips
+	AddLineTWS(P + X * Size, P + X * SizeWithTip, ColorX, ColorX);
+	AddLineTWS(P + Y * Size, P + Y * SizeWithTip, ColorY, ColorY);
+	AddLineTWS(P + N * Size, P + N * SizeWithTip, ColorZ, ColorZ);
+}
+
+void AddDrawPixelFootprint(float3 P, float3 dPdx, float3 dPdy, float2 Scale, bool bNormalize, float4 Color)
+{
+	const float3 T = (bNormalize ? normalize(dPdx) : dPdx) * Scale.x;
+	const float3 B = (bNormalize ? normalize(dPdy) : dPdy) * Scale.y;
+	const float3 N = normalize(cross(T, B));
+
+	const float3 WP0 = P - T - B;
+	const float3 WP1 = P + T - B;
+	const float3 WP2 = P + T + B;
+	const float3 WP3 = P - T + B;
+
+	AddLineTWS(WP0, WP1, Color);
+	AddLineTWS(WP1, WP2, Color);
+	AddLineTWS(WP2, WP3, Color);
+	AddLineTWS(WP3, WP0, Color);
+}
+
+#if SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+void DrawPixelFootprint(float3 P, float3 dPdx, float3 dPdy, uint2 PixelCoord)
+{
+	const FSubstrateSubsurfaceHeader SSSHeader = SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, PixelCoord);
+	const bool bIsValid = SubstrateSubSurfaceHeaderGetIsValid(SSSHeader);
+	const bool bIsProfile = SubstrateSubSurfaceHeaderGetIsProfile(SSSHeader);
+
+	if (bIsValid)
+	{
+		float3 MFP = 0;
+		if (bIsProfile)
+		{
+			MFP = GetSubsurfaceProfileMFPInCm(SubstrateSubSurfaceHeaderGetProfileId(SSSHeader)).xyz * SubstrateSubSurfaceHeaderGetProfileRadiusScale(SSSHeader);
+		}
+		else
+		{
+			MFP = SubstrateSubSurfaceHeaderGetMFP(SSSHeader);
+		}
+
+		FSubstratePixelFootprint Footprint = SubstrateGetPixelFootprint(dPdx, dPdy, 0.f /*InNormalCurvatureRoughness*/);
+		AddDrawPixelFootprint(P, dPdx, dPdy, 0.5f, false, ColorRed);
+		AddDrawPixelFootprint(P, dPdx, dPdy, Footprint.PixelRadiusInWorldSpace, true, ColorOrange);
+		AddDrawPixelFootprint(P, dPdx, dPdy, max3(MFP.x, MFP.y, MFP.z), true, ColorCyan);
+	}
+}
+#endif
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Material Print
+
+void PrintPixelType(inout FShaderPrintContext Ctx, in FSubstratePixelHeader Header, FFontColor InColor)
+{
+	if (Header.IsSimpleMaterial())						Print(Ctx, TEXT("Simple  "), InColor);
+	else if (Header.IsSingleMaterial())					Print(Ctx, TEXT("Single  "), InColor);
+	else if (Header.IsComplexSpecialMaterial())			Print(Ctx, TEXT("Complex Special "), InColor);
+	else if (Header.IsComplexMaterial())				Print(Ctx, TEXT("Complex "), InColor);
+	else if (Header.IsSingleLayerWater())				Print(Ctx, TEXT("SLWater "), InColor);
+	else if (Header.IsHair())							Print(Ctx, TEXT("Hair    "), InColor);
+	else if (Header.IsEye())							Print(Ctx, TEXT("Eye     "), InColor);
+	else												Print(Ctx, TEXT("Error - Unkown pixel type"), FontRed);
+}
+
+void PrintSSSType(inout FShaderPrintContext Ctx, uint SSSType, bool bThin, FFontColor InColor)
+{
+		 if (SSSType == SSS_TYPE_TWO_SIDED_WRAP)	Print(Ctx, TEXT("Two-Sided Wrap"), InColor);
+	else if (SSSType == SSS_TYPE_WRAP)				Print(Ctx, TEXT("Wrap"), InColor);
+	else if (SSSType == SSS_TYPE_DIFFUSION)			Print(Ctx, TEXT("Diffusion"), InColor);
+	else if (SSSType == SSS_TYPE_DIFFUSION_PROFILE)	Print(Ctx, TEXT("Diffusion Profile"), InColor);
+	else if (SSSType == SSS_TYPE_SIMPLEVOLUME)		Print(Ctx, TEXT("Simple Volume"), InColor);
+	else if (bThin)									Print(Ctx, TEXT("Thin"), InColor);
+	else /*	(SSSType == SSS_TYPE_NONE) */			Print(Ctx, TEXT("None"), InColor);
+}
+
+void PrintBackgroundRect(inout FShaderPrintContext Ctx, float2 StartRect, float2 EndRect)
+{
+	const float4 RectBackgroundColor = float4(1, 1, 1, 0.25f);
+	AddFilledQuadSS(
+		(StartRect - ShaderPrintData.FontSize) * ShaderPrintData.Resolution,
+		(EndRect + ShaderPrintData.FontSize) * ShaderPrintData.Resolution,
+		RectBackgroundColor);
+}
+
+void PrintAddress(inout FShaderPrintContext Context, inout FSubstrateAddressing SubstrateAddressing)
+{
+	FFontColor Font;
+	Font.Color = lerp(FontEmerald.Color, FontSilver.Color, 0.75f);
+	Print(Context, TEXT("[Address="), Font);
+	Print(Context, SubstrateAddressing.CurrentIndex, Font, 2, 0);
+	Print(Context, TEXT("]"), Font);
+}
+
+void SubstratePrintBSDF(
+	inout FShaderPrintContext Context, 
+	inout FSubstrateAddressing SubstrateAddressing, 
+	FSubstratePixelHeader Header, 
+	FSubstrateSubsurfaceHeader SSSHeader,
+	float3 WorldPosition, 
+	float3 V, 
+	inout float2 RectMax, 
+	FSubstrateRaytracingPayload Payload)
+{
+	#if SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+	const FSubstrateBSDF BSDF = UnpackSubstrateBSDFIn(Substrate.MaterialTextureArray, SubstrateAddressing, Header);
+	#else
+	const FSubstrateBSDF BSDF = UnpackSubstrateBSDFIn(Payload, SubstrateAddressing, Header); // Take the parameter of the first BSDF
+	#endif
+
+	const float LineSize = 5.f;
+	float3 WorldNormal = 0.0f;
+	// Draw Referential
+	#if SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+	{
+		const float3 DummyL = float3(0, 0, 1);
+		FSubstrateBSDFContext BSDFContext = SubstrateCreateBSDFContext(Header, BSDF, SubstrateAddressing, V, DummyL);
+		DrawReferentialTWS(WorldPosition, BSDFContext.X, BSDFContext.Y, BSDFContext.N, float3(1, 1, 0));
+		WorldNormal = BSDFContext.N;
+	}
+	#else
+	{
+		const float3x3 TangentBasis = SubstrateGetBSDFSharedBasis(Header, BSDF, SubstrateAddressing);
+		DrawReferentialTWS(WorldPosition, TangentBasis[0], TangentBasis[1], TangentBasis[2], float3(1, 1, 0));
+		WorldNormal = TangentBasis[2];
+	}
+	#endif
+
+	switch (BSDF_GETTYPE(BSDF))
+	{
+		case SUBSTRATE_BSDF_TYPE_SLAB:
+		{
+			const bool bHasHaziness = BSDF_GETHASHAZINESS(BSDF);
+			if (bHasHaziness)
+			{
+				FHaziness Haziness = UnpackHaziness(SLAB_HAZINESS(BSDF));
+				const bool  bHazeAsSimpleClearCoat = Haziness.bSimpleClearCoat;
+
+			#if CLEAR_COAT_BOTTOM_NORMAL
+				if (Haziness.HasBottomNormal())
+				{
+					const float3 BottomNormal = SubstrateGetSimpleCoatBottomNormal(Haziness.BottomNormalOct, WorldNormal);
+					AddLineTWS(WorldPosition, WorldPosition + BottomNormal * 20.0f, float4(0, 1, 0, 1), float4(0, 1, 0, 1));
+				}
+			#endif
+			}
+		}
+		break;
+
+		case SUBSTRATE_BSDF_TYPE_HAIR:
+		{
+		}
+		break;
+
+		case SUBSTRATE_BSDF_TYPE_EYE:
+		{
+			// Tangent basis for the iris
+			const float3x3 IrisTangentBasis = GetTangentBasis(EYE_IRISNORMAL(BSDF));
+			//DrawReferentialTWS(WorldPosition, IrisTangentBasis[0], IrisTangentBasis[1], IrisTangentBasis[2], float3(0, 1, 1));
+			AddLineTWS(WorldPosition, WorldPosition + EYE_IRISNORMAL(BSDF) * LineSize, float4(0, 1, 1, 1));
+
+			// Tangent basis for the iris plane
+			const float3x3 IrisPlaneTangentBasis = GetTangentBasis(EYE_IRISPLANENORMAL(BSDF));
+			//DrawReferentialTWS(WorldPosition, IrisPlaneTangentBasis[0], IrisPlaneTangentBasis[1], IrisPlaneTangentBasis[2], float3(1, 0, 1));
+			AddLineTWS(WorldPosition, WorldPosition + EYE_IRISPLANENORMAL(BSDF) * LineSize, float4(1, 0, 1, 1));
+
+		}
+		break;
+
+		case SUBSTRATE_BSDF_TYPE_SINGLELAYERWATER:
+		{
+		}
+		break;
+
+	default:
+		{
+			Print(Context, TEXT("Error - Uknown BSDF type"), FontRed);
+		}
+		break;
+	}
+}
+
+void SubstratePrintMaterialProperties_Internal(
+	inout FShaderPrintContext Context, 
+	uint2 InCoord, 
+	float3 InWorldPosition, 
+	float3 V, 
+	uint InClosureIndex, 
+	inout FSubstrateAddressing SubstrateAddressing, 
+	FSubstratePixelHeader Header,
+	FSubstrateSubsurfaceHeader SSSHeader,
+	FSubstrateTopLayerData TopLayerData,
+	FSubstrateRaytracingPayload Payload,
+	const uint FootPrint_Start,
+	const uint FootPrint_PostHeader)
+{
+	const FFontColor FontBSDFCount = FontEmerald;
+	const FFontColor FontHeaderStateName = FontWhite;
+	const FFontColor FontHeaderPropName = FontWhite;
+	const FFontColor FontHeaderPropValue = FontSilver;
+
+	// Backgroun rect. for better print visibility. Track min/max point
+	float2 RectMin = Context.Pos;
+	float2 RectMax = Context.StartPos;
+
+	// BSDFs
+	if (InClosureIndex < Header.ClosureCount)
+	{
+		#if SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE && SUBTRATE_GBUFFER_FORMAT==1 && SUBSTRATE_MATERIAL_CLOSURE_COUNT > 1
+		if (InClosureIndex > 0)
+		{
+			const uint AddressOffset = UnpackClosureOffsetAtIndex(Substrate.ClosureOffsetTexture[InCoord], InClosureIndex, Header.ClosureCount);
+			SubstrateSeekClosure(SubstrateAddressing, AddressOffset);
+		}
+		#endif
+
+		RectMin = Context.Pos;
+		RectMax = Context.StartPos;
+		SubstratePrintBSDF(Context, SubstrateAddressing, Header, SSSHeader, InWorldPosition, V, RectMax, Payload);
+	}
+}
+
+#if SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+void SubstratePrintMaterialProperties(inout FShaderPrintContext Context, uint2 InCoord, float3 InWorldPosition, float3 V, uint InClosureIndex)
+{
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(InCoord, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	const uint FootPrint_Start = SubstrateAddressing.ReadBytes;
+
+	FSubstratePixelHeader Header = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+	const uint FootPrint_PostHeader = SubstrateAddressing.ReadBytes;
+
+	FSubstrateSubsurfaceHeader SSSHeader = SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, SubstrateAddressing.PixelCoords);
+	FSubstrateRaytracingPayload DummyPayload;
+	FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(InCoord, 0)));
+
+	SubstratePrintMaterialProperties_Internal(
+		Context, 
+		InCoord, 
+		InWorldPosition, 
+		V, 
+		InClosureIndex, 
+		SubstrateAddressing,
+		Header,
+		SSSHeader,
+		TopLayerData,
+		DummyPayload, 
+		FootPrint_Start, 
+		FootPrint_PostHeader);
+}
+#else
+void SubstratePrintMaterialProperties(inout FShaderPrintContext Context, uint2 InCoord, float3 InWorldPosition, float3 V, uint InClosureIndex, FSubstrateRaytracingPayload Payload)
+{
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(InCoord, uint2(View.BufferSizeAndInvSize.xy), 0);	
+	const uint FootPrint_Start = SubstrateAddressing.ReadBytes;
+	
+	FSubstratePixelHeader Header = UnpackSubstrateHeaderIn(Payload, SubstrateAddressing, Payload);
+	const uint FootPrint_PostHeader = SubstrateAddressing.ReadBytes;
+
+	FSubstrateSubsurfaceHeader SSSHeader = (FSubstrateSubsurfaceHeader)0;
+	FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Payload.PackedTopLayerData);
+
+	for (uint ClosureIndex=0;ClosureIndex<Header.ClosureCount;ClosureIndex++)
+	{
+		SubstratePrintMaterialProperties_Internal(
+			Context, 
+			InCoord, 
+			InWorldPosition, 
+			V, 
+			InClosureIndex, 
+			SubstrateAddressing,
+			Header,
+			SSSHeader,
+			TopLayerData,
+			Payload,
+			FootPrint_Start,
+			FootPrint_PostHeader);
+	}
+}
+#endif
+
+#endif // SUBSTRATE_ENABLED

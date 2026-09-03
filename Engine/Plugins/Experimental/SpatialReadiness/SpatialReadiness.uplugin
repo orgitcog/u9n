@@ -1,0 +1,19 @@
+{
+	"FileVersion": 1,
+	"CanContainContent": false,
+	"ExplicitlyLoaded": false,
+	"EnabledByDefault": false,
+	"Modules": [
+		{
+			"Name": "SpatialReadiness",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ChaosUserDataPT",
+			"Enabled": true
+		}
+	]
+}

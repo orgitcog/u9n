@@ -1,0 +1,88 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Shared/MaterialCacheDefinitions.h"
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/Nanite/NaniteShadeCommon.ush"
+#include "/Engine/Private/MortonCode.ush"
+#include "/Engine/Public/RootConstants.ush"
+#include "/Engine/Private/MaterialCache/MaterialCacheABuffer.ush"
+
+#define SceneTexturesStruct MaterialCachePass.SceneTextures 
+#define EyeAdaptationStruct MaterialCachePass
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+#include "/Engine/Generated/UniformBuffers/MaterialCachePass.ush"
+#include "/Engine/Private/MaterialCache/MaterialCacheShadeCommon.ush"
+
+COMPILER_ALLOW_CS_DERIVATIVES
+
+Buffer<uint> PageIndirections;
+
+FMaterialCacheABuffer ShadeAttributes(in FPackedNaniteView PackedView, uint2 VisBufferPixelPos, uint ViewIndex)
+{
+	ResolvedView = ResolveView();
+
+	FVertexFactoryInterpolantsVSToPS Interpolants = (FVertexFactoryInterpolantsVSToPS)0;
+	Interpolants.PixelPos  = VisBufferPixelPos;
+	Interpolants.ViewIndex = ViewIndex;
+
+	FNaniteView NaniteView = UnpackNaniteView(PackedView);
+	PatchViewState(NaniteView, ResolvedView);
+
+	float4 SvPosition                    = float4(VisBufferPixelPos + 0.5f.xx, 0.0f, 1.0f);
+	const float4 ScreenPosition          = SvPositionToResolvedScreenPosition(SvPosition);
+	const float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(NaniteView, Interpolants, SvPosition);
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, true, TranslatedWorldPosition, TranslatedWorldPosition);
+
+	return GetMaterialABuffer(MaterialParameters, PixelMaterialInputs);
+}
+
+[numthreads(64, 1, 1)]
+void Main(uint3 DTid : SV_DispatchThreadID)
+{
+	const uint PageIndex     = PageIndirections[GetRootConstant0() + DTid.y];
+	const uint ShadingBin	 = GetRootConstant1();
+	const uint MeshPassIndex = GetRootConstant2();
+
+	const EMaterialCacheFlag    Flags      = (EMaterialCacheFlag)GetRootConstant1();
+	const FPackedNaniteView     PackedView = NaniteShading.InViews[PageIndex];
+	const FMaterialCacheBinData BinData    = NaniteShading.ShadingBinData.Load<FMaterialCacheBinData>(sizeof(FMaterialCacheBinData) * PageIndex);
+	
+	// Tile width guaranteed to be power of two, Morton is fine
+	const uint2 PagePixelPos      = MortonDecode(DTid.x);
+	const uint2 VisBufferPixelPos = PackedView.ViewRect.xy + PagePixelPos;
+	
+	uint DepthInt = 0;
+	uint VisibleClusterIndex = 0;
+	uint TriIndex = 0;
+	UnpackVisPixel(NaniteShading.VisBuffer64[VisBufferPixelPos], DepthInt, VisibleClusterIndex, TriIndex);
+	
+	if (VisibleClusterIndex == 0xFFFFFFFF)
+	{
+		return;
+	}
+	
+	FVisibleCluster    VisibleCluster = GetVisibleCluster(VisibleClusterIndex);
+	FInstanceSceneData InstanceData   = GetInstanceSceneDataUnchecked(VisibleCluster);
+	FCluster           ClusterData    = GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
+
+	const uint PixelShadingBin = GetMaterialShadingBin(ClusterData, InstanceData.PrimitiveId, MeshPassIndex, TriIndex);
+	if (PixelShadingBin != ShadingBin)
+	{
+		return;
+	}
+	
+	// Shader against the current layer
+	FMaterialCacheABuffer Top = ShadeAttributes(PackedView, VisBufferPixelPos, PageIndex);
+	if (Top.Clipped)
+	{
+		return;
+	}
+
+	StoreMaterialABufferPixel(Top, Flags, BinData.ABufferPhysicalPosition, PagePixelPos);
+}

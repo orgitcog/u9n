@@ -1,0 +1,155 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenTranslucencyRadianceCacheMarkShaders.usf
+=============================================================================*/
+
+#include "../Common.ush"
+#include "../BRDF.ush"
+
+// Material pass reroutes
+#define SceneTexturesStruct LumenTranslucencyRadianceCacheMarkPass.SceneTextures
+
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+
+// Lumen specific pass reroutes
+#define RadianceCacheMark LumenTranslucencyRadianceCacheMarkPass
+#define RWRadianceProbeIndirectionTexture LumenTranslucencyRadianceCacheMarkPass.RWRadianceProbeIndirectionTexture
+
+#include "LumenRadianceCacheMarkCommon.ush"
+
+// unused but necessary to avoid error compiling TranslucencyVolumeCommon.ush on some platforms
+Texture3D TranslucencyLightingVolumeAmbientInner;
+Texture3D TranslucencyLightingVolumeAmbientOuter;
+Texture3D TranslucencyLightingVolumeDirectionalInner;
+Texture3D TranslucencyLightingVolumeDirectionalOuter;
+
+#include "../TranslucencyVolumeCommon.ush"
+
+struct FLumenTranslucencyRadianceCacheMarkInterpolantsVSToPS
+{
+
+};
+
+struct FLumenTranslucencyRadianceCacheMarkVSToPS
+{
+	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
+	FLumenTranslucencyRadianceCacheMarkInterpolantsVSToPS PassInterpolants;
+	float4 Position : SV_POSITION;
+};
+
+void MainVS(
+	FVertexFactoryInput Input,
+	out FLumenTranslucencyRadianceCacheMarkVSToPS Output
+	)
+{	
+	uint EyeIndex = 0;
+	ResolvedView = ResolveView();
+
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+	float4 WorldPositionExcludingWPO = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+	float4 WorldPosition = WorldPositionExcludingWPO;
+	float4 ClipSpacePosition;
+
+	float3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);	
+	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPosition.xyz, TangentToLocal);
+
+	ISOLATE
+	{
+		WorldPosition.xyz += GetMaterialWorldPositionOffset(VertexParameters);
+		ApplyMaterialFirstPersonTransform(VertexParameters, WorldPosition.xyz);
+		float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPosition);
+		ClipSpacePosition = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
+		Output.Position = ClipSpacePosition;
+	}
+
+	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
+}
+
+void MarkTranslucencyLightingVoxel(RWTexture3D<uint> MarkTexture, int3 VoxelCoord)
+{
+	if (all(VoxelCoord >= 0) && all(VoxelCoord < (int3)LumenTranslucencyRadianceCacheMarkPass.TranslucencyLightingVolumeSize))
+	{
+		MarkTexture[VoxelCoord] = 255;
+	}
+}
+
+void MarkTranslucencyLightingVoxelTrilinear(RWTexture3D<uint> MarkTexture, float3 UVs)
+{
+	float3 VoxelCoord = UVs / View.TranslucencyLightingVolumeMin[0].w;
+	int3 BottomCornerCoord = floor(VoxelCoord - 0.5f);
+
+	MarkTranslucencyLightingVoxel(MarkTexture, BottomCornerCoord + int3(0, 0, 0));
+	MarkTranslucencyLightingVoxel(MarkTexture, BottomCornerCoord + int3(0, 0, 1));
+	MarkTranslucencyLightingVoxel(MarkTexture, BottomCornerCoord + int3(0, 1, 0));
+	MarkTranslucencyLightingVoxel(MarkTexture, BottomCornerCoord + int3(0, 1, 1));
+	MarkTranslucencyLightingVoxel(MarkTexture, BottomCornerCoord + int3(1, 0, 0));
+	MarkTranslucencyLightingVoxel(MarkTexture, BottomCornerCoord + int3(1, 0, 1));
+	MarkTranslucencyLightingVoxel(MarkTexture, BottomCornerCoord + int3(1, 1, 0));
+	MarkTranslucencyLightingVoxel(MarkTexture, BottomCornerCoord + int3(1, 1, 1));
+}
+
+EARLYDEPTHSTENCIL
+void MainPS(
+	FVertexFactoryInterpolantsVSToPS Interpolants,
+	FLumenTranslucencyRadianceCacheMarkInterpolantsVSToPS PassInterpolants,
+	in INPUT_POSITION_QUALIFIERS float4 SvPosition : SV_Position		
+	OPTIONAL_IsFrontFace)
+{
+	ResolvedView = ResolveView();
+	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Interpolants, SvPosition);
+
+	FPixelMaterialInputs PixelMaterialInputs;
+	
+	{
+		float4 ScreenPosition = SvPositionToResolvedScreenPosition(SvPosition);
+		float3 TranslatedWorldPosition = SvPositionToResolvedTranslatedWorld(SvPosition);
+		CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, bIsFrontFace, TranslatedWorldPosition, TranslatedWorldPosition);
+	}
+
+	GetMaterialCoverageAndClipping(MaterialParameters, PixelMaterialInputs);
+
+	float MaxDepth = 1000000.0f;
+#define CULL_TO_HZB 1
+#if CULL_TO_HZB
+	float2 HZBScreenUV = (SvPosition.xy - View.ViewRectMin.xy) * View.ViewSizeAndInvSize.zw * LumenTranslucencyRadianceCacheMarkPass.ViewportUVToHZBBufferUV;
+
+	MaxDepth = ConvertFromDeviceZ(LumenTranslucencyRadianceCacheMarkPass.FurthestHZBTexture.SampleLevel(GlobalPointClampedSampler, HZBScreenUV, LumenTranslucencyRadianceCacheMarkPass.HZBMipLevel).x);
+#endif
+
+	if (LumenTranslucencyRadianceCacheMarkPass.UseHZBTest > 0 && MaterialParameters.ScreenPosition.w >= MaxDepth)
+	{
+		return;
+	}
+
+	if (LumenTranslucencyRadianceCacheMarkPass.MarkRadianceCache > 0)
+	{
+		//@todo - conservative coverage
+		uint ClipmapIndex = GetRadianceProbeClipmapForMark(WSHackToFloat(GetWorldPosition(MaterialParameters)), InterleavedGradientNoise(MaterialParameters.SvPosition.xy, View.StateFrameIndexMod8));
+		if (IsValidRadianceCacheClipmapForMark(ClipmapIndex))
+		{
+			MarkPositionUsedInIndirectionTexture(WSHackToFloat(GetWorldPosition(MaterialParameters)), ClipmapIndex);
+		}
+	}
+
+	if (LumenTranslucencyRadianceCacheMarkPass.MarkTranslucencyLightingVolume > 0)
+	{
+		float3 LightingPositionOffset = 0.0f;
+
+		float3 InnerVolumeUVs;
+		float3 OuterVolumeUVs;
+		float FinalLerpFactor;
+		ComputeVolumeUVs(GetTranslatedWorldPosition(MaterialParameters), LightingPositionOffset, InnerVolumeUVs, OuterVolumeUVs, FinalLerpFactor);
+		
+		if(FinalLerpFactor > 0.0f)
+		{
+			MarkTranslucencyLightingVoxelTrilinear(LumenTranslucencyRadianceCacheMarkPass.InnerVolumeMarkTexture, InnerVolumeUVs);
+		}
+
+		if(FinalLerpFactor < 1.0f)
+		{
+			MarkTranslucencyLightingVoxelTrilinear(LumenTranslucencyRadianceCacheMarkPass.OuterVolumeMarkTexture, OuterVolumeUVs);
+		}
+	}
+}

@@ -1,0 +1,43 @@
+{
+	"Version": 1,
+	"Name": [
+		{
+			"Language": "en",
+			"Text": "FirstPerson Shared Resource Standard"
+		}
+	],
+	"Description": [
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for FirstPerson"
+		}
+	],
+	"AssetTypes": [
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags": [
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "Variant_Horror.png",
+	"Screenshots": [
+		"Variant_Horror_Preview.png"
+	],
+	"Ident": "Variant_HorrorStandard",
+	"AdditionalFiles": {
+		"DestinationFilesFolder": "Variant_Horror",
+		"AdditionalFilesList": [
+			"Templates/TemplateResources/Standard/Variant_Horror/Content/*.*",
+			"Templates/TemplateResources/Standard/Variant_Horror/__ExternalActors__/*.*",
+			"Templates/TemplateResources/Standard/Variant_Horror/__ExternalObjects__/*.*"
+		]
+	}
+}
+

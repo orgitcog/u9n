@@ -1,0 +1,29 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+// Auto-generated export definitions - DO NOT EDIT
+
+#pragma once
+
+// Shared library export/import macros
+#if defined(_WIN32) || defined(__CYGWIN__)
+    #ifdef @DEF_BUILD_SHARED_NAME@
+        #ifdef __GNUC__
+            #define @DEF_EXPORT_ATTR_NAME@ __attribute__((dllexport))
+        #else
+            #define @DEF_EXPORT_ATTR_NAME@ __declspec(dllexport)
+        #endif
+    #elif defined(@DEF_USE_SHARED_NAME@)
+        #ifdef __GNUC__
+            #define @DEF_EXPORT_ATTR_NAME@ __attribute__((dllimport))
+        #else
+            #define @DEF_EXPORT_ATTR_NAME@ __declspec(dllimport)
+        #endif
+    #else
+        #define @DEF_EXPORT_ATTR_NAME@
+    #endif
+#else
+    #if __GNUC__ >= 4
+        #define @DEF_EXPORT_ATTR_NAME@ __attribute__((visibility("default")))
+    #else
+        #define @DEF_EXPORT_ATTR_NAME@
+    #endif
+#endif
