@@ -1,23 +1,3 @@
-#pragma once
-
-#include "CoreMinimal.h"
-#include "GameFramework/Actor.h"
-#include "AGIComms.h"
-#include "AGIPCGManager.generated.h"
-
-UCLASS()
-class DEEPTREEECHOAVATAR_API AAGIPCGManager : public AActor
-{
-	GENERATED_BODY()
-	
-public:	
-	AAGIPCGManager();
-
-protected:
-	virtual void BeginPlay() override;
-
-public:	
-	virtual void Tick(float DeltaTime) override;
-
-	void ExecutePCGCommand(const FPCGCommand& PCGCommand);
-};
+﻿#pragma once
+// Forwarding header after nest-4 restructure. Canonical: Cognition4E/Avatar/UnrealAvatar/AGIPCGManager.h
+#include "Cognition4E/Avatar/UnrealAvatar/AGIPCGManager.h"

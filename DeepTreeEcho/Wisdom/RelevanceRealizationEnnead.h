@@ -256,7 +256,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnWisdomCultivated, float, Level);
  * Implements the triad-of-triads framework for optimal meaning-making
  */
 UCLASS(ClassGroup=(DeepTreeEcho), meta=(BlueprintSpawnableComponent))
-class UNREALECHO_API URelevanceRealizationEnnead : public UActorComponent
+class DEEPTREEECHO_API URelevanceRealizationEnnead : public UActorComponent
 {
     GENERATED_BODY()
 
