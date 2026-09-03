@@ -126,8 +126,10 @@ activation_to_nodes(AtomSpace& space,
 
     auto quality = (skipped == 0) ? ConversionQuality::Lossless
                                    : ConversionQuality::NormalPrecision;
+    // Read size before std::move — argument evaluation order is unspecified
+    const int converted = static_cast<int>(handles.size());
     return ConversionResult<std::vector<Handle>>::success(
-        std::move(handles), static_cast<int>(handles.size()), skipped, quality);
+        std::move(handles), converted, skipped, quality);
 }
 
 // ============================================================================
@@ -182,8 +184,10 @@ matrix_to_links(AtomSpace& space,
 
     auto quality = (skipped == 0) ? ConversionQuality::Lossless
                                    : ConversionQuality::NormalPrecision;
+    // Read size before std::move — argument evaluation order is unspecified
+    const int converted = static_cast<int>(links.size());
     return ConversionResult<std::vector<Handle>>::success(
-        std::move(links), static_cast<int>(links.size()), skipped, quality);
+        std::move(links), converted, skipped, quality);
 }
 
 // ============================================================================
@@ -326,8 +330,10 @@ temporal_pattern_to_atoms(AtomSpace& space,
 
     auto quality = (total_skipped == 0) ? ConversionQuality::Lossless
                                          : ConversionQuality::NormalPrecision;
+    // Read size before std::move — argument evaluation order is unspecified
+    const int converted = static_cast<int>(at_time_links.size());
     return ConversionResult<std::vector<Handle>>::success(
-        std::move(at_time_links), static_cast<int>(at_time_links.size()),
+        std::move(at_time_links), converted,
         total_skipped, quality);
 }
 
