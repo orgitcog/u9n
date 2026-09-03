@@ -1,0 +1,35 @@
+{
+	"FileVersion": 3,
+
+	"FriendlyName": "Socket Subsystem Steam (IP)",
+	"Version": 1,
+	"VersionName": "1.0",
+	"Description": "Responsible for Steam net connections between users. Does NOT use NAT punchthrough, use the SteamSockets plugin for P2P support",
+	"Category": "Online Platform",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"EnabledByDefault": false,
+
+	"Modules": [
+		{
+			"Name": "SocketSubsystemSteamIP",
+			"Type": "RuntimeNoCommandlet",
+			"LoadingPhase": "PostConfigInit",
+			"PlatformAllowList": [
+				"Win64",
+				"Mac"
+			]
+		}
+	],
+
+	"Plugins": [
+		{
+			"Name": "OnlineSubsystemUtils",
+			"Enabled": true
+		},
+		{
+			"Name": "SteamShared",
+			"Enabled": true
+		}
+	]
+}

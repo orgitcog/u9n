@@ -1,0 +1,175 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/GammaCorrectionCommon.ush"
+#include "/Engine/Private/ScreenPass.ush"
+#include "/Engine/Private/LensDistortion.ush"
+
+#define ESourceEncoding_None  0
+#define ESourceEncoding_Gamma 1
+#define ESourceEncoding_sRGB  2
+
+#define EDistortionUV_None        0
+#define EDistortionUV_Distorted   1
+#define EDistortionUV_Undistorted 2
+
+#define ECompositeCoreMergeOp_None 0
+#define ECompositeCoreMergeOp_Over 1
+#define ECompositeCoreMergeOp_Add  2
+#define ECompositeCoreMergeOp_Mul  3
+#define ECompositeCoreMergeOp_Div  4
+
+SCREEN_PASS_TEXTURE_VIEWPORT(Input0)
+SCREEN_PASS_TEXTURE_VIEWPORT(Input1)
+SCREEN_PASS_TEXTURE_VIEWPORT(Output)
+
+#define INPUT_PASS_TEXTURE_MEMBER(StructName, MemberType, MemberName) MemberType StructName##_##MemberName;
+
+#define INPUT_PASS_TEXTURE(StructName) \
+	INPUT_PASS_TEXTURE_MEMBER(StructName, Texture2D, Texture) \
+	INPUT_PASS_TEXTURE_MEMBER(StructName, SamplerState, Sampler) \
+    INPUT_PASS_TEXTURE_MEMBER(StructName, uint, bInvertedAlpha) \
+    INPUT_PASS_TEXTURE_MEMBER(StructName, uint, SourceEncoding) \
+    INPUT_PASS_TEXTURE_MEMBER(StructName, uint, DistortionUV) \
+    INPUT_PASS_TEXTURE_MEMBER(StructName, float, Exposure)
+    
+
+INPUT_PASS_TEXTURE(Tex0);
+INPUT_PASS_TEXTURE(Tex1);
+
+Texture2D<float2> DistortingDisplacementTexture;
+SamplerState DistortingDisplacementSampler;
+Texture2D<float2> UndistortingDisplacementTexture;
+SamplerState UndistortingDisplacementSampler;
+
+float2 DisplayGamma; // DisplayGamma, 1/DisplayGamma
+uint MergeOp;
+uint OutputEncoding;
+uint bFlags; // 0: bInvertedAlphaOutput
+
+float3 Decode(float3 InColor, uint InEncoding)
+{
+    // TODO: HDR cases will need to be handled explicitely.
+    BRANCH
+    if(InEncoding == ESourceEncoding_Gamma)
+    {
+        return pow(InColor, DisplayGamma.x);
+    }
+    else if(InEncoding == ESourceEncoding_sRGB)
+    {
+        return sRGBToLinear(InColor);
+    }
+    else
+    {
+        return InColor;
+    }
+}
+
+float3 Encode(float3 InColor, uint InEncoding)
+{
+    BRANCH
+    if(InEncoding == ESourceEncoding_Gamma)
+    {
+        return pow(InColor, DisplayGamma.y);
+    }
+    else if(InEncoding == ESourceEncoding_sRGB)
+    {
+        return LinearToSrgb(InColor);
+    }
+    else
+    {
+        return InColor;
+    }
+}
+
+float2 CalcInputUVs(float2 ViewportUV, float2 ViewportSize, float2 ViewportMin, float2 ExtentInverse, uint DistortionUVType)
+{
+#if USE_DISTORTION
+    BRANCH
+    if(DistortionUVType == EDistortionUV_Distorted)
+    {
+        ViewportUV = ApplyLensDistortionOnViewportUV(DistortingDisplacementTexture, DistortingDisplacementSampler, ViewportUV);
+    }
+    else if(DistortionUVType == EDistortionUV_Undistorted)
+    {
+        ViewportUV = ApplyLensDistortionOnViewportUV(UndistortingDisplacementTexture, UndistortingDisplacementSampler, ViewportUV);
+    }
+#endif
+
+    return (ViewportUV * ViewportSize + ViewportMin) * ExtentInverse;
+}
+
+float GetOpacity(float InAlpha, uint bInvertedAlpha)
+{
+	return select(bInvertedAlpha > 0, 1.0 - InAlpha, InAlpha);
+}
+
+float SafeDiv(float A, float B)
+{
+    return B == 0.0 ? 0.0 : A / B;
+}
+
+float4 SafeDiv(float4 A, float4 B)
+{
+    return float4(
+        SafeDiv(A[0], B[0]),
+        SafeDiv(A[1], B[1]),
+        SafeDiv(A[2], B[2]),
+        SafeDiv(A[3], B[3])
+    );
+}
+
+void MainPS(
+    float4 SvPosition : SV_POSITION,
+    out float4 OutColor : SV_Target0
+    )
+{
+    float2 ViewportUV = (SvPosition.xy - Output_ViewportMin) * Output_ViewportSizeInverse;
+
+    // Calculate texture UVs, with/without distortion
+    float2 Tex0_UV = CalcInputUVs(ViewportUV, Input0_ViewportSize, Input0_ViewportMin, Input0_ExtentInverse, Tex0_DistortionUV);
+    float2 Tex1_UV = CalcInputUVs(ViewportUV, Input1_ViewportSize, Input1_ViewportMin, Input1_ExtentInverse, Tex1_DistortionUV);
+
+    // Sample textures
+    float4 Color0 = Tex0_Texture.SampleLevel(Tex0_Sampler, Tex0_UV, 0);
+    float4 Color1 = Tex1_Texture.SampleLevel(Tex1_Sampler, Tex1_UV, 0);
+
+    // Linearize source colors
+    Color0.rgb = Decode(Color0.rgb, Tex0_SourceEncoding);
+    Color1.rgb = Decode(Color1.rgb, Tex1_SourceEncoding);
+
+    // Normalize alpha as opacity
+	Color0.a = GetOpacity(Color0.a, Tex0_bInvertedAlpha);
+	Color1.a = GetOpacity(Color1.a, Tex1_bInvertedAlpha);
+
+    // Adjust exposure if necessary
+    Color0.rgb *= Tex0_Exposure;
+    Color1.rgb *= Tex1_Exposure;
+    
+    if(MergeOp == ECompositeCoreMergeOp_Over)
+    {
+        OutColor = Color0 + Color1 * (1.0 - Color0.a);
+    }
+    else if(MergeOp == ECompositeCoreMergeOp_Add)
+    {
+        OutColor = Color0 + Color1;
+    }
+    else if(MergeOp == ECompositeCoreMergeOp_Mul)
+    {
+        OutColor = Color0 * Color1;
+    }
+    else if(MergeOp == ECompositeCoreMergeOp_Div)
+    {
+        OutColor = SafeDiv(Color0, Color1);
+    }
+    else
+    {
+        OutColor = Color0;
+    }
+
+    // Re-encode color
+    OutColor.rgb = Encode(OutColor.rgb, OutputEncoding);
+
+	const bool bInvertedAlphaOutput = (bFlags & 1);
+	OutColor.a = saturate(select(bInvertedAlphaOutput, 1.0 - OutColor.a, OutColor.a));
+}

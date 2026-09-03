@@ -1,0 +1,35 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+float MaxRoughnessToTrace;
+float MaxRoughnessToTraceForFoliage;
+float InvRoughnessFadeLength;
+
+// Weight of reflection rays for a current pixel
+// 0 - specular should fallback to some specular approximation
+// 1 - specular should only composite reflection rays
+float LumenCombineReflectionsAlpha(float InRoughness, bool bHasBackfaceDiffuse)
+{
+	float FadeAlpha = saturate(((bHasBackfaceDiffuse != 0 ? MaxRoughnessToTraceForFoliage : MaxRoughnessToTrace) - InRoughness) * InvRoughnessFadeLength);
+	return FadeAlpha;
+}
+
+bool NeedsLumenReflections(float InRoughness, float InTopRoughness, bool bHasBackfaceDiffuse, bool bIsClearCoat)
+{
+#if SUBTRATE_GBUFFER_FORMAT==1
+	return LumenCombineReflectionsAlpha(InRoughness, bHasBackfaceDiffuse) > 0 || (bIsClearCoat && LumenCombineReflectionsAlpha(InTopRoughness, false) > 0);
+#else
+	return LumenCombineReflectionsAlpha(InRoughness, bHasBackfaceDiffuse) > 0 || bIsClearCoat;
+#endif
+}
+
+bool NeedsLumenClearCoatRoughReflections(float InTopRoughness, bool bIsClearCoat)
+{
+	#if SUBTRATE_GBUFFER_FORMAT==1
+	const float FadeAlpha = LumenCombineReflectionsAlpha(InTopRoughness, false/*bHasBackfaceDiffuse*/);
+	return bIsClearCoat ? FadeAlpha < 1.f : false;
+	#else
+	return bIsClearCoat;
+	#endif
+}

@@ -1,0 +1,6 @@
+#ifndef RESERVOIRCPP_NUMPY_RANDOM_GENERATOR_HPP
+#define RESERVOIRCPP_NUMPY_RANDOM_GENERATOR_HPP
+
+#include "default_rng.hpp"
+
+#endif

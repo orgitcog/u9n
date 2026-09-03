@@ -1,0 +1,251 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../LightFunctionAtlas/LightFunctionAtlasCommon.usf"
+#include "../Nanite/NaniteHZBCull.ush"
+
+uint VolumeDownsampleFactorMultShift;
+
+/** 
+ * Returns sample jitter offset in the range [0, VOLUME_DOWNSAMPLE_FACTOR - 1]
+ */
+uint3 GetSampleVoxelCoordJitter(uint3 DownsampledVolumeCoord)
+{
+	uint3 Jitter = 0;
+
+	if (VolumeDownsampleFactorMultShift > 0)
+	{
+// 		uint3 CellIndex = DownsampledVolumeCoord % 2;
+// 		uint LinearIndex = CellIndex.x + CellIndex.y * 2 + CellIndex.z * 4;
+// 		LinearIndex = (LinearIndex + MegaLightsStateFrameIndex) % 8;
+// 
+// 		// #ml_todo: investigate whether this produces a good pattern
+// 		// 4-rooks sampling pattern
+// 		uint3 Jitter;
+// 		Jitter.x = LinearIndex & 0x04 ? 0 : 1;
+// 		Jitter.y = LinearIndex & 0x02 ? 1 : 0;
+// 		Jitter.z = LinearIndex & 0x01 ? 0 : 1;
+	}
+
+	return Jitter;
+}
+
+uint3 DownsampledVolumeCoordToVolumeCoord(uint3 DownsampledVolumeCoord)
+{
+	return (DownsampledVolumeCoord << VolumeDownsampleFactorMultShift) + GetSampleVoxelCoordJitter(DownsampledVolumeCoord);
+}
+
+uint3 VolumeCoordToDownsampledVolumeCoord(uint3 VolumeCoord)
+{
+	return VolumeCoord >> VolumeDownsampleFactorMultShift;
+}
+
+uint2 VolumeCoordToNoiseCoord(uint3 VolumeCoord)
+{
+	// #ml_todo: hard coded for BlueNoise 128x128, but is used for other things too
+	// https://github.com/electronicarts/fastnoise/blob/main/FastNoiseDesign.md
+	return VolumeCoord.xy + R2Sequence(VolumeCoord.z) * 128;
+}
+
+uint3 VolumeViewSize;
+
+float LightSoftFading;
+
+#if TRANSLUCENCY_LIGHTING_VOLUME
+
+uint TranslucencyVolumeCascadeIndex;
+float TranslucencyVolumeInvResolution;
+
+float3 ComputeCellTranslatedWorldPosition(uint3 GridCoordinate, float3 CellOffset, out float SceneDepth)
+{
+	SceneDepth = 0.0f;
+	return View.TranslucencyLightingVolumeMin[TranslucencyVolumeCascadeIndex].xyz + (GridCoordinate + 0.5f) * View.TranslucencyLightingVolumeInvSize[TranslucencyVolumeCascadeIndex].w;
+}
+
+#else // !TRANSLUCENCY_LIGHTING_VOLUME
+
+float4x4 UnjitteredClipToTranslatedWorld;
+float4x4 UnjitteredPrevTranslatedWorldToClip;
+float3 MegaLightsVolumeZParams;
+uint MegaLightsVolumePixelSize;
+
+float ComputeDepthFromZSlice(float ZSlice)
+{
+	return ComputeDepthFromZSlice(MegaLightsVolumeZParams, ZSlice);
+}
+
+float ComputeZSliceFromDepth(float SliceDepth)
+{
+	return ComputeZSliceFromDepth(MegaLightsVolumeZParams, SliceDepth);
+}
+
+float3 ComputeCellTranslatedWorldPosition(uint3 GridCoordinate, float3 CellOffset, out float SceneDepth)
+{
+	float2 VolumeUV = (GridCoordinate.xy + CellOffset.xy) / float2(VolumeViewSize.xy);
+	float2 VolumeNDC = (VolumeUV * 2 - 1) * float2(1, -1);
+
+	SceneDepth = ComputeDepthFromZSlice(max(GridCoordinate.z + CellOffset.z, 0));
+
+	float TileDeviceZ = ConvertToDeviceZ(SceneDepth);
+	float4 CenterPosition = mul(float4(VolumeNDC, TileDeviceZ, 1), UnjitteredClipToTranslatedWorld);
+	return CenterPosition.xyz / CenterPosition.w;
+}
+
+#endif // !TRANSLUCENCY_LIGHTING_VOLUME
+
+float VolumePhaseG;
+
+float3 GetMegaLightsVolumeLighting(
+	float3 TranslatedWorldPosition,
+	float3 CameraVector,
+	float DistanceBiasSqr,
+	float LightVolumetricSoftFadeDistance,
+	FDeferredLightData LightData,
+	float VolumetricScatteringIntensity,
+	out float3 OutL)
+{
+	float3 Lighting = 0.0f;
+
+	OutL = 0.0f;
+
+#if !TRANSLUCENCY_LIGHTING_VOLUME
+	if (VolumetricScatteringIntensity > 0.0f)
+#endif
+	{
+		const bool bSoftFadeEnabled = LightSoftFading > 0;
+
+		float3 L = LightData.Direction;
+		float3 ToLight = L;
+		float LightMask = 1.0f;
+
+		if (LightData.bRadialLight)
+		{
+			LightMask = GetLocalLightAttenuation(TranslatedWorldPosition, LightData, ToLight, L);
+		}
+
+		OutL = L;
+
+		float Attenuation;
+		if (LightData.bRectLight)
+		{
+			FRect Rect = GetRect(ToLight, LightData);
+
+			float SoftFade = 1.0f;
+#if USE_LIGHT_SOFT_FADING
+			if (bSoftFadeEnabled)
+			{
+				SoftFade *= GetRectLightVolumetricSoftFading(LightData, Rect, LightVolumetricSoftFadeDistance, ToLight);
+			}
+#endif
+			Attenuation = SoftFade * IntegrateLight(Rect);
+		}
+		else
+		{
+			FCapsuleLight Capsule = GetCapsule(ToLight, LightData);
+			Capsule.DistBiasSqr = DistanceBiasSqr;
+
+			float SoftFade = 1.0f;
+#if USE_LIGHT_SOFT_FADING
+			if (LightData.bSpotLight && bSoftFadeEnabled)
+			{
+				SoftFade *= GetSpotLightVolumetricSoftFading(LightData, LightVolumetricSoftFadeDistance, ToLight);
+			}
+#endif
+			Attenuation = SoftFade * IntegrateLight(Capsule, LightData.bInverseSquared);
+		}
+
+		FLightFunctionColor LightFunctionColor = 1.0f;
+#if USE_LIGHT_FUNCTION_ATLAS
+		LightFunctionColor = GetLocalLightFunctionCommon(TranslatedWorldPosition, LightData.LightFunctionAtlasLightIndex);
+#endif
+
+		float CombinedAttenuation = Attenuation * LightMask;
+#if TRANSLUCENCY_LIGHTING_VOLUME
+		Lighting += LightData.Color * LightFunctionColor * CombinedAttenuation / PI;
+#else
+		Lighting += LightData.Color * LightFunctionColor * (HenyeyGreensteinPhase(VolumePhaseG, dot(L, -CameraVector)) * CombinedAttenuation * VolumetricScatteringIntensity);
+#endif
+	}
+
+	return Lighting;
+}
+
+uint UseHZBOcclusionTest;
+
+#if !TRANSLUCENCY_LIGHTING_VOLUME
+
+FScreenRect ComputeFroxelCullRect(uint3 GridCoordinate, float MinTileZ, float MaxTileZ, float FootprintMargin)
+{
+	// Compute extent of tiles in clip-space. Note that the last tile may extend a bit outside of view if view size is not evenly divisible tile size.
+	const float2 InvCulledGridSizeF = MegaLightsVolumePixelSize * View.ViewSizeAndInvSize.zw;
+	const float2 TileSize = float2(2.0f, -2.0f) * InvCulledGridSizeF.xy;
+	const float2 UnitPlaneMin = float2(-1.0f, 1.0f);
+
+	float2 UnitPlaneTileMin = (GridCoordinate.xy - FootprintMargin) * TileSize + UnitPlaneMin;
+	float2 UnitPlaneTileMax = (GridCoordinate.xy + 1 + FootprintMargin) * TileSize + UnitPlaneMin;
+
+	float MinTileDeviceZ = ConvertToDeviceZ(MinTileZ);
+	float MaxTileDeviceZ = ConvertToDeviceZ(MaxTileZ);
+
+	float3 CullRectMin;
+	CullRectMin.x = min(UnitPlaneTileMin.x, UnitPlaneTileMax.x);
+	CullRectMin.y = min(UnitPlaneTileMin.y, UnitPlaneTileMax.y);
+	CullRectMin.z = min(MinTileDeviceZ, MaxTileDeviceZ);
+
+	float3 CullRectMax;
+	CullRectMax.x = max(UnitPlaneTileMin.x, UnitPlaneTileMax.x);
+	CullRectMax.y = max(UnitPlaneTileMin.y, UnitPlaneTileMax.y);
+	CullRectMax.z = max(MinTileDeviceZ, MaxTileDeviceZ);
+
+	return GetScreenRect(int4(0, 0, HZBViewSize), CullRectMin, CullRectMax, 4);
+}
+
+bool IsFroxelVisible(uint3 GridCoordinate, float FootprintMargin)
+{
+	if (UseHZBOcclusionTest != 0)
+	{
+		float MinTileZ = ComputeDepthFromZSlice(max(0, GridCoordinate.z + 0 - FootprintMargin));
+		float MaxTileZ = ComputeDepthFromZSlice(min(VolumeViewSize.z, GridCoordinate.z + 1 + FootprintMargin));
+
+		FScreenRect Rect = ComputeFroxelCullRect(GridCoordinate, MinTileZ, MaxTileZ, FootprintMargin);
+
+		return IsVisibleHZB(Rect, true /*bSample4x4*/);
+	}
+
+	return true;
+}
+
+#endif
+
+int VolumeDebugSliceIndex;
+
+FShaderPrintContext InitVolumeDebugContext(uint3 VolumeCoord, bool bDownsampled, float2 StartPos)
+{
+	FShaderPrintContext DebugContext;
+#if DEBUG_MODE
+#if TRANSLUCENCY_LIGHTING_VOLUME
+	const uint2 DebugScreenCoord = GetDebugScreenCoord();
+	const float2 DebugScreenUV = (DebugScreenCoord + 0.5f) * View.BufferSizeAndInvSize.zw;
+	const float SceneDepth = CalcSceneDepth(DebugScreenUV);
+	float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(DebugScreenUV, SceneDepth);
+	int3 DebugVoxelCoord = (TranslatedWorldPosition - View.TranslucencyLightingVolumeMin[TranslucencyVolumeCascadeIndex].xyz) / View.TranslucencyLightingVolumeInvSize[TranslucencyVolumeCascadeIndex].w;
+	DebugVoxelCoord = DebugVoxelCoord >> (bDownsampled ? VolumeDownsampleFactorMultShift : 0);
+	DebugVoxelCoord.z += 1;
+	if (TranslucencyVolumeCascadeIndex != 0)
+	{
+		DebugVoxelCoord = -1;
+	}
+#else // !TRANSLUCENCY_LIGHTING_VOLUME
+	int3 DebugVoxelCoord = int3(GetDebugScreenCoord() / MegaLightsVolumePixelSize, VolumeDebugSliceIndex);
+	if (bDownsampled)
+	{
+		DebugVoxelCoord = DebugVoxelCoord >> VolumeDownsampleFactorMultShift;
+	}
+#endif // !TRANSLUCENCY_LIGHTING_VOLUME
+	DebugContext = InitShaderPrintContext(all(VolumeCoord == DebugVoxelCoord), StartPos);
+#else
+	DebugContext = InitShaderPrintContext(false, StartPos);
+#endif
+	return DebugContext;
+}

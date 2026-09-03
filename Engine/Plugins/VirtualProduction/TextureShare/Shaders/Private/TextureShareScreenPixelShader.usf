@@ -1,0 +1,19 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+
+Texture2D InTexture;
+SamplerState InTextureSampler;
+
+float GammaModifier;
+
+void Main(
+	FScreenVertexOutput Input,
+	out float4 OutColor : SV_Target0
+	)
+{
+	OutColor = Texture2DSample(InTexture, InTextureSampler, Input.UV);
+	OutColor.rgb = pow( OutColor.rgb, GammaModifier);
+}
+
+

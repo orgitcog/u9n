@@ -1,0 +1,218 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "Voxel/Voxel.ush"
+
+#define MAX_LEVEL	7
+
+#define NODE_CACHE_SIZE 0
+#if NODE_CACHE_SIZE
+groupshared uint GroupNodes[ NODE_CACHE_SIZE ];
+#endif
+
+// no need for leaf
+// no need for root?
+groupshared uint GroupStack[ THREADGROUP_SIZE * (MAX_LEVEL - 1) ];
+
+int TraceSVO( uint GroupThreadIndex, inout FRay Ray, ByteAddressBuffer NodeBuffer, uint NodesOffset, uint NodesNum, inout FRayCastCounters Counters )
+{
+	const uint StackOffset = GroupThreadIndex * (MAX_LEVEL - 1) - 1;
+	const uint SVOWidth = 1u << ( MAX_LEVEL + 1 );
+
+#if NODE_CACHE_SIZE
+	UNROLL
+	for( uint i = 0; i < NODE_CACHE_SIZE; i += THREADGROUP_SIZE )
+	{
+		const uint NodeIndex = GroupThreadIndex + i;
+		
+		BRANCH
+		if( NodeIndex >= NodesNum )
+			break;
+
+		GroupNodes[ NodeIndex ] = NodeBuffer.Load( NodesOffset + NodeIndex * 4 );
+
+	#if 0
+		// Create parent pointers
+		// Could avoid stack?
+		if( !IsLeaf( Node ) )
+		{
+			uint ChildrenStart = Node >> 8;
+			while( Node & 7 )
+			{
+				uint ChildIndex = firstbithigh( Node & 7 );
+				Node ^= 1 << ChildIndex;
+
+				GroupParents[ ChildrenStart + ChildIndex ] = NodeIndex;
+			}
+		}
+	#endif
+	}
+	GroupMemoryBarrierWithGroupSync();
+#endif
+
+	float3 Position = Ray.Origin + Ray.Direction * Ray.Time[0];
+
+	int FlipDirXOR = 0;
+	if( Ray.Direction.x < 0 ) { FlipDirXOR |= 1; Position.x = SVOWidth - Position.x; Ray.Direction.x = -Ray.Direction.x; }
+	if( Ray.Direction.y < 0 ) { FlipDirXOR |= 2; Position.y = SVOWidth - Position.y; Ray.Direction.y = -Ray.Direction.y; }
+	if( Ray.Direction.z < 0 ) { FlipDirXOR |= 4; Position.z = SVOWidth - Position.z; Ray.Direction.z = -Ray.Direction.z; }
+
+	float3 InvDir = rcp( Ray.Direction );
+
+	int3 VoxelPos = int3( Position );
+
+	VoxelPos = clamp( VoxelPos, 0, int( SVOWidth - 1 ) );
+
+	int LeafIndex = -1;
+	int Level = MAX_LEVEL;
+	
+	uint RootIndex = NodesNum - 1;
+#if NODE_CACHE_SIZE
+	uint Root = GroupNodes[ RootIndex ];
+#else
+	uint Root = NodeBuffer.Load( NodesOffset + RootIndex * 4 );
+#endif
+
+	uint Node = Root;
+	while(1)
+	{
+		Counters.Tests++;
+
+		int3 NodePos = VoxelPos >> Level;
+		int3 ChildPos = NodePos & 1;
+		uint ChildIndex = ( ChildPos.x | (ChildPos.y << 1) | (ChildPos.z << 2) ) ^ FlipDirXOR;
+		uint ChildMask = Node & ( 1u << ChildIndex );
+
+		if( ChildMask )
+		{
+			Counters.StepIn++;
+
+			// Step in
+			uint ChildOffset = ( Node >> 8 ) + countbits( Node & ( ChildMask - 1 ) );
+
+			// Hit
+			if( Level == 0 )
+			{
+				LeafIndex = ChildOffset;
+				break;
+			}
+
+		#if NODE_CACHE_SIZE
+			Node = GroupNodes[ ChildOffset ];
+		#else
+			Node = NodeBuffer.Load( NodesOffset + ChildOffset * 4 );
+		#endif
+
+			Level--;
+
+			GroupStack[ StackOffset + Level ] = Node;
+			continue;
+		}
+
+		Counters.Steps++;
+
+		int3 PrevVoxelPos = VoxelPos;
+
+		int3 FarCorner = ( NodePos + 1 ) << Level;
+#if 0
+		float3 ToFar = FarCorner - Position;
+		float3 StepTime = ToFar * InvDir;
+		float3 Step = float3( ToFar.x, Ray.Direction.yz * StepTime.x );
+		if (StepTime.y < StepTime.x)
+		{
+			StepTime.x = StepTime.y;
+			Step.x = Ray.Direction.x * StepTime.x;
+			Step.y = ToFar.y;
+			Step.z = Ray.Direction.z * StepTime.x;
+		}
+		if (StepTime.z < StepTime.x)
+		{
+			StepTime.x = StepTime.z;
+			Step.x = Ray.Direction.x * StepTime.x;
+			Step.y = Ray.Direction.y * StepTime.x;
+			Step.z = ToFar.z;
+		}
+
+		Position += Step;
+		Ray.Time[0] += StepTime.x;
+
+		VoxelPos = int3( Position );
+#elif 0
+		float3 Step4 = FarCorner - Position - 1;
+		float3 Next = InvDir * Step4;
+		float3 Step = floor( 1.0 + min3( Next.x, Next.y, Next.z ) * Ray.Direction );
+
+		//float3 Next = InvDir * Step4 + InvDir;
+		//float3 Step = floor( 1.0 + min3( Next.x, Next.y, Next.z ) * Ray.Direction );
+
+		//float3 Step4 = 4.0 - VoxelPos;
+		//float3 Next = InvDir * Step4;
+		//float3 Step = floor( min3( Next.x, Next.y, Next.z ) * Ray.Direction );
+
+		//Next += InvDir;
+		Next = Step * InvDir;
+		float StepTime = min3( Next.x, Next.y, Next.z );
+
+		//DDA.Next	+= Step * InvDir;
+		VoxelPos	+= Step;
+		Position	+= StepTime * Ray.Direction;
+		Ray.Time[0]	+= StepTime;
+#elif 0
+		float3 NextTime = Ray.Time[0] + ( FarCorner - Position ) * InvDir;
+		Ray.Time[0] = min3( NextTime.x, NextTime.y, NextTime.z );
+
+		Position = Ray.Origin + Ray.Time[0] * Ray.Direction;
+		//Position = select( Ray.Time[0] == NextTime, FarCorner, NextPos );
+
+		VoxelPos = int3( Position );
+		VoxelPos = select( Ray.Time[0] == NextTime, FarCorner, VoxelPos );
+#else
+		float3 ToFar = FarCorner - Position;
+		float3 Next = ToFar * InvDir;
+		float StepTime = min3( Next.x, Next.y, Next.z );
+		Ray.Time[0]	+= StepTime;
+
+	#if 0
+		float3 Step = StepTime * Ray.Direction;
+		Position += select( Next == StepTime, ToFar, Step );
+
+		VoxelPos = int3( Position );
+	#else
+		Position += StepTime * Ray.Direction;
+
+		VoxelPos = int3( Position );
+		VoxelPos = select( Next == StepTime, FarCorner, VoxelPos );
+	#endif
+#endif
+	
+		if( Ray.Time[0] >= Ray.Time[1] )
+			break;
+
+		int3 Diff = PrevVoxelPos ^ VoxelPos;
+
+		// TODO Many conditions to avoid reading the stack. Just do it anyways?
+		int NextLevel = firstbithigh( Diff.x | Diff.y | Diff.z );
+		if( NextLevel == Level )
+			continue;
+		if( NextLevel == MAX_LEVEL )
+		{
+			Node = Root;
+			break;
+		}
+		else if( NextLevel > MAX_LEVEL )
+			break;
+		Level = NextLevel;
+
+		Counters.StepOut++;
+
+		Node = GroupStack[ StackOffset + Level ];
+	}
+
+	// Save some vgprs
+	if( FlipDirXOR & 1 ) { Position.x = SVOWidth - Position.x; Ray.Direction.x = -Ray.Direction.x; };
+	if( FlipDirXOR & 2 ) { Position.y = SVOWidth - Position.y; Ray.Direction.y = -Ray.Direction.y; };
+	if( FlipDirXOR & 4 ) { Position.z = SVOWidth - Position.z; Ray.Direction.z = -Ray.Direction.z; };
+
+	return LeafIndex;
+}

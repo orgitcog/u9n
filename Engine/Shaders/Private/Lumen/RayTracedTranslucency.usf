@@ -1,0 +1,631 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Shared/RayTracingTypes.h"
+#include "../Common.ush"
+#include "../MonteCarlo.ush"
+#include "../SceneTextureParameters.ush"
+
+// Ensure that DiffuseAlbedo is not overridden on SSS material (as we don't split lighting with the Lumen/RT integrator)
+#define SUBSTRATE_SSS_MATERIAL_OVERRIDE 0
+#define SUBSTRATE_COMPLEXSPECIALPATH 1
+#define SUBSTRATE_GLINTS_ALLOWED 0
+#define SUBSTREATE_SIMPLEVOLUME_ENVALBEDO_LUT_JITTERING 1
+
+// When tracing from compute, SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE=0 is not automatically detected, so we notify the use of raytracing here.
+#define SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE 0 
+
+// Additional rewiring to make DeferredShadingCommon happy
+#define PreIntegratedGF				ReflectionStruct.PreIntegratedGF
+#define PreIntegratedGFSampler		GlobalBilinearClampedSampler
+
+#include "LumenMaterial.ush"
+#include "LumenCardCommon.ush"
+#include "LumenTracingCommon.ush"
+#include "LumenReflectionCommon.ush"
+//#include "LumenVisualizeTraces.ush"
+#include "LumenRadianceCacheCommon.ush"
+// TODO: Trace hair voxels?
+//#define USE_HAIRSTRANDS_VOXEL DIM_HAIRSTRANDS_VOXEL
+//#include "LumenHairTracing.ush"
+#include "../PathTracing/Material/PathTracingFresnel.ush"
+
+#ifndef THREADGROUP_SIZE_2D
+#define THREADGROUP_SIZE_2D 8
+#endif
+
+#ifndef THREADGROUP_SIZE_1D
+#define THREADGROUP_SIZE_1D THREADGROUP_SIZE_2D * THREADGROUP_SIZE_2D
+#endif
+
+#if LUMEN_HARDWARE_RAYTRACING
+
+#include "LumenHardwareRayTracingCommon.ush"
+
+RaytracingAccelerationStructure TLAS;
+RaytracingAccelerationStructure FarFieldTLAS;
+
+uint TranslucencyForceOpaque;
+uint HitLightingShadowMode;
+uint HitLightingShadowTranslucencyMode;
+uint HitLightingDirectLighting;
+uint HitLightingSkylight;
+uint UseReflectionCaptures;
+
+float NearFieldMaxTraceDistance;
+uint MaxTraversalIterations;
+uint MeshSectionVisibilityTest;
+
+float SecondaryPathStartBias;
+float SecondaryPathStartNormalBias;
+float PathThroughputThreshold;
+
+int MaxPrimaryHitEvents;
+int MaxSecondaryHitEvents;
+uint SampleTranslucentReflectionInReflections;
+
+RWTexture2DArray<float3> RWTraceRadiance;
+RWTexture2DArray<float3> RWTraceBackgroundVisibility;
+RWTexture2DArray<float>  RWTraceHit;
+
+void TraceRayWithPotentialRetrace(
+	RaytracingAccelerationStructure TLAS,
+	FRayDesc Ray,
+	FRayTracedLightingContext Context,
+	inout FLumenRayHitBookmark Bookmark,
+	inout FPackedMaterialClosestHitPayload Payload)
+{
+	TraceLumenHitLightingRay(TLAS, Ray, Context, Bookmark, Payload);
+
+#if AVOID_SELF_INTERSECTIONS_MODE == AVOID_SELF_INTERSECTIONS_MODE_RETRACE
+	if (!Context.bIsFarFieldRay && Payload.IsHit())
+	{
+		float SkipDistance = -1;
+
+		if (Payload.IsTwoSided() && Payload.HitT < LumenHardwareRayTracingUniformBuffer.SkipTwoSidedHitDistance)
+		{
+			SkipDistance = Payload.HitT + 0.01f;
+		}
+		else if (!Payload.IsTwoSided() && Payload.HitT < LumenHardwareRayTracingUniformBuffer.SkipBackFaceHitDistance)
+		{
+			SkipDistance = LumenHardwareRayTracingUniformBuffer.SkipBackFaceHitDistance;
+		}
+
+		if (SkipDistance > 0.0f)
+		{
+			Ray.TMin = SkipDistance;
+			TraceLumenHitLightingRay(TLAS, Ray, Context, Bookmark, Payload);
+		}
+	}
+#endif
+}
+
+bool IsPrimaryRay(int SecondaryPathIndex)
+{
+	return SecondaryPathIndex == 0;
+}
+
+#if USE_RAY_TRACED_REFRACTION
+bool IsRayBent(int SecondaryPathIndex, float3 PrimaryPathThroughput)
+{
+	const uint RayBentBitMask = 0x80000000;
+	if (IsPrimaryRay(SecondaryPathIndex))
+	{
+		return (asuint(PrimaryPathThroughput.x) & RayBentBitMask) != 0;
+	}
+	else
+	{
+		return (asuint(PrimaryPathThroughput.y) & RayBentBitMask) != 0;
+	}
+}
+
+void SetRayBent(bool bValue, int SecondaryPathIndex, inout float3 PrimaryPathThroughput)
+{
+	const uint RayBentBitMask = bValue ? 0x80000000 : 0;
+	if (IsPrimaryRay(SecondaryPathIndex))
+	{
+		PrimaryPathThroughput.x = asfloat((asuint(PrimaryPathThroughput.x) & 0x7fffffff) | RayBentBitMask);
+	}
+	else
+	{
+		PrimaryPathThroughput.y = asfloat((asuint(PrimaryPathThroughput.y) & 0x7fffffff) | RayBentBitMask);
+	}
+}
+
+void UpdatePrimaryPathThroughput(float3 NewValue, inout float3 PrimaryPathThroughput)
+{
+	const uint RayBentBitMask = 0x80000000;
+	PrimaryPathThroughput.x = asfloat((asuint(PrimaryPathThroughput.x) & RayBentBitMask) | asuint(NewValue.x));
+	PrimaryPathThroughput.y = asfloat((asuint(PrimaryPathThroughput.y) & RayBentBitMask) | asuint(NewValue.y));
+	PrimaryPathThroughput.z = NewValue.z;
+}
+
+#else // !USE_RAY_TRACED_REFRACTION
+
+bool IsRayBent(int SecondaryPathIndex, float3 PrimaryPathThroughput) { return false; }
+void SetRayBent(bool bValue, int SecondaryPathIndex, inout float3 PrimaryPathThroughput) {}
+void UpdatePrimaryPathThroughput(float3 NewValue, inout float3 PrimaryPathThroughput) { PrimaryPathThroughput = NewValue; }
+
+#endif
+
+FLumenHitLightingMaterial SanitizeLumenMaterial(FLumenHitLightingMaterial LumenMaterial)
+{
+#if !USE_RAY_TRACED_REFRACTION
+	LumenMaterial.Ior = 1.0f;
+#endif
+	return LumenMaterial;
+}
+
+FRayTracedLightingResult TraceRayLighting_Internal(
+	RaytracingAccelerationStructure TLAS,
+	RaytracingAccelerationStructure FarFieldTLAS,
+	FRayDesc Ray,
+	FRayTracedLightingContext Context,
+	RandomSequence RandSequence,
+	inout FLumenRayHitBookmark Bookmark)
+{
+	FRayTracedLightingResult Result = CreateRayTracedLightingResult(Ray);
+	Result.bIsHit = false;
+	Result.TraceHitDistance = 0;
+
+	const bool bSkipCountingTranslucentBackfaceHit = true;
+
+	float3 PrimaryPathThroughput = 1.0f;
+	float3 PrimaryRayOrigin = Ray.Origin;
+	float3 PrimaryRayDirection = Ray.Direction;
+	float PrimaryRayTMax = Ray.TMax;
+
+	float MaxSecondaryPathLuminance = -1.0f;
+
+	for (int PrimaryPathIndex = 0; PrimaryPathIndex < MaxPrimaryHitEvents; ++PrimaryPathIndex)
+	{
+		float3 SecondaryPathThroughput = abs(PrimaryPathThroughput);
+		float ReflectionPathRoughness = 0.0f;
+
+		float SecondaryPathLuminance = 0.0f;
+		float CurrentPathT = length(PrimaryRayOrigin - View.TranslatedWorldCameraOrigin);
+
+		Ray.Origin = PrimaryRayOrigin;
+		Ray.Direction = PrimaryRayDirection;
+		Ray.TMin = IsRayBent(0, PrimaryPathThroughput) ? 0.0f : 0.05f;
+		Ray.TMax = IsRayBent(0, PrimaryPathThroughput) ? NearFieldMaxTraceDistance : PrimaryRayTMax;
+
+		// Reset secondary ray bent bit
+		SetRayBent(false, 1, PrimaryPathThroughput);
+
+		for (int SecondaryPathIndex = 0; SecondaryPathIndex < MaxSecondaryHitEvents + 1; ++SecondaryPathIndex)
+		{
+			// Check back face hits once the ray bent so it can be refracted again
+			Context.CullingMode = IsRayBent(SecondaryPathIndex, PrimaryPathThroughput) ? 0 : RAY_FLAG_CULL_BACK_FACING_TRIANGLES;
+			// Primary rays are clipped against opaque scene depth so they won't hit opaque as long as they are not bent
+			Context.InstanceMask = IsPrimaryRay(SecondaryPathIndex) && !IsRayBent(SecondaryPathIndex, PrimaryPathThroughput) ?
+				RAY_TRACING_MASK_TRANSLUCENT :
+				RAY_TRACING_MASK_OPAQUE | RAY_TRACING_MASK_TRANSLUCENT | (HAS_FIRST_PERSON_GBUFFER_BIT ? RAY_TRACING_MASK_OPAQUE_FP_WORLD_SPACE : 0);
+
+			FPackedMaterialClosestHitPayload Payload = (FPackedMaterialClosestHitPayload)0;
+			Payload.SetLumenPayload();
+			// Used for stochastic quantization when Substrate is enabled
+			Payload.SetRandom(RandomSequence_GenerateSample1D(RandSequence));
+
+			if (!IsPrimaryRay(SecondaryPathIndex))
+			{
+				Payload.SetIndirectLightingRay();
+			}
+
+			if (Context.bHitLightingSkylight)
+			{
+				Payload.SetEnableSkyLightContribution();
+			}
+
+			TraceRayWithPotentialRetrace(TLAS, Ray, Context, Bookmark, Payload);
+
+			if (Payload.IsHit() && (Payload.IsFrontFace() || Payload.IsTwoSided()))
+			{
+				Result.bIsHit = true;
+				CurrentPathT += Payload.HitT;
+
+				float3 RayHitTranslatedWorldPosition = Ray.Origin + Ray.Direction * Payload.HitT;
+				float NextReflectionRayAlpha = 0.0f;
+				float SurfaceCoverage = Payload.GetBlendingMode() == RAY_TRACING_BLEND_MODE_OPAQUE ? 1.f : Payload.GetOpacity();
+				FLumenHitLightingMaterial LumenMaterial = SanitizeLumenMaterial(GetLumenHitLightingMaterial(Context, Payload, Ray));
+
+				// Accumulate roughness in order to terminate recursive rays earlier on rough surfaces
+				ReflectionPathRoughness = 1.0f - (1.0f - ReflectionPathRoughness) * (1.0f - LumenMaterial.TopLayerRoughness);
+
+				// Blend between rough reflections approximation and a single reflection ray
+				if ((Context.bHitLightingDirectLighting || Context.bHitLightingSkylight) && SecondaryPathIndex < MaxSecondaryHitEvents)
+				{
+					NextReflectionRayAlpha = LumenCombineReflectionsAlpha(ReflectionPathRoughness, /*bHasBackfaceDiffuse*/ false);
+				}
+
+				float3 Radiance = 0.0f;
+				if (Payload.IsValid())
+				{
+					Radiance += CalculateLightingAtHit(TLAS, FarFieldTLAS, Ray, Context, RandSequence, LumenMaterial, NextReflectionRayAlpha, Payload);
+				}
+				Radiance += Payload.GetRadiance(); // Emissive
+			#if SUBSTRATE_ENABLED
+				Radiance = SurfaceCoverage * SecondaryPathThroughput * Radiance;
+			#else
+				Radiance = (Payload.GetBlendingMode() == RAY_TRACING_BLEND_MODE_ALPHA_COMPOSITE ? 1.0f : SurfaceCoverage) * SecondaryPathThroughput * Radiance;
+			#endif
+
+				if (!IsPrimaryRay(SecondaryPathIndex))
+				{
+					SecondaryPathLuminance += Luminance(Radiance);
+				}
+
+				Result.Radiance += Radiance;
+
+				bool bHitTranslucent = Payload.GetBlendingMode() != RAY_TRACING_BLEND_MODE_OPAQUE;
+				float3 ReflectionPathThroughput = 0.0f;
+				float3 WorldH = Payload.GetWorldNormal();
+
+				// Compute single reflection ray throughput
+				if (NextReflectionRayAlpha > 0.0f)
+				{
+					ReflectionPathThroughput = SecondaryPathThroughput
+						* NextReflectionRayAlpha
+					#if SUBSTRATE_ENABLED
+						* SurfaceCoverage
+					#else
+						* (Payload.GetBlendingMode() == RAY_TRACING_BLEND_MODE_ALPHA_COMPOSITE ? 1.0f : SurfaceCoverage)
+					#endif
+						* LumenMaterial.TopLayerSpecularColor;
+				}
+				
+				// Update path throughput
+				if (bHitTranslucent)
+				{
+					float3 NextPathVertexThroughput = 1.0f - SurfaceCoverage;
+				#if SUBSTRATE_ENABLED
+					NextPathVertexThroughput += LumenMaterial.RefractedThroughputPreCoverage * SurfaceCoverage;
+				#endif
+					SecondaryPathThroughput *= NextPathVertexThroughput;
+				}
+				else
+				{
+					SecondaryPathThroughput = ReflectionPathThroughput;
+				}
+
+				bool bSampleReflection = any(ReflectionPathThroughput > PathThroughputThreshold);
+				if (!bSampleReflection)
+				{
+					ReflectionPathThroughput = 0.0f;
+				}
+
+				// Sample GGX half vector if needed
+				if (LumenMaterial.TopLayerRoughness > 0.0f && (bSampleReflection || (LumenMaterial.Ior > 1.0f && any(SecondaryPathThroughput > PathThroughputThreshold))))
+				{
+					float GGXSamplingBias = 0.1f;
+					float2 E = RandomSequence_GenerateSample2D(RandSequence);
+					E.y *= 1.0f - GGXSamplingBias;
+
+					float3x3 TangentBasis = GetTangentBasis(Payload.GetWorldNormal());
+					float3 TangentV = mul(TangentBasis, -Ray.Direction);
+
+					float4 GGXSample = ImportanceSampleVisibleGGX(E, Pow2(LumenMaterial.TopLayerRoughness), TangentV);
+					WorldH = mul(GGXSample.xyz, TangentBasis);
+				}
+				
+				// Handle refraction
+				if (bHitTranslucent && any(SecondaryPathThroughput > PathThroughputThreshold))
+				{
+					if (LumenMaterial.Ior > 1.0f)
+					{
+						SetRayBent(true, SecondaryPathIndex, PrimaryPathThroughput);
+
+						const float RandSample = 1.0f; // Always sample refraction
+						float Eta = LumenMaterial.Ior;
+						float3 RefractedDirection;
+						float Fresnel;
+						bool bRefracted = SampleRefraction(Ray.Direction, WorldH, Eta, RandSample, RefractedDirection, Fresnel);
+						// verify(bRefracted);
+
+						if (IsPrimaryRay(SecondaryPathIndex))
+						{
+							// Save the primary ray before we branch off to the secondary ray so we can restart primary later
+							PrimaryRayOrigin = RayHitTranslatedWorldPosition - 0.05f * (Payload.IsFrontFace() ? 1.0f : -1.0f) * Payload.GetGeometryNormal();
+							PrimaryRayDirection = RefractedDirection;
+						}
+						else
+						{
+							bool bPickRefractionRay = true;
+							if (bSampleReflection && SampleTranslucentReflectionInReflections != 0)
+							{
+								float RefractionWeight = Luminance(SecondaryPathThroughput) * Fresnel;
+								float ReflectionWeight = Luminance(ReflectionPathThroughput) * (1.0f - Fresnel);
+								float RefractionThreshold = RefractionWeight / max(RefractionWeight + ReflectionWeight, 1e-5f);
+								float E = RandomSequence_GenerateSample1D(RandSequence);
+								bPickRefractionRay = E < RefractionThreshold;
+							}
+
+							if (bPickRefractionRay)
+							{
+								Ray.Origin = RayHitTranslatedWorldPosition - 0.05f * (Payload.IsFrontFace() ? 1.0f : -1.0f) * Payload.GetGeometryNormal();
+								Ray.Direction = RefractedDirection;
+								Ray.TMin = 0;
+								Ray.TMax = NearFieldMaxTraceDistance;
+								bSampleReflection = false;
+							}
+						}
+					}
+					else // Ray goes straight through
+					{
+						if (IsPrimaryRay(SecondaryPathIndex))
+						{
+							PrimaryRayOrigin = RayHitTranslatedWorldPosition;
+							PrimaryRayDirection = Ray.Direction;
+
+							if (IsRayBent(SecondaryPathIndex, PrimaryPathThroughput))
+							{
+								PrimaryRayOrigin += 0.05f * PrimaryRayDirection;
+							}
+							else
+							{
+								// Do not extend camera rays so we can just trace against translucent instances
+								PrimaryRayTMax -= Payload.HitT;	
+							}
+						}
+						else
+						{
+							bool bPickRefractionRay = true;
+							if (bSampleReflection && SampleTranslucentReflectionInReflections != 0)
+							{
+								float RefractionWeight = Luminance(SecondaryPathThroughput);
+								float ReflectionWeight = Luminance(ReflectionPathThroughput);
+								float RefractionThreshold = RefractionWeight / max(RefractionWeight + ReflectionWeight, 1e-5f);
+								float E = RandomSequence_GenerateSample1D(RandSequence);
+								bPickRefractionRay = E < RefractionThreshold;
+							}
+
+							if (bPickRefractionRay)
+							{
+								Ray.Origin = RayHitTranslatedWorldPosition + 0.05f * Ray.Direction;
+								Ray.TMin = 0;
+								Ray.TMax = NearFieldMaxTraceDistance;
+								bSampleReflection = false;
+							}
+						}
+					}
+				}
+
+				if (IsPrimaryRay(SecondaryPathIndex))
+				{
+					if (bHitTranslucent)
+					{
+						UpdatePrimaryPathThroughput(SecondaryPathThroughput, PrimaryPathThroughput);
+					}
+					else
+					{
+						// Primary rays stop once they hit opaque
+						UpdatePrimaryPathThroughput(0.0f, PrimaryPathThroughput);
+						PrimaryPathIndex = MaxPrimaryHitEvents - 1;
+					}
+				}
+
+				// Handle reflection
+				if (bSampleReflection)
+				{
+					SecondaryPathThroughput = ReflectionPathThroughput;
+
+					Ray.Direction = reflect(Ray.Direction, WorldH);
+					Ray.TMax = NearFieldMaxTraceDistance;
+
+					float3 GeometryNormal = (Payload.IsFrontFace() ? 1.0f : -1.0f) * Payload.GetGeometryNormal();
+					if (IsPrimaryRay(SecondaryPathIndex))
+					{
+						// This is done to better match the behavior of LumenReflectionHardwareRayTracing where reflection ray starting
+						// points are biased differently
+						float3 NormalBias =  saturate(dot(GeometryNormal, Ray.Direction)) * SecondaryPathStartNormalBias * GeometryNormal;
+						Ray.Origin = RayHitTranslatedWorldPosition + NormalBias;
+						Ray.TMin = SecondaryPathStartBias;
+					}
+					else
+					{
+						Ray.Origin = RayHitTranslatedWorldPosition + 0.05f * GeometryNormal;
+						Ray.TMin = 0;
+					}
+				}
+
+				if ((IsPrimaryRay(SecondaryPathIndex) && !bSampleReflection) || all(SecondaryPathThroughput <= PathThroughputThreshold))
+				{
+					break;
+				}
+			}
+			else if (Payload.IsHit()) // Hitting one-sided back face
+			{
+				// verify(IsRayBent(SecondaryPathIndex, PrimaryPathThroughput));
+
+				bool bHitTranslucent = Payload.GetBlendingMode() != RAY_TRACING_BLEND_MODE_OPAQUE;
+
+				if (bHitTranslucent)
+				{
+					float3 RayHitTranslatedWorldPosition = Ray.Origin + Ray.Direction * Payload.HitT;
+					FLumenHitLightingMaterial LumenMaterial = SanitizeLumenMaterial(GetLumenHitLightingMaterial(Context, Payload, Ray));
+					bool bRefracted = true;
+
+					if (LumenMaterial.Ior > 1.0f)
+					{
+						SetRayBent(true, SecondaryPathIndex, PrimaryPathThroughput);
+
+						const float RandSample = 1.0f; // Always sample refraction or TIR
+						float Eta = rcp(LumenMaterial.Ior);
+						float3 RefractedDirection;
+						float Fresnel;
+						bRefracted = SampleRefraction(Ray.Direction, Payload.GetWorldNormal(), Eta, RandSample, RefractedDirection, Fresnel);
+						
+						Ray.Origin = RayHitTranslatedWorldPosition + (bRefracted ? 0.05f : -0.05f) * Payload.GetGeometryNormal();
+						Ray.Direction = RefractedDirection;
+						Ray.TMin = 0;
+						Ray.TMax = NearFieldMaxTraceDistance;
+					}
+					else
+					{
+						Ray.Origin = RayHitTranslatedWorldPosition + 0.05f * Ray.Direction;
+						Ray.TMin = 0;
+						Ray.TMax = NearFieldMaxTraceDistance;
+					}
+
+					if (IsPrimaryRay(SecondaryPathIndex))
+					{
+						PrimaryRayOrigin = Ray.Origin;
+						PrimaryRayDirection = Ray.Direction;
+
+						if (bSkipCountingTranslucentBackfaceHit && bRefracted)
+						{
+							--PrimaryPathIndex;
+						}
+						// No secondary ray when hitting translucent back face
+						break;
+					}
+
+					// Do not skip if TIR. The ray may never escape and hang the GPU
+					if (bSkipCountingTranslucentBackfaceHit && bRefracted)
+					{
+						--SecondaryPathIndex;
+					}
+				}
+				else // hit opaque back face
+				{
+					if (IsPrimaryRay(SecondaryPathIndex))
+					{
+						Result.bIsHit = true;
+
+						UpdatePrimaryPathThroughput(0.0f, PrimaryPathThroughput);
+						PrimaryPathIndex = MaxPrimaryHitEvents - 1;
+					}
+					break;
+				}
+			}
+			else // Ray miss
+			{
+				if (IsPrimaryRay(SecondaryPathIndex))
+				{
+					if (IsRayBent(SecondaryPathIndex, PrimaryPathThroughput))
+					{
+						Result.Radiance += SecondaryPathThroughput * EvaluateSkyRadiance(Ray.Direction);
+						UpdatePrimaryPathThroughput(0.0f, PrimaryPathThroughput);
+					}
+					// Break the primary loop
+					PrimaryPathIndex = MaxPrimaryHitEvents - 1;
+				}
+				else
+				{
+					float3 Radiance = SecondaryPathThroughput * EvaluateSkyRadiance(Ray.Direction);
+					SecondaryPathLuminance += Luminance(Radiance);
+					Result.Radiance += Radiance;
+					CurrentPathT = MaxHalfFloat;
+				}
+				break;
+			}
+		} // Secondary path
+
+		// Use the PathT corresponds to the brightest secondary path as HitT. This provides better temporal
+		// reprojection when there is a dominant reflection layer. This doesn't work for refraction but refracted
+		// background color should probably be stored and filtered separately from translucency and specular (TODO).
+		// This is also not what spatial reconstruction in LumenReflectionResolveCS expects. It expects the HitT
+		// of the first reflection ray hit not the length of the entire path but rough reflections seem to work fine
+		if (SecondaryPathLuminance > MaxSecondaryPathLuminance)
+		{
+			MaxSecondaryPathLuminance = SecondaryPathLuminance;
+			Result.TraceHitDistance = CurrentPathT;
+		}
+
+		if (all(abs(PrimaryPathThroughput) <= PathThroughputThreshold))
+		{
+			break;
+		}
+	} // Primary path
+
+	Result.BackgroundVisibility = abs(PrimaryPathThroughput);
+
+	return Result;
+}
+
+LUMEN_HARDWARE_RAY_TRACING_ENTRY(RayTracedTranslucencyHardwareRayTracing)
+{
+	uint ThreadIndex = DispatchThreadIndex.x;
+	uint GroupIndex = DispatchThreadIndex.y;
+	uint DispatchThreadId = GroupIndex * THREADGROUP_SIZE_1D + ThreadIndex;
+	
+	if (DispatchThreadId < CompactedTraceTexelAllocator[0])
+	{
+		FReflectionTracingCoord ReflectionTracingCoord = DecodeTraceTexel(CompactedTraceTexelData[DispatchThreadId]);
+		ReflectionTracingCoord.CoordFlatten.z = 0;
+		ReflectionTracingCoord.ClosureIndex = 0;
+
+		float2 ScreenUV = GetScreenUVFromReflectionTracingCoord(ReflectionTracingCoord.Coord);
+		uint2 ScreenCoord = ScreenUV * View.BufferSizeAndInvSize.xy;
+		uint LinearCoord = ScreenCoord.y * View.BufferSizeAndInvSize.x + ScreenCoord.x;
+
+		float FrontLayerSceneDepth = DownsampledDepth.Load(int4(ReflectionTracingCoord.CoordFlatten, 0)).x;
+		float3 FrontLayerTranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, FrontLayerSceneDepth);
+		float OpaqueSceneDepth = CalcSceneDepth(ScreenUV);
+		float3 OpaqueTranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, OpaqueSceneDepth);
+
+		FRayDesc Ray;
+		Ray.Direction = GetCameraVectorFromTranslatedWorldPosition(FrontLayerTranslatedWorldPosition);
+		Ray.Origin = View.TranslatedWorldCameraOrigin;
+		Ray.TMin = 0;
+		Ray.TMax = dot(OpaqueTranslatedWorldPosition - Ray.Origin, Ray.Direction) - 0.1f;
+
+		FRayCone RayCone;
+		RayCone.Width = 0;
+		RayCone.SpreadAngle = View.EyeToPixelSpreadAngle;
+
+		FRayTracedLightingContext Context = CreateRayTracedLightingContext(
+			RayCone,
+			ReflectionTracingCoord.Coord,
+			LinearCoord,
+			/*CullingMode*/ RAY_FLAG_CULL_BACK_FACING_TRIANGLES,
+			MaxTraversalIterations,
+			MeshSectionVisibilityTest != 0);
+
+		Context.InstanceMask = RAY_TRACING_MASK_TRANSLUCENT;
+		Context.bHiResSurface = UseHighResSurface != 0;
+		Context.bHitLightingDirectLighting = HitLightingDirectLighting != 0;
+		Context.bHitLightingSkylight = HitLightingSkylight != 0;
+		Context.bUseReflectionCaptures = UseReflectionCaptures != 0;
+		Context.bForceOpaque = TranslucencyForceOpaque;
+		Context.HitLightingShadowMode = HitLightingShadowMode;
+		Context.HitLightingShadowTranslucencyMode = HitLightingShadowTranslucencyMode;
+		Context.HitLightingShadowMaxTraceDistance = NearFieldMaxTraceDistance;
+
+		RandomSequence RandSequence;
+		RandomSequence_Initialize(RandSequence, Context.LinearCoord, ReflectionsStateFrameIndex);
+
+		Context.bUseBookmark = false;
+		FLumenRayHitBookmark Bookmark;
+
+		FRayTracedLightingResult Result = TraceRayLighting_Internal(TLAS, FarFieldTLAS, Ray, Context, RandSequence, Bookmark);
+
+		// TODO: Sky leaking?
+		Result.Radiance *= View.PreExposure;
+
+		float MaxLighting = max3(Result.Radiance.x, Result.Radiance.y, Result.Radiance.z);
+
+		if (SampleHeightFog > 0)
+		{
+			float CoverageForFog = 1.0; // There is always something of the sky fallback.
+			float ReceiverSceneDepth = DownsampledDepth.Load(int4(ReflectionTracingCoord.CoordFlatten, 0)).x;
+			float3 ReceiverTranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, FrontLayerSceneDepth);
+			float DistanceToReceiver = length(ReceiverTranslatedWorldPosition);
+			float3 CameraToReceiver = ReceiverTranslatedWorldPosition / DistanceToReceiver;
+
+			Result.Radiance = GetFogOnLuminance(Result.Radiance, CoverageForFog, View.TranslatedWorldCameraOrigin, CameraToReceiver, DistanceToReceiver);
+		}
+
+		if (MaxLighting > MaxRayIntensity)
+		{
+			Result.Radiance *= MaxRayIntensity / MaxLighting;
+		}
+
+		RWTraceRadiance[ReflectionTracingCoord.CoordFlatten] = MakeFinite(Result.Radiance);
+		RWTraceBackgroundVisibility[ReflectionTracingCoord.CoordFlatten] = MakeFinite(Result.BackgroundVisibility);
+		RWTraceHit[ReflectionTracingCoord.CoordFlatten] = EncodeRayDistance(Result.TraceHitDistance, Result.bIsHit);
+
+		// TODO: Visualize coherency?
+	}
+}
+
+#endif // LUMEN_HARDWARE_RAYTRACING

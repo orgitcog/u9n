@@ -1,0 +1,39 @@
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
+#pragma once
+
+#include "/Engine/Shared/MaterialCacheDefinitions.h"
+
+float4 GetMaterialCacheUnwrapClipPosition(float2 TexCoord, float4 UnwrapMinAndInvSize, float2 PageAdvanceAndInvCount = float2(0, 1))
+{
+	// Remap coordinate
+	TexCoord = (TexCoord - UnwrapMinAndInvSize.xy) * UnwrapMinAndInvSize.zw;
+
+	// Viewport remapping
+	// Nanite multi-view rendering doesn't normalize the NDC space to the view rect, it remains as is
+	TexCoord.x = TexCoord.x * PageAdvanceAndInvCount.y + PageAdvanceAndInvCount.x;
+	
+	// To NDC
+	return float4(
+		TexCoord.x * 2.0f - 1.0f,
+		1.0f - TexCoord.y * 2.0f,
+		0.0f,
+		1.0f
+	);
+}
+
+FMaterialCacheBinData GetMaterialCacheShadingData(uint Index)
+{
+	// Workaround for static uniform buffer typing around structured buffers
+	
+	const uint Stride = sizeof(FMaterialCacheBinData) / sizeof(uint4);
+	uint4 DW0 = MaterialCachePass.ShadingBinData[Stride * Index + 0];
+	uint4 DW4 = MaterialCachePass.ShadingBinData[Stride * Index + 1];
+	uint4 DW8 = MaterialCachePass.ShadingBinData[Stride * Index + 2];
+
+	FMaterialCacheBinData Data = (FMaterialCacheBinData)0;
+	Data.ABufferPhysicalPosition = DW0.xyz;
+	Data.PrimitiveData = DW0.w;
+	Data.UVMinAndThreadAdvance = asfloat(DW4);
+	Data.UVMinAndInvSize = asfloat(DW8);
+	return Data;
+}

@@ -1,0 +1,199 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+#include "../HZBTracing.ush"
+#include "LumenMaterial.ush"
+#include "../FastMath.ush"
+#include "../SceneTextureParameters.ush"
+#include "LumenPosition.ush"
+#include "../HZB.ush"
+
+
+void TraceScreen(
+	float3 RayTranslatedWorldOrigin,
+	float3 RayWorldDirection,
+	float MaxWorldTraceDistance,
+	float4 InHZBUvFactorAndInvFactor,
+	float MaxIterations,
+	float RelativeDepthThickness,
+	float NumThicknessStepsToDetermineCertainty,
+	uint MinimumTracingThreadOccupancy,
+	inout bool bHit,
+	inout bool bUncertain,
+	inout float3 OutScreenUV,
+	inout float3 OutLastVisibleScreenUV,
+	inout float OutHitTileZ)
+{
+	TraceHZB(
+		SceneDepthTexture,
+		ClosestHZBTexture,
+		HZBBaseTexelSize,
+		HZBUVToScreenUVScaleBias,
+		RayTranslatedWorldOrigin,
+		RayWorldDirection,
+		MaxWorldTraceDistance,
+		InHZBUvFactorAndInvFactor,
+		MaxIterations,
+		RelativeDepthThickness,
+		NumThicknessStepsToDetermineCertainty,
+		MinimumTracingThreadOccupancy,
+		bHit,
+		bUncertain,
+		OutScreenUV,
+		OutLastVisibleScreenUV,
+		OutHitTileZ);
+}
+
+#include "../SSRT/SSRTRayCast.ush"
+
+Texture2D PrevSceneColorTexture;
+Texture2D HistorySceneDepth;
+float2 PrevSceneColorBilinearUVMin;
+float2 PrevSceneColorBilinearUVMax;
+float4 PrevScreenPositionScaleBias;
+float4 PrevScreenPositionScaleBiasForDepth;
+float PrevSceneColorPreExposureCorrection;
+
+float SampleSceneColorNormalTreshold;
+
+/**
+ * Try to sample scene color at hit and return whether it was successfull
+ */
+bool SampleSceneColorAtHit(float3 HitTranslatedWorldPosition, float3 HitGeometryWorldNormal, uint2 SvPosition, float RelativeDepthThickness, inout float3 Lighting)
+{
+	float4 HitClipPosition = mul(float4(HitTranslatedWorldPosition, 1.0f), View.TranslatedWorldToClip);
+
+	if (HitClipPosition.w > 0)
+	{
+		float2 HitScreenPosition = HitClipPosition.xy / HitClipPosition.w;
+
+		if (all(abs(HitScreenPosition) < float2(1, 1)))
+		{
+			float2 HitScreenUV = HitScreenPosition * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz;
+			float HitDeviceZ = SceneDepthTexture.SampleLevel(GlobalPointClampedSampler, HitScreenUV, 0).r;
+			float HitSceneDepth = ConvertFromDeviceZ(HitDeviceZ);
+			float RayHitSceneDepth = HitClipPosition.w;
+
+			float3 PixelToCameraDirection = -GetCameraVectorFromTranslatedWorldPosition(HitTranslatedWorldPosition);
+
+			// Discard screen points which are either too far or face the other direction
+			// Also discard screen points at steep angle or facing backwards
+			if (abs(RayHitSceneDepth - HitSceneDepth) < RelativeDepthThickness * max(HitSceneDepth, .00001f)
+				&& dot(PixelToCameraDirection, HitGeometryWorldNormal) >= SampleSceneColorNormalTreshold)
+			{
+				float3 HitHistoryScreenPosition = GetHistoryScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
+
+				float Vignette = min(ComputeHitVignetteFromScreenPos(HitScreenPosition), ComputeHitVignetteFromScreenPos(HitHistoryScreenPosition.xy));
+				float Noise = InterleavedGradientNoise(SvPosition + 0.5f, View.StateFrameIndexMod8);
+
+				bool bSampleSceneColor = true;
+
+				// Skip reporting a hit if near the edge of the screen
+				if (Vignette < Noise)
+				{
+					bSampleSceneColor = false;
+				}
+
+				if (bSampleSceneColor)
+				{
+					// Calculate the expected depth of the pixel last frame
+					float PrevDeviceZ = HitHistoryScreenPosition.z;
+
+					// Lookup the actual depth at the same screen position last frame
+					float2 HitHistoryScreenUVForDepth = HitHistoryScreenPosition.xy * PrevScreenPositionScaleBiasForDepth.xy + PrevScreenPositionScaleBiasForDepth.zw;
+					float HistoryDeviceZ = Texture2DSampleLevel(HistorySceneDepth, GlobalPointClampedSampler, HitHistoryScreenUVForDepth, 0).x;
+
+					bSampleSceneColor = abs(HistoryDeviceZ - PrevDeviceZ) < RelativeDepthThickness * lerp(.5f, 2.0f, Noise);
+				}
+
+				if (bSampleSceneColor)
+				{
+					float2 HitHistoryScreenUV = HitHistoryScreenPosition.xy * PrevScreenPositionScaleBias.xy + PrevScreenPositionScaleBias.zw;
+					HitHistoryScreenUV = clamp(HitHistoryScreenUV, PrevSceneColorBilinearUVMin, PrevSceneColorBilinearUVMax);
+					Lighting = SampleScreenColor(PrevSceneColorTexture, GlobalPointClampedSampler, HitHistoryScreenUV).xyz * PrevSceneColorPreExposureCorrection * View.OneOverPreExposure;
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+float DistantScreenTraceSlopeCompareTolerance;
+float DistantScreenTraceMaxTraceDistance;
+float DistantScreenTraceStepOffsetBias;
+Texture2D DistantScreenTraceFurthestHZBTexture;
+
+void DistantScreenTrace(
+	float2 NoiseCoord,
+	float4 InHZBUvFactorAndInvFactor,
+	float3 TranslatedRayOrigin,
+	float3 RayDirection,
+	float TraceDistance,
+	float SceneDepth,
+	inout bool bHit,
+	inout float3 TraceRadiance)
+{
+	uint NumSteps = 16;
+	float StartMipLevel = 0.0f;
+	float RayRoughness = 0.0f;
+	float Noise = InterleavedGradientNoise(NoiseCoord, View.StateFrameIndexMod8);
+	float StepOffset = Noise + DistantScreenTraceStepOffsetBias;
+
+	FSSRTCastingSettings CastSettings = CreateDefaultCastSettings();
+
+	float Level;
+	float3 HitUVz;
+	bool bRayWasClipped;
+
+	FSSRTRay Ray = InitScreenSpaceRayFromWorldSpace(
+		TranslatedRayOrigin, RayDirection,
+		/* WorldTMax = */ TraceDistance,
+		/* SceneDepth = */ SceneDepth,
+		/* SlopeCompareToleranceScale */ DistantScreenTraceSlopeCompareTolerance,
+		/* bExtendRayToScreenBorder = */ false,
+		/* out */ bRayWasClipped,
+		/* WorldTMaxClamp */ 10000000.f);
+
+	bool bUncertain;
+	float3 DebugOutput;
+
+	CastScreenSpaceRay(
+		DistantScreenTraceFurthestHZBTexture, GlobalPointClampedSampler,
+		StartMipLevel,
+		CastSettings,
+		Ray, RayRoughness, NumSteps, StepOffset,
+		InHZBUvFactorAndInvFactor, false,
+		/* out */ DebugOutput,
+		/* out */ HitUVz,
+		/* out */ Level,
+		/* out */ bHit,
+		/* out */ bUncertain);
+
+	if (bHit)
+	{
+		float2 HitScreenUV = HitUVz.xy;
+		float2 HitScreenPosition = (HitUVz.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+		float HitDeviceZ = HitUVz.z;
+
+		float3 HitHistoryScreenPosition = GetHistoryScreenPosition(HitScreenPosition, HitScreenUV, HitDeviceZ);
+
+		float Vignette = min(ComputeHitVignetteFromScreenPos(HitScreenPosition), ComputeHitVignetteFromScreenPos(HitHistoryScreenPosition.xy));
+
+		// Skip reporting a hit if near the edge of the screen
+		if (Vignette < Noise)
+		{
+			bHit = false;
+		}
+
+		if (bHit)
+		{
+			float2 HitHistoryScreenUV = HitHistoryScreenPosition.xy * PrevScreenPositionScaleBias.xy + PrevScreenPositionScaleBias.zw;
+			HitHistoryScreenUV = clamp(HitHistoryScreenUV, PrevSceneColorBilinearUVMin, PrevSceneColorBilinearUVMax);
+			TraceRadiance = SampleScreenColor(PrevSceneColorTexture, GlobalPointClampedSampler, HitHistoryScreenUV).xyz * (PrevSceneColorPreExposureCorrection * View.OneOverPreExposure);
+		}
+	}
+}

@@ -1,0 +1,49 @@
+{
+	"Version": 1,
+	"Name":
+	[
+		{
+			"Language": "en",
+			"Text": "SideScroller Variant Shared Resource Standard"
+		}
+	],
+	"Description":
+	[
+		{
+			"Language": "en",
+			"Text": "Shared Resource Pack for ThirdPerson SideScroller Variant"
+		}
+	],
+	"AssetTypes":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],
+	"SearchTags":
+	[
+		{
+			"Language": "en",
+			"Text": ""
+		}
+	],	
+	"ClassTypes": " ",
+	"Category": "SharedPack",
+	"Thumbnail": "Variant_SideScroller.png",
+	"Screenshots":
+	[
+		"Variant_SideScroller_Preview.png"
+	],
+	"Ident": "Variant_SideScrollerStandard",
+	"AdditionalFiles":
+	{
+		"DestinationFilesFolder": "Variant_SideScroller",
+		"AdditionalFilesList": [
+			"Templates/TemplateResources/Standard/Variant_SideScroller/Content/*.*",
+			"Templates/TemplateResources/Standard/Variant_Sidescroller/__ExternalActors__/*.*",
+			"Templates/TemplateResources/Standard/Variant_Sidescroller/__ExternalObjects__/*.*"
+		]
+	}
+}
+

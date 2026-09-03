@@ -1,0 +1,187 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Public/Platform.ush"
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/SceneData.ush"
+#include "/Engine/Private/BoneTransform.ush"
+#include "/Engine/Private/Visualization.ush"
+#include "/Engine/Private/Nanite/NaniteDataDecode.ush"
+#include "/Engine/Shared/SkinningDefinitions.h"
+
+ByteAddressBuffer HeaderBuffer;
+ByteAddressBuffer BankBuffer;
+ByteAddressBuffer SrcTransformBuffer;
+RWByteAddressBuffer TransformBuffer;
+
+float DeltaTime;
+
+struct FKeyIndices
+{
+	int KeyIndex1;
+	int KeyIndex2;
+	float Alpha;
+};
+
+FKeyIndices GetKeyIndicesFromTime(float Time, int KeyCount, float SequenceLength, float FramesPerSecond)
+{
+	FKeyIndices Indices;
+
+	// Check for 1-frame, before-first-frame and after-last-frame cases.
+	if (Time <= 0.0f || KeyCount == 1)
+	{
+		Indices.KeyIndex1 = 0;
+		Indices.KeyIndex2 = 0;
+		Indices.Alpha = 0.0f;
+	}
+	else if (Time >= SequenceLength)
+	{
+		Indices.KeyIndex1 = KeyCount - 1;
+		Indices.KeyIndex2 = 0;
+		Indices.Alpha = 0.0f;
+	}
+	else
+	{
+		// Calculate the frames per second if we didn't provide any.
+		if (FramesPerSecond <= 0.0f)
+		{
+			const int FrameCount = KeyCount - 1;
+			FramesPerSecond = FrameCount / SequenceLength;
+		}
+
+		const float KeyPos = Time * FramesPerSecond;
+
+		// Find the integer part (ensuring within range) and that gives us the 'starting' key index.
+		int IntegerPart = int(KeyPos);
+		IntegerPart -= ((float)IntegerPart > KeyPos);
+		Indices.KeyIndex1 = clamp(IntegerPart, 0, KeyCount - 1);
+
+		// The alpha (fractional part) is just the remainder.
+		Indices.Alpha = KeyPos - (float)Indices.KeyIndex1;
+
+		Indices.KeyIndex2 = Indices.KeyIndex1 + 1;
+
+		// If we have gone over the end, do different things in case of looping
+		if (Indices.KeyIndex2 == KeyCount)
+		{
+			Indices.KeyIndex2 = Indices.KeyIndex1;
+		}
+	}
+
+	return Indices;
+}
+
+[numthreads(BONES_PER_GROUP, 1, 1)]
+void BankEvaluateCS(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_GroupIndex)
+{
+	const uint BoneBlock		= GroupId.x;
+	const uint LocalBoneIndex	= GroupIndex;
+
+	const FBankBlockHeader BoneBlockHeader = HeaderBuffer.Load<FBankBlockHeader>(BoneBlock * uint(sizeof(FBankBlockHeader)));
+	if (LocalBoneIndex < BoneBlockHeader.BlockBoneCount)
+	{
+		const uint BankRecordHeaderOffset = BoneBlockHeader.BankRecordOffset;
+		const FBankRecordHeader BankRecordHeader = BankBuffer.Load<FBankRecordHeader>(BankRecordHeaderOffset);
+		if (BankRecordHeader.Playing)
+		{
+			const uint BoneTransformSize	= (uint)select(BankRecordHeader.HasScale != 0, sizeof(FBoneTransformWithScale), sizeof(FBoneTransform));
+			const uint BoneTransformRange	= BankRecordHeader.BoneCount * BoneTransformSize;
+			const uint MappingKeyOffset 	= BankRecordHeaderOffset + (uint)sizeof(FBankRecordHeader);
+			const uint BoneKeyOffset		= MappingKeyOffset + BoneTransformRange;
+
+			const float SampleInterval = 1.0f / BankRecordHeader.SampleRate;
+			const float TrackLength = (BankRecordHeader.FrameCount - 1) * SampleInterval;
+
+			float Time = fmod(BankRecordHeader.CurrentTime, TrackLength);
+			if (Time < 0.0f) 
+			{
+				Time += TrackLength;
+			}
+
+			const float FramesPerSecond = -1.0f;
+			FKeyIndices KeyIndices = GetKeyIndicesFromTime(Time, BankRecordHeader.FrameCount, TrackLength, FramesPerSecond);
+
+			if (!BankRecordHeader.Interpolating)
+			{
+				// Forcing alpha to zero disables pose interpolation (interpolation method is "step")
+				KeyIndices.Alpha = 0.0f;
+			}
+
+			const uint BoneIndex = (BoneBlockHeader.BlockLocalIndex * BONES_PER_GROUP) + LocalBoneIndex;
+
+			// TODO: Scale version
+
+			FBoneTransform InvGlobalRefPoseTransform = BankBuffer.Load<FBoneTransform>(MappingKeyOffset + ((uint)BoneIndex * BoneTransformSize));
+			FBoneTransform MeshGlobalAnimPoseTransform;
+		
+			if (KeyIndices.Alpha <= 0.0f)
+			{
+				const uint KeyIndex = (KeyIndices.KeyIndex1 * BankRecordHeader.BoneCount) + BoneIndex;
+				MeshGlobalAnimPoseTransform = BankBuffer.Load<FBoneTransform>(BoneKeyOffset + (KeyIndex * BoneTransformSize));
+				QuatNormalize(MeshGlobalAnimPoseTransform.Rotation);
+			}
+			else if (KeyIndices.Alpha >= 1.0f)
+			{
+				const uint KeyIndex = (KeyIndices.KeyIndex2 * BankRecordHeader.BoneCount) + BoneIndex;
+				MeshGlobalAnimPoseTransform = BankBuffer.Load<FBoneTransform>(BoneKeyOffset + (KeyIndex * BoneTransformSize));
+				QuatNormalize(MeshGlobalAnimPoseTransform.Rotation);
+			}
+			else
+			{
+				const uint KeyIndexA = (KeyIndices.KeyIndex1 * BankRecordHeader.BoneCount) + BoneIndex;
+				const uint KeyIndexB = (KeyIndices.KeyIndex2 * BankRecordHeader.BoneCount) + BoneIndex;
+
+				FBoneTransform MeshGlobalTransformA = BankBuffer.Load<FBoneTransform>(BoneKeyOffset + (KeyIndexA * BoneTransformSize));
+				FBoneTransform MeshGlobalTransformB = BankBuffer.Load<FBoneTransform>(BoneKeyOffset + (KeyIndexB * BoneTransformSize));
+
+				// Ensure rotations are normalized before blending
+				QuatNormalize(MeshGlobalTransformA.Rotation);
+				QuatNormalize(MeshGlobalTransformB.Rotation);
+
+				// NOTE: Rotation will already be normalized
+				MeshGlobalAnimPoseTransform = BlendBoneTransforms(MeshGlobalTransformA, MeshGlobalTransformB, KeyIndices.Alpha);
+			}
+
+			MeshGlobalAnimPoseTransform = MultiplyBoneTransform(InvGlobalRefPoseTransform, MeshGlobalAnimPoseTransform);
+			const float4x4 CurrentTransform44 = MatrixFromBoneTransform(MeshGlobalAnimPoseTransform);
+			const float3x4 CurrentTransform = (float3x4)transpose(CurrentTransform44);
+
+			StoreCompressedBoneTransform(TransformBuffer, BankRecordHeader.TransformOffset, BoneIndex, transpose(CurrentTransform));
+		}
+	}
+}
+
+[numthreads(BONES_PER_GROUP, 1, 1)]
+void BankScatterCS(uint3 GroupId : SV_GroupID, uint GroupIndex : SV_GroupIndex)
+{
+	const uint GlobalBlockIndex		= GroupId.x;
+	const uint LocalTransformIndex	= GroupIndex;
+
+	const FBankScatterHeader BlockHeader = HeaderBuffer.Load<FBankScatterHeader>(GlobalBlockIndex * uint(sizeof(FBankScatterHeader)));
+	if (LocalTransformIndex < BlockHeader.BlockTransformCount)
+	{
+		float4x3 PreviousTransform;
+		float4x3 CurrentTransform;
+
+		BRANCH
+		if (BlockHeader.BlockSrcTransformOffset == ~uint(0))
+		{
+			PreviousTransform[0] = float3(1.0f, 0.0f, 0.0f);
+			PreviousTransform[1] = float3(0.0f, 1.0f, 0.0f);
+			PreviousTransform[2] = float3(0.0f, 0.0f, 1.0f);
+			PreviousTransform[3] = float3(0.0f, 0.0f, 0.0f);
+
+			CurrentTransform[0] = float3(1.0f, 0.0f, 0.0f);
+			CurrentTransform[1] = float3(0.0f, 1.0f, 0.0f);
+			CurrentTransform[2] = float3(0.0f, 0.0f, 1.0f);
+			CurrentTransform[3] = float3(0.0f, 0.0f, 0.0f);
+		}
+		else
+		{
+			PreviousTransform	= LoadCompressedBoneTransform(TransformBuffer, BlockHeader.BlockDstTransformOffset, LocalTransformIndex);
+			CurrentTransform	= LoadCompressedBoneTransform(SrcTransformBuffer, BlockHeader.BlockSrcTransformOffset, LocalTransformIndex);
+		}
+
+		StoreCompressedBoneTransform(TransformBuffer, BlockHeader.BlockDstTransformOffset, LocalTransformIndex, CurrentTransform);
+		StoreCompressedBoneTransform(TransformBuffer, BlockHeader.BlockDstTransformOffset, BlockHeader.TotalTransformCount + LocalTransformIndex, PreviousTransform);
+	}
+}

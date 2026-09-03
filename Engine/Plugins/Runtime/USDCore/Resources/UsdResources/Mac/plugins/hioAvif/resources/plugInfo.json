@@ -1,0 +1,20 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                   "Hio_AVIFImage" : {
+                        "bases": ["HioImage"],
+                        "imageTypes": ["avif"],
+                        "precedence": 30
+                    }
+                }
+            },
+            "LibraryPath": "../../../../../Source/ThirdParty/Mac/bin/hioAvif.dylib",
+            "Name": "hioAvif",
+            "ResourcePath": "resources",
+            "Root": "..",
+            "Type": "library"
+        }
+    ]
+}

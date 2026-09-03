@@ -1,0 +1,39 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../Schema.xsd" >
+
+<!-- Project Info -->
+<Property Name="ProjectName" Value="**REPLACE_PROJECTNAME**" />
+<Property Name="ProjectPath" Value="**REPLACE_PROJECTPATH**" />
+<Option Name="TargetName" DefaultValue="**REPLACE_PROJECTNAME**" Restrict="**REPLACE_PROJECTNAME**" Description="The project target configuration we're building" />
+
+<!-- Stick to the defaults unless the project needs to change this -->
+<Property Name="WithBATDefaults" Value="true" />
+
+<!-- If a build machine, turn off all defaults. Settings should be specified via the website UI -->
+<Do If="$(IsBuildMachine)">
+	<Property Name="DefaultEditorPlatforms" Value="Win64" />
+	<Property Name="DefaultTargetPlatforms" Value="Win64" />
+	<Property Name="DefaultTargetConfigurations" Value="Development" />
+	<Property Name="DefaultEditorTestList" Value="" />
+	<Property Name="DefaultTargetTestList" Value="" />
+</Do>
+
+<!-- Configure AutomatedPerfTest Sequence test -->
+<Include Script="$(RootDir)/Engine/Plugins/Performance/AutomatedPerfTesting/Build/Inc/AutomatedPerfTestProjectSettings.xml" />
+<Do If="'$(MapSequenceComboNames)' == ''">
+	<Property Name="MapSequenceComboNames" Value="PerfSequence" />
+</Do>
+
+
+<!-- Common Setting Overrides -->
+<Property Name="GauntletSettingsFile" Value="$(RootDir)/$(ProjectPath)/Build/Inc/GauntletSettings.xml" />
+
+<!-- For Mac builds, we default to the sandbox entitlement, however PerfTests expect data outside,
+     so we disable the entitlement for this particular build. -->
+<Property Name="ExtraStageAndPackageArguments" Value="-target=&quot;$(TargetName)&quot; -compressed -noEntitlements" />
+<Property Name="ExtraTargetEntitlementArguments" Value="-noEntitlements"/>
+
+<!-- This will declare an aggregate called BuildAndTest **REPLACE_PROJECTNAME** -->
+<Include Script="$(RootDir)/Engine/Build/Graph/Tasks/BuildAndTestProject.xml" />
+
+</BuildGraph>

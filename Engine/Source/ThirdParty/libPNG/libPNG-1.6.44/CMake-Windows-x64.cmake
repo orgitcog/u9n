@@ -1,0 +1,3 @@
+set(CMAKE_SYSTEM_NAME       Windows)
+set(CMAKE_SYSTEM_PROCESSOR  amd64)
+set(CMAKE_C_COMPILER_TARGET x86_64-win32-msvc)

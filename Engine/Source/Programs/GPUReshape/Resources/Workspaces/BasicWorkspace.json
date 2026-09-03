@@ -1,0 +1,12 @@
+{
+  "Config": {
+    "Coverage": true,
+    "Detail": true
+  },
+  "Features": [
+    "Resource Bounds",
+    "Export Stability",
+    "Descriptor",
+    "Loop"
+  ]
+}

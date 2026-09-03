@@ -1,0 +1,101 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../ShaderPrint.ush"
+#include "LumenScreenProbeCommon.ush"
+#include "LumenMaterial.ush"
+
+uint VisualizeProbePlacement;
+RWTexture2D<float4> RWSceneColor;
+
+void DrawPoint(FShaderPrintContext Context, uint2 ScreenCoord, float4 Color)
+{
+	// Rescale from internal resolution to output resolution
+	ScreenCoord /= View.ViewResolutionFraction;
+	AddQuadSS(Context, ScreenCoord - 1.0f, ScreenCoord + 1.0f, Color);
+}
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void ScreenProbeGatherDebugCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.8, 0.1));
+
+	if (all(DispatchThreadId == 0))
+	{
+		Print(Context, TEXT("NumScreenProbes:         "));
+		Print(Context, GetNumScreenProbes());
+
+		Newline(Context);
+		Print(Context, TEXT("NumUniformScreenProbes:  "));
+		Print(Context, NumUniformScreenProbes);
+
+		Newline(Context);
+		Print(Context, TEXT("NumAdaptiveScreenProbes: "));
+		Print(Context, GetNumAdaptiveScreenProbes());
+	}
+
+	const uint2 ScreenCoord = DispatchThreadId.xy;
+	if (and(all(ScreenCoord >= View.ViewRectMinAndSize.xy), all(ScreenCoord < View.ViewRectMinAndSize.xy + View.ViewRectMinAndSize.zw)))
+	{
+		FLumenMaterialData Material = ReadMaterialData(ScreenCoord, /*MaxRoughnessToTrace*/ 0.4f);
+		if (IsValid(Material) && VisualizeProbePlacement != 0)
+		{
+			uint2 ScreenTileCoord = GetScreenTileCoord(ScreenCoord);
+			uint2 UniformScreenProbeScreenPosition = GetUniformScreenProbeScreenPosition(ScreenTileCoord);
+
+			bool bVisualizeUniform = VisualizeProbePlacement != 2;
+			bool bVisualizeAdaptive = true;
+			bool bVisualizeNormals = VisualizeProbePlacement == 3;
+
+			if (all(UniformScreenProbeScreenPosition == ScreenCoord) && GetScreenProbeDepth(ScreenTileCoord) >= 0 && bVisualizeUniform)
+			{
+				if (bVisualizeNormals)
+				{
+					float ProbeDepth = GetScreenProbeDepth(ScreenTileCoord);
+					float3 ProbeWorldNormal = GetScreenProbeNormal(ScreenTileCoord);
+					float3 ProbeTranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(GetScreenUVFromScreenTileCoord(ScreenTileCoord), ProbeDepth);
+					AddCrossTWS(Context, ProbeTranslatedWorldPosition, 2.0f, float4(1, 1, 0, 1));
+					AddLineTWS(Context, ProbeTranslatedWorldPosition, ProbeTranslatedWorldPosition + 10.0f * ProbeWorldNormal, float4(1, 1, 0, 1));
+				}
+				else
+				{
+					DrawPoint(Context, ScreenCoord, float4(1, 1, 0, 1));
+				}
+			}
+
+			uint NumAdaptiveProbes = ScreenTileAdaptiveProbeHeader[ScreenTileCoord];
+
+			for (uint AdaptiveProbeListIndex = 0; AdaptiveProbeListIndex < NumAdaptiveProbes; AdaptiveProbeListIndex++)
+			{
+				uint2 AdaptiveProbeCoord = GetAdaptiveProbeCoord(ScreenTileCoord, AdaptiveProbeListIndex);
+				uint AdaptiveProbeIndex = ScreenTileAdaptiveProbeIndices[AdaptiveProbeCoord];
+				uint ScreenProbeIndex = AdaptiveProbeIndex + NumUniformScreenProbes;
+
+				uint2 ScreenProbeScreenPosition = GetScreenProbeScreenPosition(ScreenProbeIndex);
+
+				if (all(ScreenProbeScreenPosition == ScreenCoord) && bVisualizeAdaptive)
+				{
+					if (bVisualizeNormals)
+					{
+						uint2 ScreenProbeAtlasCoord = uint2(ScreenProbeIndex % ScreenProbeAtlasViewSize.x, ScreenProbeIndex / ScreenProbeAtlasViewSize.x);
+						float2 ProbeScreenUV = GetScreenUVFromScreenProbePosition(ScreenProbeScreenPosition);
+						float ProbeSceneDepth = GetScreenProbeDepth(ScreenProbeAtlasCoord);
+						float3 ProbeWorldNormal = GetScreenProbeNormal(ScreenTileCoord);
+						float3 ProbeTranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ProbeScreenUV, ProbeSceneDepth);
+						AddCrossTWS(Context, ProbeTranslatedWorldPosition, 2.0f, float4(1, 0, 1, 1));
+						AddLineTWS(Context, ProbeTranslatedWorldPosition, ProbeTranslatedWorldPosition + 10.0f * ProbeWorldNormal, float4(1, 0, 1, 1));						
+					}
+					else
+					{
+						DrawPoint(Context, ScreenCoord, float4(1, 0, 1, 1));
+					}
+				}
+			}
+
+			//RWSceneColor[ScreenCoord] = float4(NumAdaptiveProbes / 10.0f, 0.0f);
+		}
+	}
+}

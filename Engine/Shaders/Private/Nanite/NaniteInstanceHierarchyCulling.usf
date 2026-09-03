@@ -1,0 +1,380 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+// Do not use shared samplers as it requires the View uniform buffer, which is not bound for this shader.
+#define USE_HZB_SHARED_SAMPLERS 0
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "../WaveOpUtil.ush"
+#include "../ComputeShaderUtils.ush"
+#include "../SceneCulling/SceneCulling.ush"
+#include "../WorkGroupLoadBalancer.ush"
+
+#include "NaniteCullingCommon.ush"
+#include "NaniteCulling.ush"
+#include "NaniteDataDecode.ush"
+#include "NaniteHZBCull.ush"
+
+#if DEBUG_FLAGS
+RWStructuredBuffer<FNaniteStats>		OutStatsBuffer;
+#endif
+
+// Occluded chunks fed back to post-pass.
+RWStructuredBuffer<FOccludedChunkDraw> OutOccludedChunkDraws;
+RWBuffer<uint> OutOccludedChunkArgs;
+
+
+void WriteOccludedChunk(uint ChunkId, uint ViewGroupId, uint OccludedViewMask)
+{
+	uint OccludedChunkOffset = 0;
+	WaveInterlockedAddScalarInGroups(OutOccludedChunkArgs[3], OutOccludedChunkArgs[0], 64, 1, OccludedChunkOffset);
+
+	FOccludedChunkDraw OccDraw;
+	OccDraw.ViewGroupId = ViewGroupId;
+	OccDraw.OccludedViewMask = OccludedViewMask;
+	OccDraw.ChunkId = ChunkId;
+
+	OutOccludedChunkDraws[OccludedChunkOffset] = OccDraw;
+}
+
+StructuredBuffer<FViewDrawGroup> InViewDrawRanges;
+
+// Yet another format 
+// TODO: unify/remove paths
+RWStructuredBuffer<FInstanceCullingGroupWork> OutInstanceWorkGroups;
+
+// TODO: this used to be the same arg as the post pass instances from the instance culling main pass, but due to a weird bug they are separate, for now.
+// Output indirect dispatch args for the following instance culling pass (x will contain all the groups, which matches the array count above).
+RWBuffer<uint> OutInstanceWorkArgs;
+uint MaxInstanceWorkGroups;
+uint bAllowStaticGeometryPath;
+
+bool AppendInstanceCullingWorkGroup(uint ItemChunksOffset, uint ViewGroupId, uint ActiveViewMask, bool bIsStaticSceneGeometry)
+{
+	uint InstanceGroupsOutOffset = 0;
+	BRANCH
+	if (bIsStaticSceneGeometry && bAllowStaticGeometryPath)
+	{
+		WaveInterlockedAddScalar_(OutInstanceWorkArgs[0u], 1u, InstanceGroupsOutOffset);
+	}
+	else
+	{
+		WaveInterlockedAddScalar_(OutInstanceWorkArgs[4u], 1u, InstanceGroupsOutOffset);
+		// Write from the end
+		InstanceGroupsOutOffset = MaxInstanceWorkGroups - InstanceGroupsOutOffset - 1u;
+	}
+
+	if (InstanceGroupsOutOffset < MaxInstanceWorkGroups)
+	{
+		uint PackedItemChunkDesc = InstanceHierarchyItemChunks[ItemChunksOffset];
+
+		FInstanceCullingGroupWork InstanceCullingGroupWork;
+		InstanceCullingGroupWork.ViewGroupId = ViewGroupId;
+		InstanceCullingGroupWork.PackedItemChunkDesc = PackedItemChunkDesc;
+		InstanceCullingGroupWork.ActiveViewMask = ActiveViewMask;
+		// Allocate the static geo to the end of the buffer
+		OutInstanceWorkGroups[InstanceGroupsOutOffset] = InstanceCullingGroupWork;
+		return true;
+	}
+	return false;
+}
+
+void UpdateChunkPreCullStat(uint NumChunks, bool bShouldUpdate)
+{
+#if DEBUG_FLAGS
+	if (bShouldUpdate && (RenderFlags & NANITE_RENDER_FLAG_WRITE_STATS) != 0u)
+	{
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+		InterlockedAdd(OutStatsBuffer[0].NumPostHierarchyChunksPreCull, NumChunks);
+#else
+		InterlockedAdd(OutStatsBuffer[0].NumMainHierarchyChunksPreCull, NumChunks);
+#endif
+	}
+#endif
+}
+
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+Buffer<uint> InOccludedChunkArgs;
+StructuredBuffer<FOccludedChunkDraw> InOccludedChunkDraws;
+#else
+uint NumAllocatedChunks;
+StructuredBuffer<FCellChunkDraw> ParentInfoBuffer;
+StructuredBuffer<uint> InGroupIds;
+uint NumGroupIds;
+uint NumParentInfos;
+#endif
+
+
+/**
+* Fixed - added max(0.0f, ...) (clone of FBoxCull::DistanceConservative to limit the shader change reach for hot fixing purposes.
+*/
+void DistanceConservativeFixed(inout FBoxCull Cull, bool bDrawDistance, float MinDistanceSq, float MaxDistanceSq)
+{
+	BRANCH
+	if( Cull.bIsVisible )
+	{
+		FBoxCull::FDistanceCullSetup DistanceCullSetup = Cull.ViewDistanceInternal(Cull.bDistanceCull);
+
+		if ( Cull.bIsVisible && bDrawDistance && !Cull.bSkipDrawDistance )
+		{
+			const float InstanceDrawDist = length( DistanceCullSetup.CenterTranslatedWorld - Cull.NaniteView.CullingViewOriginTranslatedWorld);
+			Cull.bIsVisible = Square(InstanceDrawDist + DistanceCullSetup.Radius) >= MinDistanceSq && Square(max(0.0f, InstanceDrawDist - DistanceCullSetup.Radius)) <= MaxDistanceSq;
+		}
+	}
+}
+
+void ProcessChunk(uint ChunkId, uint ViewGroupId, uint InOccludedViewMask)
+{
+	FViewDrawGroup ViewDrawGroup = InViewDrawRanges[ViewGroupId];
+
+	uint CellId = ExplicitChunkCellIds[ChunkId];
+	FSceneHiearchyCellData CellData = GetSceneHiearchyCellData(CellId);
+
+	const float LevelCellSize = CellData.BlockData.LevelCellSize;
+	FInstanceChunkAttributes ChunkAttributes = UnpackInstanceChunkAttributes(ExplicitChunkBounds[ChunkId], LevelCellSize * 2.0f, LevelCellSize * 0.5f);
+
+
+	FCellHeader CellHeader = GetCellHeader(CellId);
+	const bool bIsStaticSceneGeometry = (ChunkId - CellHeader.ItemChunksOffset) < CellHeader.NumStaticChunks;
+
+#if VIRTUAL_TEXTURE_TARGET
+	// Early out if none of the instances in the chunk cast shadows
+	if ((ChunkAttributes.AnyFlags & PCAF_ANY_CAST_SHADOW) == 0u)
+	{
+		return;
+	}
+#endif
+
+	FAabb CellRelativeBounds = ChunkAttributes.Aabb;
+	float3 ImplicitBoundsMin = float3(CellData.LocalCellCoord) * LevelCellSize - (LevelCellSize * 0.5f).xxx;
+	float3 LocalBoundsCenter = (CellRelativeBounds.Min + CellRelativeBounds.Max) * 0.5f + ImplicitBoundsMin;
+	float3 LocalBoundsExtent = (CellRelativeBounds.Max - CellRelativeBounds.Min) * 0.5f;
+	float2 InstanceDrawDistanceMinMaxSquared = ChunkAttributes.InstanceDrawDistanceMinMaxSquared;
+	bool bHasDrawDistance = InstanceDrawDistanceMinMaxSquared.x < InstanceDrawDistanceMinMaxSquared.y;
+
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+	uint OutOccludedViewMask = 0U;
+#endif
+	uint ActiveViewMask = 0U;
+	// Wrt mip views - views, there is no explicit handling here: they are expected to come in a compact range (post view compaction, or from host for non-VSM draws)
+	for (uint ViewIndex = 0; ViewIndex < ViewDrawGroup.NumViews; ++ViewIndex)
+	{
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+		// TODO: loop over set bits instead!
+		if ((InOccludedViewMask & (1U << ViewIndex)) == 0U)
+		{
+			continue;
+		}
+#endif
+		uint ViewId = ViewDrawGroup.FirstView + ViewIndex;
+
+		FNaniteView NaniteView = GetNaniteView(ViewId);
+
+		// Depth clipping should only be disabled with orthographic projections
+		const bool bIsOrtho = IsOrthoProjection(NaniteView.ViewToClip);
+		const bool bNearClip = (NaniteView.Flags & NANITE_VIEW_FLAG_NEAR_CLIP) != 0u;
+		const bool bViewHZB = (NaniteView.Flags & NANITE_VIEW_FLAG_HZBTEST) != 0u;
+		const bool bIsViewUncached = (NaniteView.Flags & NANITE_VIEW_FLAG_UNCACHED) != 0u;
+
+		// TODO: Move out of the loop, logically all views in a group should share the preview translation
+		// TODO: Make the view compaction pull this data out of the view and store with the group?
+		float4x4 LocalToTranslatedWorld = MakeTranslationMatrix(DFFastToTranslatedWorld(CellData.BlockData.WorldPos, NaniteView.PreViewTranslation));
+		float4x4 PrevLocalToTranslatedWorld = MakeTranslationMatrix(DFFastToTranslatedWorld(CellData.BlockData.WorldPos, NaniteView.PrevPreViewTranslation));
+
+		FBoxCull Cull;
+		Cull.Init(NaniteView, LocalBoundsCenter, LocalBoundsExtent, float4(1.0f, 1.0f, 1.0f, 1.0f), LocalToTranslatedWorld, PrevLocalToTranslatedWorld);
+		if (CULLING_PASS == CULLING_PASS_OCCLUSION_POST)
+		{
+			Cull.bSkipCullFrustum = true;
+			Cull.bSkipCullGlobalClipPlane = true;
+		}
+
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+		// TODO: Switch back to Cull.DistanceConservative & fix that
+		DistanceConservativeFixed(Cull, bHasDrawDistance, InstanceDrawDistanceMinMaxSquared.x, InstanceDrawDistanceMinMaxSquared.y);
+		Cull.GlobalClipPlane();
+#endif
+		BRANCH
+        if( Cull.bIsVisible )
+        {
+#if VIRTUAL_TEXTURE_TARGET
+            Cull.PageFlagMask = VSM_FLAG_ANY_UNCACHED;
+			// Using the static HZB and disabling any dynamic depth culling is conservative while
+			// we traverse the hierarchy and we don't yet know what static/dynamic geometry is below
+			Cull.bIsStaticGeometry = true;
+			// If we're rendering into the static cache, it's not safe to use the receiver mask as we may cache that (full) page
+			// Since at this point in the hierarchy there could still be static instances below, it's only safe to use
+			// the receiver mask if we know the whole view is uncached.
+			Cull.bUseReceiverMask = Cull.bUseReceiverMask && Cull.bIsViewUncached;
+#endif
+			// Note: bClampToPageLevel == true means we might test rather large footprints in the HZB, leading to load imbalance
+			// TODO: rebalance the work in the workgroup? Spawn more work groups / cell? Implement the top (virtual space) HZB hierarchy?
+			const bool bClampToPageLevel = false;
+            Cull.FrustumHZB( bClampToPageLevel );
+        }
+
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+		if( Cull.bWasOccluded )
+		{
+			OutOccludedViewMask |= 1U << ViewIndex;
+		}
+#endif
+		if( Cull.bIsVisible && !Cull.bWasOccluded )
+		{
+			ActiveViewMask |= 1U << ViewIndex;
+		}
+	}
+
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_MAIN
+	if( OutOccludedViewMask != 0u)
+	{
+		WriteOccludedChunk(ChunkId, ViewGroupId, OutOccludedViewMask);
+	}
+#endif
+	if (ActiveViewMask != 0u)
+	{
+		AppendInstanceCullingWorkGroup(ChunkId, ViewGroupId, ActiveViewMask, bIsStaticSceneGeometry);
+	}
+}
+
+#ifdef InstanceHierarchyCellChunkCull_CS
+
+[numthreads(64, 1, 1)]
+void InstanceHierarchyCellChunkCull_CS(uint3 GroupId : SV_GroupID, uint GroupThreadIndex : SV_GroupIndex)
+{
+	FWorkGroupSetup WorkGroupSetup = WorkGroupLoadBalancer_Setup(GroupId, GroupThreadIndex);
+
+	if (!WorkGroupSetup.bValid)
+	{
+		return;
+	}
+
+	UpdateChunkPreCullStat(WorkGroupLoadBalancer_GetNumItems(), WorkGroupSetup.DispatchThreadId == 0u);
+
+	// decode payload into index
+	uint CellDrawIndex = WorkGroupSetup.WorkGroupInfo.Payload + WorkGroupSetup.Item.Payload;
+
+	FCellChunkDraw CellDraw = ParentInfoBuffer[CellDrawIndex];
+	ProcessChunk(CellDraw.ItemChunksOffset + WorkGroupSetup.ChildIndex, CellDraw.ViewGroupId, 0u);
+}
+
+#endif // InstanceHierarchyCellChunkCull_CS
+
+#ifdef InstanceHierarchyChunkCull_CS
+
+[numthreads(64, 1, 1)]
+void InstanceHierarchyChunkCull_CS(uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+#if CULLING_PASS == CULLING_PASS_OCCLUSION_POST
+	uint NumChunkDraws = InOccludedChunkArgs[3];
+	if (DispatchThreadID.x >= NumChunkDraws)
+	{
+		return;
+	}
+	FOccludedChunkDraw OccDraw = InOccludedChunkDraws[DispatchThreadID.x];
+	const uint ChunkId = OccDraw.ChunkId;
+	const uint ViewGroupId = OccDraw.ViewGroupId;
+	const uint InOccludedViewMask = OccDraw.OccludedViewMask;
+
+	UpdateChunkPreCullStat(NumChunkDraws, all(DispatchThreadID == 0u));
+#else
+	// exit if out of range
+	if (DispatchThreadID.y >= NumGroupIds || DispatchThreadID.x >= NumAllocatedChunks)
+	{
+		return;
+	}
+
+	UpdateChunkPreCullStat(NumGroupIds * NumAllocatedChunks, all(DispatchThreadID == 0u));
+	const uint ChunkId = DispatchThreadID.x;
+
+	// early out if chunk not allocated / used by any cell
+	if (!IsChunkUsed(ChunkId))
+	{
+		return;
+	}
+
+	const uint ViewGroupId = InGroupIds[DispatchThreadID.y];
+	const uint InOccludedViewMask = 0u;
+#endif
+
+	ProcessChunk(ChunkId, ViewGroupId, InOccludedViewMask);
+}
+#endif // InstanceHierarchyChunkCull_CS
+
+// Store the uncullable in the regular cell draw array, at the end.
+uint NumViewDrawGroups;
+uint UncullableItemChunksOffset;
+uint UncullableNumItemChunks;
+
+// One thread per uncullable chunk in the X dimension * View draw groups in the Y dimensions.
+[numthreads(64, 1, 1)]
+void AppendUncullableInstanceWork(uint3 DispatchThreadID : SV_DispatchThreadID)
+{
+	const uint ChunkIndex = DispatchThreadID.x;
+	const uint ViewGroupId = DispatchThreadID.y;
+
+	if (ChunkIndex < UncullableNumItemChunks)
+	{
+		FViewDrawGroup ViewDrawGroup = InViewDrawRanges[ViewGroupId];
+		if (ViewDrawGroup.NumViews > 0u)
+		{
+			uint ActiveViewMask = (1u << ViewDrawGroup.NumViews) - 1u;
+
+			AppendInstanceCullingWorkGroup(UncullableItemChunksOffset + ChunkIndex, ViewGroupId, ActiveViewMask, false);
+		}
+	}
+}
+
+RWBuffer< uint > OutInstanceWorkArgs0;
+RWBuffer< uint > OutInstanceWorkArgs1;
+
+[numthreads(1, 1, 1)]
+void InitArgs()
+{
+	OutInstanceWorkArgs0[0] = 0; // group count == x dimension
+	OutInstanceWorkArgs0[1] = 1;
+	OutInstanceWorkArgs0[2] = 1;
+	OutInstanceWorkArgs0[3] = 0; // instance count
+
+	// Second args for static geo args growing from the rear
+	OutInstanceWorkArgs0[4] = 0; 
+	OutInstanceWorkArgs0[5] = 1; 
+	OutInstanceWorkArgs0[6] = 1; 
+	OutInstanceWorkArgs0[7] = 0; 
+
+#if OCCLUSION_CULLING
+	// occluded chunks
+	OutOccludedChunkArgs[0] = 0; // group count == x dimension
+	OutOccludedChunkArgs[1] = 1;
+	OutOccludedChunkArgs[2] = 1;
+	OutOccludedChunkArgs[3] = 0; // Item count
+
+	OutInstanceWorkArgs1[0] = 0; // group count == x dimension
+	OutInstanceWorkArgs1[1] = 1;
+	OutInstanceWorkArgs1[2] = 1;
+	OutInstanceWorkArgs1[3] = 0; // instance count
+
+	// Second args for static geo args growing from the rear
+	OutInstanceWorkArgs1[4] = 0; 
+	OutInstanceWorkArgs1[5] = 1; 
+	OutInstanceWorkArgs1[6] = 1; 
+	OutInstanceWorkArgs1[7] = 0; 
+#endif
+}
+
+#ifdef InstanceHierarchySanitizeInstanceArgsCS
+
+RWBuffer< uint > InOutInstanceWorkArgs;
+uint GroupWorkArgsMaxCount;
+
+[numthreads(1, 1, 1)]
+void InstanceHierarchySanitizeInstanceArgsCS()
+{
+	InOutInstanceWorkArgs[0] = min(InOutInstanceWorkArgs[0], GroupWorkArgsMaxCount);
+
+	// Clamp the number of non-static-geo work groups (thread arg)
+	uint ClampedNumStatic = min(InOutInstanceWorkArgs[4], GroupWorkArgsMaxCount);
+	InOutInstanceWorkArgs[4] = ClampedNumStatic;
+}
+
+#endif

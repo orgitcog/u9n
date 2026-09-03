@@ -1,0 +1,11 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Common.ush"
+
+#pragma message("UESHADERMETADATA_VERSION 3EA3DFAD-BDA9-4554-B218-E9F05711625D")
+
+/** Record passed to shader bundle work graph nodes .*/
+struct FShaderBundleNodeRecord
+{
+	uint DispatchGridSize : SV_DispatchGrid;
+};

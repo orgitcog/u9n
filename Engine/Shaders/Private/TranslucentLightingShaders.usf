@@ -1,0 +1,394 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+
+/**
+ * TranslucentLightingShaders.usf: Shaders for calculating lighting in a volume to use on translucency
+ */
+
+#include "Common.ush"
+#include "SHCommon.ush"
+#include "SceneTexturesCommon.ush"
+#include "BlueNoise.ush"
+#include "ComputeShaderUtils.ush"
+
+struct FWriteToSliceVertexOutput
+{
+	FScreenVertexOutput Vertex;
+#if USING_VERTEX_SHADER_LAYER
+	uint LayerIndex : SV_RenderTargetArrayIndex;
+#else
+	uint LayerIndex : TEXCOORD1;
+#endif
+};
+
+/** Z index of the minimum slice in the range. */
+int MinZ;
+
+float4 UVScaleBias;
+uint VolumeCascadeIndex;
+
+/** Vertex shader that writes to a range of slices of a volume texture. */
+void WriteToSliceMainVS(
+	float2 InPosition : ATTRIBUTE0,
+	float2 InUV       : ATTRIBUTE1,
+	uint LayerIndex : SV_InstanceID,
+	out FWriteToSliceVertexOutput Output
+	)
+{
+	Output.Vertex.Position = float4( InPosition, 0, 1 );
+	// Remap UVs based on the subregion of the volume texture being rendered to
+    Output.Vertex.UV = InUV * UVScaleBias.xy + UVScaleBias.zw;
+	Output.LayerIndex = LayerIndex + MinZ;
+}
+
+/** Encodes HDR linear scene color for storage in the 8 bit light attenuation texture. */
+MaterialFloat3 EncodeSceneColorForMaterialNode(MaterialFloat3 LinearSceneColor)
+{
+	// Preserving a range from [0, 10]
+	// Remap values to get more bits of precision in the darks
+	return pow(LinearSceneColor * .1f, .25f);
+}
+
+#if FEATURE_LEVEL >= FEATURE_LEVEL_SM5
+
+Texture2D SceneColorTexture;
+
+void CopySceneColorMain(FScreenVertexOutput Input, out float4 OutColor : SV_Target0)
+{
+	float4 LinearColor = Texture2DSample(SceneColorTexture, GlobalPointClampedSampler, Input.UV);
+	OutColor = float4(EncodeSceneColorForMaterialNode(LinearColor.rgb), LinearColor.a);
+}
+
+/** Geometry shader that writes to a range of slices of a volume texture. */
+[maxvertexcount(3)]
+void WriteToSliceMainGS(triangle FWriteToSliceVertexOutput Input[3], inout TriangleStream<FWriteToSliceGeometryOutput> OutStream)
+{
+	FWriteToSliceGeometryOutput Vertex0;
+	Vertex0.Vertex = Input[0].Vertex;
+	Vertex0.LayerIndex = Input[0].LayerIndex;
+
+	FWriteToSliceGeometryOutput Vertex1;
+	Vertex1.Vertex = Input[1].Vertex;
+	Vertex1.LayerIndex = Input[1].LayerIndex;
+
+	FWriteToSliceGeometryOutput Vertex2;
+	Vertex2.Vertex = Input[2].Vertex;
+	Vertex2.LayerIndex = Input[2].LayerIndex;
+
+	OutStream.Append(Vertex0);
+	OutStream.Append(Vertex1);
+	OutStream.Append(Vertex2);
+}
+
+float3 GetTranslatedWorldPositionFromVolumeCoord(uint3 VolumeCoord, uint CascadeIndex)
+{
+	return View.TranslucencyLightingVolumeMin[CascadeIndex].xyz + (VolumeCoord + .5f) * View.TranslucencyLightingVolumeInvSize[CascadeIndex].w;
+}
+
+float3 GetTranslatedWorldPositionFromVolumeCoord(uint3 VolumeCoord)
+{
+	return View.TranslucencyLightingVolumeMin[VolumeCascadeIndex].xyz + (VolumeCoord + .5f) * View.TranslucencyLightingVolumeInvSize[VolumeCascadeIndex].w;
+}
+
+#ifdef GatherMarkedVoxelsCS
+
+Texture3D<uint> VolumeMarkTexture;
+uint3 VolumeSize;
+
+RWStructuredBuffer<uint> RWVoxelAllocator;
+RWStructuredBuffer<uint> RWVoxelData;
+
+[numthreads(THREADGROUP_SIZE_X, THREADGROUP_SIZE_Y, THREADGROUP_SIZE_Z)]
+void GatherMarkedVoxelsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint3 VolumeCoord = DispatchThreadId.xyz;
+
+	if (any(VolumeCoord >= VolumeSize))
+	{
+		return;
+	}
+	
+	if (VolumeMarkTexture[VolumeCoord] == 0)
+	{
+		return;
+	}
+
+	uint PackedVoxelIndex;
+	InterlockedAdd(RWVoxelAllocator[0], 1, PackedVoxelIndex);
+	RWVoxelData[PackedVoxelIndex] = (VolumeCoord.x) | (VolumeCoord.y << 10) | (VolumeCoord.z << 20);
+}
+
+#endif // GatherMarkedVoxelsCS
+
+#ifdef InitIndirectArgsCS
+
+RWBuffer<uint> RWIndirectArgs;
+StructuredBuffer<uint> VoxelAllocator;
+
+[numthreads(1, 1, 1)]
+void InitIndirectArgsCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Need to span the launch size across X,Y,Z so any single dimension does not exceed the 64k
+	// limit as per https://microsoft.github.io/DirectX-Specs/d3d/MeshShader.html#dispatchmesh-api
+	// The product of X*Y*Z can be 2^22, so we convert 1D->3D->1D to work around this limitation.
+	const uint DimensionLimit = (1u << 16u) - 1u;
+
+	WriteDispatchIndirectArgs(RWIndirectArgs, 0, GetGroupCountWrapped(DivideAndRoundUp(VoxelAllocator[0], THREADGROUP_SIZE), DimensionLimit.xx));
+}
+
+#endif
+
+#ifdef FilterTranslucentVolumeCS
+
+/** Filter pass ouputs. */
+RWTexture3D<float4> RWTranslucencyLightingVolumeAmbient;
+RWTexture3D<float4> RWTranslucencyLightingVolumeDirectional;
+
+/** Filter pass inputs. */
+Texture3D TranslucencyLightingVolumeAmbient;
+SamplerState TranslucencyLightingVolumeAmbientSampler;
+Texture3D TranslucencyLightingVolumeDirectional;
+SamplerState TranslucencyLightingVolumeDirectionalSampler;
+
+Texture3D HistoryAmbient;
+Texture3D HistoryDirectional;
+
+SamplerState HistoryAmbientSampler;
+SamplerState HistoryDirectionalSampler;
+
+Texture3D<uint> HistoryMark;
+
+uint3 VolumeSize;
+float TexelSize;
+
+float4 PrevTranslucencyLightingVolumeMin;
+float4 PrevTranslucencyLightingVolumeInvSize;
+
+float3 HistoryTextureBilinearUVMin;
+float3 HistoryTextureBilinearUVMax;
+
+float HistoryWeight;
+
+float GetBorderLerpFactor(float3 UVW)
+{
+	// Larger values result in a shorter transition distance
+	float TransitionScale = 10;
+
+	// Rescale the UVs to make the fade go to 0 before the edge of the volume
+	float3 FadeUVs = UVW * (1 + 4 * View.TranslucencyLightingVolumeMin[VolumeCascadeIndex].w) - 2 * View.TranslucencyLightingVolumeMin[VolumeCascadeIndex].w;
+	// Setup a 3d lerp factor going to 0 near the edge of the outer volume
+	float3 LerpFactors = saturate((.5f - abs(FadeUVs - .5f)) * TransitionScale);
+	float FinalLerpFactor = LerpFactors.x * LerpFactors.y * LerpFactors.z;
+	
+	//FinalLerpFactor = 1.0f;
+	return FinalLerpFactor;
+}
+
+/** Filters the volume lighting to reduce aliasing. */
+[numthreads(THREADGROUP_SIZE_X, THREADGROUP_SIZE_Y, THREADGROUP_SIZE_Z)]
+void FilterTranslucentVolumeCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint3 VolumeCoord = DispatchThreadId.xyz;
+
+	if (any(VolumeCoord >= VolumeSize))
+	{
+		return;
+	}
+
+	const float3 VolumeUV = (VolumeCoord + 0.5f) * TexelSize;
+
+	float4 TextureValue0 = 0;
+	float4 TextureValue1 = 0;
+
+#define USE_FILTER 1
+
+#if USE_FILTER
+
+#if USE_TEMPORAL_REPROJECTION
+
+	TextureValue0 = TranslucencyLightingVolumeAmbient[VolumeCoord];
+	TextureValue1 = TranslucencyLightingVolumeDirectional[VolumeCoord];
+
+	float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromVolumeCoord(VolumeCoord);
+	int3 HistoryCoord = (TranslatedWorldPosition - PrevTranslucencyLightingVolumeMin.xyz) / PrevTranslucencyLightingVolumeInvSize.w;
+
+	float4 HistoryTextureValue0 = HistoryAmbient[HistoryCoord];
+	float4 HistoryTextureValue1 = HistoryDirectional[HistoryCoord];
+
+	float HistoryAlpha = HistoryWeight;
+
+	if (any(HistoryCoord < 0) || any(HistoryCoord >= VolumeSize))
+	{
+		HistoryAlpha = 0;
+	}
+
+#if CHECK_HISTORY_MARK
+	// don't use history if it was not computed
+	if (HistoryMark[HistoryCoord] == 0)
+	{
+		HistoryAlpha = 0;
+	}
+#endif
+
+	if (VolumeCascadeIndex == 1)
+	{
+		// fade out at border to prevent issues with usage of clamped sampler during shading passes
+		HistoryAlpha *= GetBorderLerpFactor(VolumeUV);
+	}
+
+
+	TextureValue0 = lerp(TextureValue0, HistoryTextureValue0, HistoryAlpha);
+	TextureValue1 = lerp(TextureValue1, HistoryTextureValue1, HistoryAlpha);
+
+	float InvWeight = 1;
+
+#else // !USE_TEMPORAL_REPROJECTION
+
+	// Use trilinear filtering to filter neighbors to the current voxel with minimal texture fetches
+	TextureValue0 += Texture3DSample(TranslucencyLightingVolumeAmbient, TranslucencyLightingVolumeAmbientSampler, VolumeUV + .5f * TexelSize * float3(1, 1, 1));
+	TextureValue0 += Texture3DSample(TranslucencyLightingVolumeAmbient, TranslucencyLightingVolumeAmbientSampler, VolumeUV + .5f * TexelSize * float3(-1, 1, 1));
+	TextureValue0 += Texture3DSample(TranslucencyLightingVolumeAmbient, TranslucencyLightingVolumeAmbientSampler, VolumeUV + .5f * TexelSize * float3(1, -1, 1));
+	TextureValue0 += Texture3DSample(TranslucencyLightingVolumeAmbient, TranslucencyLightingVolumeAmbientSampler, VolumeUV + .5f * TexelSize * float3(-1, -1, 1));
+	TextureValue0 += Texture3DSample(TranslucencyLightingVolumeAmbient, TranslucencyLightingVolumeAmbientSampler, VolumeUV + .5f * TexelSize * float3(1, 1, -1));
+	TextureValue0 += Texture3DSample(TranslucencyLightingVolumeAmbient, TranslucencyLightingVolumeAmbientSampler, VolumeUV + .5f * TexelSize * float3(-1, 1, -1));
+	TextureValue0 += Texture3DSample(TranslucencyLightingVolumeAmbient, TranslucencyLightingVolumeAmbientSampler, VolumeUV + .5f * TexelSize * float3(1, -1, -1));
+	TextureValue0 += Texture3DSample(TranslucencyLightingVolumeAmbient, TranslucencyLightingVolumeAmbientSampler, VolumeUV + .5f * TexelSize * float3(-1, -1, -1));
+
+	TextureValue1 += Texture3DSample(TranslucencyLightingVolumeDirectional, TranslucencyLightingVolumeDirectionalSampler, VolumeUV + .5f * TexelSize * float3(1, 1, 1));
+	TextureValue1 += Texture3DSample(TranslucencyLightingVolumeDirectional, TranslucencyLightingVolumeDirectionalSampler, VolumeUV + .5f * TexelSize * float3(-1, 1, 1));
+	TextureValue1 += Texture3DSample(TranslucencyLightingVolumeDirectional, TranslucencyLightingVolumeDirectionalSampler, VolumeUV + .5f * TexelSize * float3(1, -1, 1));
+	TextureValue1 += Texture3DSample(TranslucencyLightingVolumeDirectional, TranslucencyLightingVolumeDirectionalSampler, VolumeUV + .5f * TexelSize * float3(-1, -1, 1));
+	TextureValue1 += Texture3DSample(TranslucencyLightingVolumeDirectional, TranslucencyLightingVolumeDirectionalSampler, VolumeUV + .5f * TexelSize * float3(1, 1, -1));
+	TextureValue1 += Texture3DSample(TranslucencyLightingVolumeDirectional, TranslucencyLightingVolumeDirectionalSampler, VolumeUV + .5f * TexelSize * float3(-1, 1, -1));
+	TextureValue1 += Texture3DSample(TranslucencyLightingVolumeDirectional, TranslucencyLightingVolumeDirectionalSampler, VolumeUV + .5f * TexelSize * float3(1, -1, -1));
+	TextureValue1 += Texture3DSample(TranslucencyLightingVolumeDirectional, TranslucencyLightingVolumeDirectionalSampler, VolumeUV + .5f * TexelSize * float3(-1, -1, -1));
+
+	float InvWeight = 1.0f / 8;
+
+#endif // !USE_TEMPORAL_REPROJECTION
+
+#else
+
+	TextureValue0 = Texture3DSample(TranslucencyLightingVolumeAmbient, TranslucencyLightingVolumeAmbientSampler, VolumeUV);
+	TextureValue1 = Texture3DSample(TranslucencyLightingVolumeDirectional, TranslucencyLightingVolumeDirectionalSampler, VolumeUV);
+	float InvWeight = 1;
+
+#endif
+	
+	RWTranslucencyLightingVolumeAmbient[DispatchThreadId] = TextureValue0 * InvWeight;
+	RWTranslucencyLightingVolumeDirectional[DispatchThreadId] = TextureValue1 * InvWeight;
+}
+
+#endif // FilterTranslucentVolumeCS
+
+#include "CubemapCommon.ush"
+
+/** Add AmbientCubemap color to the volume. */
+void InjectAmbientCubemapMainPS(
+	FWriteToSliceGeometryOutput Input,
+	out float4 OutColor : SV_Target0
+	)
+{
+	// can be optimized by moving it into the vertex/geometry shader
+	OutColor = float4(ComputeAmbientCubemapAvgColor(), 0);
+}
+
+
+#endif // FEATURE_LEVEL
+
+
+#ifdef DebugTranslucencyLightingVolumeCS
+
+#include "/Engine/Private/ShaderPrint.ush"
+
+void PrintTranslucencyVolume(inout FShaderPrintContext Context, float3 Min, float3 Max, float4 Color)
+{
+	float3 C000 = float3(Min.x, Min.y, Min.z);
+	float3 C001 = float3(Min.x, Min.y, Max.z);
+	float3 C010 = float3(Min.x, Max.y, Min.z);
+	float3 C011 = float3(Min.x, Max.y, Max.z);
+	float3 C100 = float3(Max.x, Min.y, Min.z);
+	float3 C101 = float3(Max.x, Min.y, Max.z);
+	float3 C110 = float3(Max.x, Max.y, Min.z);
+	float3 C111 = float3(Max.x, Max.y, Max.z);
+
+	AddLineTWS(Context, C000, C001, Color);
+	AddLineTWS(Context, C001, C011, Color);
+	AddLineTWS(Context, C011, C010, Color);
+	AddLineTWS(Context, C010, C000, Color);
+
+	AddLineTWS(Context, C100, C101, Color);
+	AddLineTWS(Context, C101, C111, Color);
+	AddLineTWS(Context, C111, C110, Color);
+	AddLineTWS(Context, C110, C100, Color);
+
+	AddLineTWS(Context, C001, C101, Color);
+	AddLineTWS(Context, C100, C000, Color);
+	AddLineTWS(Context, C011, C111, Color);
+	AddLineTWS(Context, C110, C010, Color);
+}
+
+Texture3D<uint> InnerVolumeMarkTexture;
+Texture3D<uint> OuterVolumeMarkTexture;
+
+StructuredBuffer<uint> VoxelAllocator;
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, THREADGROUP_SIZE)]
+void DebugTranslucencyLightingVolumeCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 DispatchThreadId : SV_DispatchThreadID,
+	uint3 GroupThreadId : SV_GroupThreadID)
+{
+	if (all(DispatchThreadId == 0))
+	{
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50));
+
+		const float3 VolMin0 = View.TranslucencyLightingVolumeMin[0].xyz;
+		const float3 VolMin1 = View.TranslucencyLightingVolumeMin[1].xyz;
+		const float3 VolSize0 = 1.0f / View.TranslucencyLightingVolumeInvSize[0].xyz;
+		const float3 VolSize1 = 1.0f / View.TranslucencyLightingVolumeInvSize[1].xyz;
+		const float3 VolMax0 = VolMin0 + VolSize0;
+		const float3 VolMax1 = VolMin1 + VolSize1;
+
+		PrintTranslucencyVolume(Context, VolMin0, VolMax0, float4(0, 1, 0, 1));
+		PrintTranslucencyVolume(Context, VolMin1, VolMax1, float4(1, 1, 0, 1));
+
+		Print(Context, TEXT("Translucency Light Volume0 Size = "), FontWhite);
+		Print(Context, VolSize0.x, FontYellow, 10, 1);
+		Print(Context, TEXT(", "), FontWhite);
+		Print(Context, VolSize0.y, FontYellow, 10, 1);
+		Print(Context, TEXT(", "), FontWhite);
+		Print(Context, VolSize0.y, FontYellow, 10, 1);
+		Newline(Context);
+		Print(Context, TEXT("Translucency Light Volume1 Size = "), FontWhite);
+		Print(Context, VolSize1.x, FontYellow, 10, 1);
+		Print(Context, TEXT(", "), FontWhite);
+		Print(Context, VolSize1.y, FontYellow, 10, 1);
+		Print(Context, TEXT(", "), FontWhite);
+		Print(Context, VolSize1.y, FontYellow, 10, 1);
+	}
+
+	// draw marked voxels
+
+	if (InnerVolumeMarkTexture[DispatchThreadId] > 0)
+	{
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50));
+
+		const float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromVolumeCoord(DispatchThreadId, 0);
+		const float3 VoxelExtent = View.TranslucencyLightingVolumeInvSize[0].w / 2;
+
+		PrintTranslucencyVolume(Context, TranslatedWorldPosition - VoxelExtent, TranslatedWorldPosition + VoxelExtent, float4(0, 1, 0, 1));
+	}
+
+	if (OuterVolumeMarkTexture[DispatchThreadId] > 0)
+	{
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50));
+
+		const float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromVolumeCoord(DispatchThreadId, 1);
+		const float3 VoxelExtent = View.TranslucencyLightingVolumeInvSize[1].w / 2;
+
+		PrintTranslucencyVolume(Context, TranslatedWorldPosition - VoxelExtent, TranslatedWorldPosition + VoxelExtent, float4(1, 1, 0, 1));
+	}
+}
+#endif // DebugTranslucencyLightingVolumeCS
+

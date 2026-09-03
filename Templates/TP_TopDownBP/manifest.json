@@ -1,0 +1,78 @@
+﻿{
+	"Version": 1,
+	"Name": [
+		{
+			"Language": "en",
+			"Text": "Top Down"
+		},
+		{
+			"Language": "ko",
+			"Text": "탑 뷰"
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "俯视角模板"
+		},
+		{
+			"Language": "ja",
+			"Text": "トップ ダウン"
+		}
+	],
+	"Description": [
+		{
+			"Language": "en",
+			"Text": "This pack features a playable character and a top-down camera perspective at a greater distance. The player can control the character by clicking or touching on a destination, or following the cursor if input is held."
+		},
+		{
+			"Language": "ko",
+			"Text": "이 팩에는 플레이 가능한 캐릭터와 더 먼 거리에서 내려다보는 탑 뷰 카메라 시점이 특징입니다. 플레이어는 목적지를 클릭하거나 터치하여 캐릭터를 제어할 수 있으며, 커서를 길게 누르면 커서를 따라 움직일 수 있습니다."
+		},
+		{
+			"Language": "zh-Hans",
+			"Text": "此模板模板包含一个可操控的角色以及一个位于较远位置的俯视视角。玩家可以通过点击或触摸目标位置来控制角色，或者使其在持续按下输入键的情况下跟随光标移动。"
+		},
+		{
+			"Language": "ja",
+			"Text": "このパックには、プレイアブル キャラクターと、より遠距離からのトップダウン カメラの視点が含まれています。プレイヤーは、目的地をクリックまたはタッチするか、入力が保持されている場合はカーソルを追うことでキャラクターを操作できます"
+		}
+	],
+	"AssetTypes": [
+		{
+			"Language": "en",
+			"Text": "Animation Sequence, Skeletal Mesh, Animation Blueprint, Skeleton"
+		}
+	],
+	"SearchTags": [
+		{
+			"Language": "en",
+			"Text": "RPG,Role Playing,Top Down"
+		}
+	],
+	"ClassTypes": "GameMode, Character, CameraComponent, SpringArmComponent, PlayerController",
+	"Category": "BlueprintFeature",
+	"FocusAsset": "/Game/TopDown/Blueprints/BP_TopDownCharacter.BP_TopDownCharacter",
+	"Thumbnail": "TP_TopDownBP.png",
+	"Screenshots": [
+		"TP_TopDownBP_Preview.png"
+	],
+	"AdditionalFeaturePacks": [
+		{
+			"MountName": "LevelPrototyping",
+			"DetailLevels": [
+				"High"
+			]
+		},
+		{
+			"MountName": "Cursor",
+			"DetailLevels": [
+				"Standard"
+			]
+		},
+		{
+			"MountName": "Characters",
+			"DetailLevels": [
+				"High"
+			]
+		}
+	]
+}

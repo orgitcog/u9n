@@ -1,0 +1,631 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneTextureParameters.ush"
+#include "LumenReflectionCommon.ush"
+#include "LumenReflectionDenoiserCommon.ush"
+#include "../StochasticLighting/StochasticLightingUpsample.ush"
+#if DEBUG_MODE
+	#include "../ShaderPrint.ush"
+#endif
+
+RWTexture2DArray<float3> RWSpecularIndirect;
+RWTexture2DArray<float> RWSpecularIndirectDepth;
+
+RWTexture2D<float3> RWBackgroundVisibility;
+Texture2DArray<float3> TraceBackgroundVisibility;
+
+float2 ReflectionTracingBufferInvSize;
+Texture2DArray<uint> ResolveTileUsed;
+
+Texture2D<float> DownsampledClosureIndex;
+
+uint ClosureIndex;
+uint NumSpatialReconstructionSamples;
+float SpatialReconstructionKernelRadius;
+float SpatialReconstructionRoughnessScale;
+float SpatialReconstructionMinWeight;
+float InvSubstrateMaxClosureCount;
+
+bool IsValidDownsampledCoord(uint2 DownsampledScreenCoord)
+{
+	return all(DownsampledScreenCoord - ReflectionTracingViewMin < ReflectionTracingViewSize);
+}
+
+struct FReflectionLighting
+{
+	float3 Lighting;
+	float  WeightSum;
+	float  MinRayHitT;
+};
+
+FReflectionLighting InitReflectionLighting(float3 InitLighting=0.f)
+{
+	FReflectionLighting Out;
+	Out.Lighting = InitLighting;
+	Out.WeightSum = 0.0f;
+	Out.MinRayHitT = FLOAT_32_MAX;
+	return Out;
+}
+
+// Weight reflection rays by BRDF(Ray) / RayPDF
+float GetSampleWeight(float3 RayDir, float RayPDF, const float3x3 TangentBasis, float3 V, bool bHasAnisotropy, float a2, float2 ax_ay)
+{
+	float3 H = mul(TangentBasis, normalize(V + RayDir));
+
+	float SampleNDF = 1.0f;
+	if (bHasAnisotropy)
+	{
+		SampleNDF = D_GGXaniso(ax_ay.x, ax_ay.y, H.z, H.x, H.y);
+	}
+	else
+	{
+		SampleNDF = D_GGX(a2, H.z);
+	}
+
+	return SampleNDF / RayPDF;
+}
+
+[numthreads(REFLECTION_THREADGROUP_SIZE_2D, REFLECTION_THREADGROUP_SIZE_2D, 1)]
+void LumenReflectionResolveCS(
+	uint GroupId : SV_GroupID,
+	uint2 GroupThreadId : SV_GroupThreadID)
+{
+	const int2 DownsampleFactor = int2(DOWNSAMPLE_FACTOR_X, DOWNSAMPLE_FACTOR_Y);
+
+	FReflectionTileData TileData;
+	uint2 ScreenCoord = GetReflectionResolveScreenCoord(GroupId, GroupThreadId, TileData);
+	const FLumenMaterialCoord Coord = GetLumenMaterialCoord_Reflection(ScreenCoord, TileData, ClosureIndex);
+
+#if DEBUG_MODE
+	int2 DebugScreenCoord = View.CursorPosition.x >= 0 ? View.CursorPosition * View.ViewResolutionFraction : -1;
+	bool bDebug = all(Coord.SvPosition == DebugScreenCoord);
+	FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.2, 0.05));
+#endif
+
+	#if DEBUG_MODE
+	if (bDebug)
+	{
+		Print(Context, TEXT("ReflectionsResolve"));
+		Newline(Context);
+		Print(Context, TEXT("ScreenCoord: "));
+		Newline(Context);
+		Print(Context, Coord.SvPosition);
+		Newline(Context);
+		PrintLineN(Context, ClosureIndex);
+	}
+	#endif
+
+	FLumenMaterialData Material = ApplySmoothBias(ReadMaterialData(Coord, MaxRoughnessToTrace, false/*bAllowStochaticMaterial*/), true /*bTopLayerRoughness*/);
+#if !USE_ANISOTROPY
+	Material.Anisotropy = 0.0f;
+#endif
+	bool bMatchSampledMaterialClosureIndex = false;
+
+	// Mark invalid values with INVALID_LIGHTING for history accumulation
+	FReflectionLighting Center = InitReflectionLighting(INVALID_LIGHTING);
+	FReflectionLighting CenterFallback = InitReflectionLighting();
+	float3 BackgroundVisibility = 1.0f;
+
+	if (NeedRayTracedReflections(Material.TopLayerRoughness, Material))
+	{
+		uint2 ReflectionScreenCoord = ScreenCoord;
+		uint3 ReflectionScreenCoord_Flatten = uint3(ReflectionScreenCoord, Coord.ClosureIndex);
+		#if SUBSTRATE_STOCHASTIC_LIGHTING_ALLOWED && !FRONT_LAYER_TRANSLUCENCY
+		if (Substrate.bStochasticLighting)
+		{
+			ReflectionScreenCoord_Flatten.z = 0; // Set the closure index to 0 as with stochastic lighting, the traced material has a single closure
+		}
+		#endif
+		Center.Lighting = 0.0f;
+
+		// Center sample
+		#if DOWNSAMPLE_FACTOR_X == 1 && DOWNSAMPLE_FACTOR_Y == 1
+		{
+			Center.Lighting = RGBToDenoiserSpace(TraceRadiance[ReflectionScreenCoord_Flatten]);
+			Center.WeightSum = 1.0f;
+
+			bool bHit;
+			Center.MinRayHitT = DecodeRayDistance(TraceHit[ReflectionScreenCoord_Flatten].x, bHit);
+
+			BackgroundVisibility = TraceBackgroundVisibility[ReflectionScreenCoord_Flatten];
+
+			#if SUBSTRATE_STOCHASTIC_LIGHTING_ALLOWED && !FRONT_LAYER_TRANSLUCENCY
+			if (Substrate.bStochasticLighting)
+			{
+				bMatchSampledMaterialClosureIndex = ClosureIndex == SubstrateUnpackClosureIndex(DownsampledClosureIndex[Coord.SvPosition]);
+			}
+			#endif
+		}
+		#else
+		{
+			int2 SampleOffsets[4];
+			uint2 DownsampledScreenCoord00;
+			float3 DownsampledGatherUV;
+			float4 UpsampleWeights;
+			float4 UpsampleDepth4;
+
+		#if DOWNSAMPLE_FACTOR_Y == 1
+			uint2 ClampedScreenCoord = max(ScreenCoord, ReflectionTracingViewMin * DownsampleFactor);
+
+			SampleOffsets[0] = int2(0, 0);
+			SampleOffsets[1] = int2(select(ClampedScreenCoord.x % DownsampleFactor.x == 0, -1, 1), 0);
+			SampleOffsets[2] = int2(0, -1);
+			SampleOffsets[3] = int2(0, 1);
+			
+			DownsampledScreenCoord00 = ClampedScreenCoord / DownsampleFactor;
+			DownsampledGatherUV.xy = DownsampledScreenCoord00 * ReflectionTracingBufferInvSize;
+			DownsampledGatherUV.z = (Coord.ClosureIndex + 0.5f) * InvSubstrateMaxClosureCount;
+
+			// We trace 1 sample out of 2x1. One can be copied directly. Other one need be reconstructed using bilinear filtering.
+			// [o x] or [x o] is one downsampled pixel, x is traced, and o is reconstructed. + is the pixel processed by this shader thread.
+			// There are three scenarios:
+			//   1) We just take the traced value if + coincide with x;
+			//   2) [x o][x o][x o]
+			//      [o x][+ x][o x]
+			//      [x o][x o][x o]
+			//      We pick the left, up, down, and center samples if + is the first pixel in the 2x1;
+			//   3) [o x][o x][o x]
+			//      [x o][x +][x o]
+			//      [o x][o x][o x]
+			//      We pick the right, up, down, and center samples if + is the second pixel in the 2x1.
+			int2 ScreenCoordOffset = ClampedScreenCoord - DownsampledScreenCoord00 * DownsampleFactor;
+			int2 TracedPixelOffset = GetScreenTileJitter(DownsampledScreenCoord00);
+			bool bReconstructed = ScreenCoordOffset.x != TracedPixelOffset.x;
+
+			UpsampleWeights = select(bReconstructed, float4(0.25f, 0.25f, 0.25f, 0.25f), float4(1.0f, 0.0f, 0.0f, 0.0f));
+
+			float4 Depth4 = DownsampledDepth.GatherRed(GlobalPointClampedSampler, DownsampledGatherUV);
+			UpsampleDepth4.xyz = Depth4.yxz;
+
+			Depth4 = DownsampledDepth.GatherRed(GlobalPointClampedSampler, DownsampledGatherUV + float3(ReflectionTracingBufferInvSize, 0.0f));
+			UpsampleDepth4.w = Depth4.x;
+			UpsampleDepth4.y = select(SampleOffsets[1].x > 0, Depth4.z, UpsampleDepth4.y);
+		#else
+			SampleOffsets[0] = int2(0, 0);
+			SampleOffsets[1] = int2(1, 0);
+			SampleOffsets[2] = int2(0, 1);
+			SampleOffsets[3] = int2(1, 1);
+			
+			DownsampledScreenCoord00 = (max(ScreenCoord, View.ViewRectMinAndSize.xy + 1) - 1) / DownsampleFactor;
+			DownsampledGatherUV.xy = (DownsampledScreenCoord00 + 1.0f) * ReflectionTracingBufferInvSize;
+			DownsampledGatherUV.z = (Coord.ClosureIndex + 0.5f) * InvSubstrateMaxClosureCount;
+
+			// We trace 1 sample out of 2x2. One can be copied directly. Other three need be reconstructed using bilinear filtering.
+			int2 ScreenCoordOffset = max(ScreenCoord, View.ViewRectMinAndSize.xy + 1) - DownsampledScreenCoord00 * DownsampleFactor;
+			int2 ToSample00 = GetScreenTileJitter(DownsampledScreenCoord00 + SampleOffsets[0]) + SampleOffsets[0] * DownsampleFactor - ScreenCoordOffset;
+			int2 ToSample10 = GetScreenTileJitter(DownsampledScreenCoord00 + SampleOffsets[1]) + SampleOffsets[1] * DownsampleFactor - ScreenCoordOffset;
+			int2 ToSample01 = GetScreenTileJitter(DownsampledScreenCoord00 + SampleOffsets[2]) + SampleOffsets[2] * DownsampleFactor - ScreenCoordOffset;
+			int2 ToSample11 = GetScreenTileJitter(DownsampledScreenCoord00 + SampleOffsets[3]) + SampleOffsets[3] * DownsampleFactor - ScreenCoordOffset;
+
+			UpsampleWeights.x = (2.0f - abs(ToSample00.x)) * (2.0f - abs(ToSample00.y));
+			UpsampleWeights.y = (2.0f - abs(ToSample10.x)) * (2.0f - abs(ToSample10.y));
+			UpsampleWeights.z = (2.0f - abs(ToSample01.x)) * (2.0f - abs(ToSample01.y));
+			UpsampleWeights.w = (2.0f - abs(ToSample11.x)) * (2.0f - abs(ToSample11.y));
+
+			UpsampleDepth4 = DownsampledDepth.GatherRed(GlobalPointClampedSampler, DownsampledGatherUV).wzxy;
+		#endif
+
+			float4 DepthWeights = select(UpsampleDepth4 > 0.0f, 1.0f, 0.0f);
+			UpsampleWeights *= DepthWeights;
+
+			// Skip out of view samples
+			UpsampleWeights.x = IsValidDownsampledCoord(DownsampledScreenCoord00 + SampleOffsets[0]) ? UpsampleWeights.x : 0.0f;
+			UpsampleWeights.y = IsValidDownsampledCoord(DownsampledScreenCoord00 + SampleOffsets[1]) ? UpsampleWeights.y : 0.0f;
+			UpsampleWeights.z = IsValidDownsampledCoord(DownsampledScreenCoord00 + SampleOffsets[2]) ? UpsampleWeights.z : 0.0f;
+			UpsampleWeights.w = IsValidDownsampledCoord(DownsampledScreenCoord00 + SampleOffsets[3]) ? UpsampleWeights.w : 0.0f;
+
+			#if SUBSTRATE_STOCHASTIC_LIGHTING_ALLOWED && !FRONT_LAYER_TRANSLUCENCY
+			if (Substrate.bStochasticLighting)
+			{
+				float4 EncodedClosureIndex4;
+			#if DOWNSAMPLE_FACTOR_Y == 1
+				float4 Encoded4 = DownsampledClosureIndex.GatherRed(GlobalPointClampedSampler, DownsampledGatherUV.xy);
+				EncodedClosureIndex4.xyz = Encoded4.yxz;
+
+				Encoded4 = DownsampledClosureIndex.GatherRed(GlobalPointClampedSampler, DownsampledGatherUV.xy + ReflectionTracingBufferInvSize);
+				EncodedClosureIndex4.w = Encoded4.x;
+				EncodedClosureIndex4.y = select(SampleOffsets[1].x > 0, Encoded4.z, EncodedClosureIndex4.y);
+			#else
+				EncodedClosureIndex4 = DownsampledClosureIndex.GatherRed(GlobalPointClampedSampler, DownsampledGatherUV.xy).wzxy;
+			#endif
+				uint4 ClosureWeight = SubstrateUnpackClosureIndex(EncodedClosureIndex4);
+
+				float4 ClosureMatchWeights; 
+				ClosureMatchWeights.x = ClosureWeight.x == ClosureIndex ? 1.f : 0.f;
+				ClosureMatchWeights.y = ClosureWeight.y == ClosureIndex ? 1.f : 0.f;
+				ClosureMatchWeights.z = ClosureWeight.z == ClosureIndex ? 1.f : 0.f;
+				ClosureMatchWeights.w = ClosureWeight.w == ClosureIndex ? 1.f : 0.f;
+
+				bMatchSampledMaterialClosureIndex = any(ClosureMatchWeights * UpsampleWeights > 0);
+				if (bMatchSampledMaterialClosureIndex)
+				{
+					UpsampleWeights *= ClosureMatchWeights;
+				}
+			}
+			#endif
+
+#define STOCHASTIC_UPSAMPLE 0
+#if STOCHASTIC_UPSAMPLE
+			if (any(UpsampleWeights > 0.01f))
+			{
+				const float RandomScalar = BlueNoiseScalar(Coord.SvPositionFlatten.xy, ReflectionsStateFrameIndex);
+				const int2 StochasticBilinearOffset = GetStochasticBilinearOffset(RandomScalar, UpsampleWeights, SampleOffsets);
+
+				ReflectionScreenCoord_Flatten.xy = DownsampledScreenCoord00 + StochasticBilinearOffset;
+				
+				Center.Lighting = RGBToDenoiserSpace(TraceRadiance[ReflectionScreenCoord_Flatten]);
+				Center.WeightSum = 1.0f;
+
+				bool bHit;
+				Center.MinRayHitT = DecodeRayDistance(TraceHit[ReflectionScreenCoord_Flatten].x, bHit);
+
+				BackgroundVisibility = TraceBackgroundVisibility[ReflectionScreenCoord_Flatten];
+			}
+#else
+			if (any(UpsampleWeights > 0.01f))
+			{
+				float Epsilon = 0.001f;
+				UpsampleWeights /= max(dot(UpsampleWeights, 1), Epsilon);
+
+			#if DOWNSAMPLE_FACTOR_Y == 1
+				float3 BaseSampleUV = DownsampledGatherUV;
+				BaseSampleUV.xy = BaseSampleUV.xy + 0.5f * ReflectionTracingBufferInvSize;
+
+				float3 SampleRadiance[4];
+				for (uint SampleIndex = 0; SampleIndex < 4; ++SampleIndex)
+				{
+					if (UpsampleWeights[SampleIndex] > 0.0f)
+					{
+						float3 SampleUV = BaseSampleUV + float3(SampleOffsets[SampleIndex] * ReflectionTracingBufferInvSize, 0.0f);
+						SampleRadiance[SampleIndex] = TraceRadiance.SampleLevel(GlobalPointClampedSampler, SampleUV, 0.0f);
+					}
+					else
+					{
+						SampleRadiance[SampleIndex] = 0.0f;
+					}
+				}
+
+				float3 TraceRadiance0 = RGBToDenoiserSpace(SampleRadiance[0]);
+				float3 TraceRadiance1 = RGBToDenoiserSpace(SampleRadiance[1]);
+				float3 TraceRadiance2 = RGBToDenoiserSpace(SampleRadiance[2]);
+				float3 TraceRadiance3 = RGBToDenoiserSpace(SampleRadiance[3]);
+			#else
+				// Multiplying zero weight is not enough as radiance outside view rect can be NaN
+				float4 TraceRadiance4R = select(UpsampleWeights > 0.0f, TraceRadiance.GatherRed(GlobalPointClampedSampler, DownsampledGatherUV).wzxy, 0.0f);
+				float4 TraceRadiance4G = select(UpsampleWeights > 0.0f, TraceRadiance.GatherGreen(GlobalPointClampedSampler, DownsampledGatherUV).wzxy, 0.0f);
+				float4 TraceRadiance4B = select(UpsampleWeights > 0.0f, TraceRadiance.GatherBlue(GlobalPointClampedSampler, DownsampledGatherUV).wzxy, 0.0f);
+
+				float3 TraceRadiance0 = RGBToDenoiserSpace(float3(TraceRadiance4R.x, TraceRadiance4G.x, TraceRadiance4B.x));
+				float3 TraceRadiance1 = RGBToDenoiserSpace(float3(TraceRadiance4R.y, TraceRadiance4G.y, TraceRadiance4B.y));
+				float3 TraceRadiance2 = RGBToDenoiserSpace(float3(TraceRadiance4R.z, TraceRadiance4G.z, TraceRadiance4B.z));
+				float3 TraceRadiance3 = RGBToDenoiserSpace(float3(TraceRadiance4R.w, TraceRadiance4G.w, TraceRadiance4B.w));
+			#endif
+
+				#if DEBUG_MODE
+				if (bDebug)
+				{
+					Print(Context, TEXT("UpsampleWeights: "));
+					Print(Context, UpsampleWeights);
+					Newline(Context);
+				}
+				#endif
+
+				Center.Lighting = TraceRadiance0 * UpsampleWeights.x
+					+ TraceRadiance1 * UpsampleWeights.y 
+					+ TraceRadiance2 * UpsampleWeights.z
+					+ TraceRadiance3 * UpsampleWeights.w;
+
+				const float MaxUpsampleWeight = max(max(max(UpsampleWeights.x, UpsampleWeights.y), UpsampleWeights.z), UpsampleWeights.w);
+
+				// Select closest ReflectionScreenCoord_Flatten for trace hit distance calculation
+				if (MaxUpsampleWeight == UpsampleWeights.x)
+				{
+					ReflectionScreenCoord_Flatten.xy = DownsampledScreenCoord00 + SampleOffsets[0];
+				}
+				else if (MaxUpsampleWeight == UpsampleWeights.y)
+				{
+					ReflectionScreenCoord_Flatten.xy = DownsampledScreenCoord00 + SampleOffsets[1];
+				}
+				else if (MaxUpsampleWeight == UpsampleWeights.z)
+				{
+					ReflectionScreenCoord_Flatten.xy = DownsampledScreenCoord00 + SampleOffsets[2];
+				}
+				else
+				{
+					ReflectionScreenCoord_Flatten.xy = DownsampledScreenCoord00 + SampleOffsets[3];
+				}
+
+				bool bHit;
+				Center.MinRayHitT = DecodeRayDistance(TraceHit[ReflectionScreenCoord_Flatten].x, bHit);
+				Center.WeightSum = 1.0f;
+
+				BackgroundVisibility = TraceBackgroundVisibility[ReflectionScreenCoord_Flatten];
+			}
+#endif //STOCHASTIC_UPSAMPLE
+		}
+		#endif
+
+		float MinKernelRadiusInPixels = 0;
+		#if SUBSTRATE_STOCHASTIC_LIGHTING_ALLOWED && !FRONT_LAYER_TRANSLUCENCY
+		if (Substrate.bStochasticLighting && !bMatchSampledMaterialClosureIndex)
+		{
+			// The center lighting does not match the current closure. It will only be used if we can't find good match among neighbors
+			CenterFallback.Lighting = Center.Lighting;
+			CenterFallback.WeightSum = 1.f;
+			CenterFallback.MinRayHitT = Center.MinRayHitT;
+
+			// Reset the center lighting, and will try to fill it with neighbors' values
+			Center.Lighting = 0.f;
+			Center.WeightSum = 0.f;
+			Center.MinRayHitT = FLOAT_32_MAX;
+
+			MinKernelRadiusInPixels = 1.f;
+		}
+		#endif
+
+		#if USE_SPATIAL_RECONSTRUCTION
+		{
+			const float AvgDownsampleFactor = (DownsampleFactor.x + DownsampleFactor.y) * 0.5f;
+			const float MaxDownsampleFactor = max(DownsampleFactor.x, DownsampleFactor.y);
+			
+			float KernelRadiusInPixels = 0.0f;
+			if (Material.TopLayerRoughness > 0.05f)
+			{
+				KernelRadiusInPixels = max(AvgDownsampleFactor * SpatialReconstructionKernelRadius * saturate(Material.TopLayerRoughness * 8.0f), MinKernelRadiusInPixels);
+			}
+
+			#if DEBUG_MODE
+			if (bDebug)
+			{
+				Newline(Context);
+				Print(Context, TEXT("Material.TopLayerRoughness: "));
+				Print(Context, Material.TopLayerRoughness);
+				Newline(Context);
+				Print(Context, TEXT("Material.Anisotropy: "));
+				Print(Context, Material.Anisotropy);
+				Newline(Context);
+				Print(Context, TEXT("KernelRadiusInPixels: "));
+				Print(Context, KernelRadiusInPixels);
+				Newline(Context);
+				Print(Context, TEXT("ReflectionLighting: "));
+				Print(Context, Center.Lighting);
+				Newline(Context);
+				Print(Context, TEXT("WeightSum: "));
+				Print(Context, Center.WeightSum);
+			}
+			#endif
+
+			// Skip reconstruction on mirror reflections
+			if (KernelRadiusInPixels > MaxDownsampleFactor)
+			{
+				uint2 RandomSeed = Rand3DPCG16(int3(ScreenCoord, ReflectionsStateFrameIndexMod8)).xy;
+
+				const float2 ScreenUV = (Coord.SvPosition + 0.5f) * View.BufferSizeAndInvSize.zw;
+				const float3 TranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(ScreenUV, Material.SceneDepth);
+				const float3 V = -normalize(TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
+				const float3x3 TangentBasis = GetTangentBasis(Material);
+				const float3 TangentV = mul(TangentBasis, V);
+
+				const bool bHasAnisotropy = HasAnisotropy(Material);
+				const float EffectiveRoughness = clamp(Material.TopLayerRoughness * SpatialReconstructionRoughnessScale, 0.0f, 1.0f);
+				float2 ax_ay = Pow2(EffectiveRoughness).xx;
+				if (bHasAnisotropy)
+				{
+					GetAnisotropicRoughness(ax_ay.x, Material.Anisotropy, ax_ay.x, ax_ay.y);
+				}
+				const float a2 = ax_ay.x * ax_ay.y;
+
+				float2 KernelDiameter = KernelRadiusInPixels;
+				float2 KernelMajorAxis = float2(KernelDiameter.x,0);
+				float2 KernelMinorAxis = float2(0, KernelDiameter.y);
+
+				if (bHasAnisotropy)
+				{
+					// Scale filtering kernel based on the anisotropy scaling
+					KernelDiameter.x = max(KernelDiameter.x * (1.0 + Material.Anisotropy), MaxDownsampleFactor);
+					KernelDiameter.y = max(KernelDiameter.y * (1.0 - Material.Anisotropy), MaxDownsampleFactor);
+
+					// Orient filtering kernel along the projected major/minor axis
+					float4 ProjX = mul(float4(TranslatedWorldPosition + TangentBasis[0], 1), View.TranslatedWorldToClip);
+					float4 ProjY = mul(float4(TranslatedWorldPosition + TangentBasis[1], 1), View.TranslatedWorldToClip);
+					ProjX /= ProjX.w;
+					ProjY /= ProjY.w;
+					ProjX.xy = ProjX.xy * float2(0.5f, -0.5f) + 0.5f;
+					ProjY.xy = ProjY.xy * float2(0.5f, -0.5f) + 0.5f;
+
+					KernelMajorAxis = KernelDiameter.x * normalize(ProjX.xy * View.ViewSizeAndInvSize.xy - (Coord.SvPosition + 0.5f));
+					KernelMinorAxis = KernelDiameter.y * normalize(ProjY.xy * View.ViewSizeAndInvSize.xy - (Coord.SvPosition + 0.5f));
+				}
+
+				// Reference RayHitT
+				const float CenterRayHitT = Center.MinRayHitT;
+
+				// Re-weight center sample
+				{
+					FRayData CenterRayData = GetRayData(ReflectionScreenCoord_Flatten);
+					float CenterSampleWeight = GetSampleWeight(CenterRayData.Direction, CenterRayData.PDF, TangentBasis, V, bHasAnisotropy, a2, ax_ay);
+
+					// We always want to take the center sample
+					CenterSampleWeight = max(CenterSampleWeight, 0.001f);
+
+					Center.Lighting *= CenterSampleWeight;
+					Center.WeightSum = CenterSampleWeight;
+				}
+
+				#if DEBUG_MODE
+				if (bDebug)
+				{
+					Newline(Context);
+					Print(Context, TEXT("KernelMajorAxis: "));
+					Print(Context, KernelMajorAxis);
+					Newline(Context);
+					Print(Context, TEXT("KernelMinorAxis: "));
+					Print(Context, KernelMinorAxis);
+					Newline(Context);
+					Print(Context, TEXT("CenterRayHitT:   "));
+					Print(Context, CenterRayHitT);
+					Newline(Context);
+					Print(Context, TEXT("CenterWeight:    "));
+					Print(Context, Center.WeightSum);
+				}
+				#endif
+
+				FReflectionLighting Neighbor = InitReflectionLighting();
+				FReflectionLighting NeighborFallback = InitReflectionLighting();
+				NeighborFallback.MinRayHitT = Center.MinRayHitT;
+
+				for (uint NeighborIndex = 0; NeighborIndex < NumSpatialReconstructionSamples; ++NeighborIndex)
+				{
+					float2 NeighborOffsetInRect = Hammersley16(NeighborIndex, NumSpatialReconstructionSamples, RandomSeed);
+					float2 NeighborOffset = UniformSampleDiskConcentric(NeighborOffsetInRect);
+					NeighborOffset = NeighborOffset.x * KernelMajorAxis + NeighborOffset.y * KernelMinorAxis;
+					int2 NeighborScreenCoord = (int2)(ScreenCoord + NeighborOffset + 0.5f);
+
+					int2 NeighborTracingCoord = NeighborScreenCoord / DownsampleFactor;
+					if (all(and(NeighborTracingCoord >= ReflectionTracingViewMin, NeighborTracingCoord < ReflectionTracingViewMin + ReflectionTracingViewSize)))
+					{
+						int3 NeighborTracingCoord_Flatten = int3(NeighborTracingCoord, Coord.ClosureIndex);
+						#if SUBSTRATE_STOCHASTIC_LIGHTING_ALLOWED && !FRONT_LAYER_TRANSLUCENCY
+						if (Substrate.bStochasticLighting)
+						{
+							NeighborTracingCoord_Flatten.z = 0;
+						}
+						#endif
+
+						// DownsampledDepth is valid discriminant to know if a pixel is valid (i.e. has initialized ray/luminance data)
+						float2 NeighborScreenUV = GetScreenUVFromReflectionTracingCoord(NeighborTracingCoord);
+						float NeighborSceneDepth = DownsampledDepth[NeighborTracingCoord_Flatten].x;
+
+						if (NeighborSceneDepth > 0.0f)
+						{
+							float3 NeighborTranslatedWorldPosition = GetTranslatedWorldPositionFromScreenUV(NeighborScreenUV, NeighborSceneDepth);
+							FRayData RayData = GetRayData(NeighborTracingCoord_Flatten);
+
+							bool bHit;
+							float TraceHitDistance = DecodeRayDistance(TraceHit[NeighborTracingCoord_Flatten].x, bHit);
+
+							// Clamp to center distance - preserves contacts and prevents a bias toward trace that hit the background
+							TraceHitDistance = min(TraceHitDistance, CenterRayHitT);
+
+							float3 NeighborHitPosition = NeighborTranslatedWorldPosition + RayData.Direction * TraceHitDistance;
+							float DistanceToNeighborHit = length(NeighborHitPosition - TranslatedWorldPosition);
+							float3 DirectionToNeighborHit = RayData.Direction;
+
+							if (DistanceToNeighborHit > 0)
+							{
+								DirectionToNeighborHit = (NeighborHitPosition - TranslatedWorldPosition) / DistanceToNeighborHit;
+							}
+
+							const float SampleWeight = GetSampleWeight(DirectionToNeighborHit, RayData.PDF, TangentBasis, V, bHasAnisotropy, a2, ax_ay);
+
+							#if DEBUG_MODE
+							if (bDebug)
+							{
+								Newline(Context);
+								Print(Context, TraceHitDistance);
+								Print(Context, SampleWeight);
+							}
+							#endif
+
+							if (SampleWeight > 1e-6)
+							{
+								float3 SampleRadiance = RGBToDenoiserSpace(TraceRadiance[NeighborTracingCoord_Flatten]);
+
+								bool bIsNeighborSampleValid = true;
+								#if SUBSTRATE_STOCHASTIC_LIGHTING_ALLOWED && !FRONT_LAYER_TRANSLUCENCY
+								if (Substrate.bStochasticLighting)
+								{
+									const uint NClosureIndex = SubstrateUnpackClosureIndex(DownsampledClosureIndex[NeighborTracingCoord_Flatten.xy]);
+									bIsNeighborSampleValid = NClosureIndex == ClosureIndex;
+									if (!bIsNeighborSampleValid)
+									{
+										NeighborFallback.Lighting  += SampleRadiance * SampleWeight;
+										NeighborFallback.WeightSum += SampleWeight;
+										NeighborFallback.MinRayHitT = min(NeighborFallback.MinRayHitT, TraceHitDistance);
+									}
+								}
+								#endif // SUBSTRATE_STOCHASTIC_LIGHTING_ALLOWED
+
+								if (bIsNeighborSampleValid)
+								{
+									Neighbor.Lighting  += SampleRadiance * SampleWeight;
+									Neighbor.WeightSum += SampleWeight;
+									Center.MinRayHitT   = min(Center.MinRayHitT, TraceHitDistance);
+								}
+							}
+						}
+					}
+				}
+
+				// If no valid lighting sample has been found among neighbors, 
+				// use their average despite not matching correctly
+				#if SUBSTRATE_STOCHASTIC_LIGHTING_ALLOWED && !FRONT_LAYER_TRANSLUCENCY
+				if (Neighbor.WeightSum == 0)
+				{
+					Neighbor.Lighting  = NeighborFallback.Lighting;
+					Neighbor.WeightSum = NeighborFallback.WeightSum;
+					Center.MinRayHitT  = NeighborFallback.MinRayHitT;
+				}
+				#endif
+
+				#if DEBUG_MODE
+				if (bDebug)
+				{
+					Newline(Context);
+					Print(Context, TEXT("Neighbor.WeightSum:"));
+					Print(Context, Neighbor.WeightSum);
+				}
+				#endif
+
+				// Re-weight neighborhood if we didn't find any good samples
+				const float RelativeSpatialReconstructionMinWeight = SpatialReconstructionMinWeight * Center.WeightSum;
+				if (Neighbor.WeightSum > 1e-6 && RelativeSpatialReconstructionMinWeight > Neighbor.WeightSum)
+				{
+					Neighbor.Lighting = (Neighbor.Lighting / Neighbor.WeightSum) * RelativeSpatialReconstructionMinWeight;
+					Neighbor.WeightSum = RelativeSpatialReconstructionMinWeight;
+				}
+				
+				Center.Lighting += Neighbor.Lighting;
+				Center.WeightSum += Neighbor.WeightSum;
+			}
+		}
+		#endif
+
+		// If no valid lighting samples have been found among center + neighbors, 
+		// use the center sample despite not matching correctly
+		#if SUBSTRATE_STOCHASTIC_LIGHTING_ALLOWED && !FRONT_LAYER_TRANSLUCENCY
+		if (Center.WeightSum < 1e-6)
+		{
+			Center.Lighting   = CenterFallback.Lighting;
+			Center.WeightSum  = CenterFallback.WeightSum;
+			Center.MinRayHitT = CenterFallback.MinRayHitT;
+		}
+		#endif
+
+		if (Center.WeightSum > 1e-6)
+		{
+			Center.Lighting = Center.Lighting / Center.WeightSum;
+		}
+		Center.Lighting = DenoiserSpaceToRGB(Center.Lighting);
+
+		#if DEBUG_MODE
+		if (bDebug)
+		{
+			Newline(Context);
+			Print(Context, TEXT("WeightSum: "));
+			Print(Context, Center.WeightSum);
+			Newline(Context);
+			Print(Context, TEXT("ReflectionLighting: "));
+			Print(Context, Center.Lighting);
+		}
+		#endif
+	}
+
+	RWSpecularIndirect[Coord.SvPositionFlatten] = Center.Lighting;
+	RWSpecularIndirectDepth[Coord.SvPositionFlatten] = Center.MinRayHitT;
+
+#if RESOLVE_BACKGROUND_VISIBILITY
+	RWBackgroundVisibility[Coord.SvPosition] = BackgroundVisibility;
+#endif
+}

@@ -1,0 +1,88 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+// Updates element counts and attribute IDs in a data collection. Used to adapt a data collection
+// to a downstream compute graph which has different attribute IDs, and to apply an updated data
+// description.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Public/Platform.ush"
+
+// Buffer format (sizes in bytes):
+//
+// -- START HEADER --
+// PackedExecutionFlagAndNumData (4)
+// For each data:
+//   TypeId (4)
+//   Attribute Count (4)
+//   Element Count (4)
+//   For attribute ID 0 to MAX_NUM_ATTR:
+//     PackedIdAndStride (4)
+//     AttributeElementStartAddress (4)
+// -- END HEADER --
+// For each data:
+//   For each present attribute:
+//     <Packed element data> (element count * stride)
+
+#define PCG_DATA_COLLECTION_HEADER_SIZE_BYTES 4
+#define PCG_DATA_HEADER_SIZE_BYTES 1036
+#define PCG_ATTRIBUTE_HEADER_SIZE_BYTES 8
+
+StructuredBuffer<int2> InSourceToTargetAttributeId;
+StructuredBuffer<uint> InDataElementCounts;
+ByteAddressBuffer InDataCollection;
+RWByteAddressBuffer OutDataCollection;
+uint InNumData;
+uint InNumRemappedAttributes;
+
+void Out_SetNumElements(uint InDataIndex, uint InNumElements)
+{
+	const uint Address =
+		PCG_DATA_COLLECTION_HEADER_SIZE_BYTES +
+		InDataIndex * PCG_DATA_HEADER_SIZE_BYTES +
+		/*TypeId*/4 + /*Attribute Count*/4;
+
+	return OutDataCollection.Store(Address, InNumElements);
+}
+
+uint GetAttributeHeaderAddress(uint InDataIndex, int InAttributeId)
+{
+	return PCG_DATA_COLLECTION_HEADER_SIZE_BYTES +
+		InDataIndex * PCG_DATA_HEADER_SIZE_BYTES +
+		/*This TypeId*/4 + /*This Attribute Count*/4 + /*This Element Count*/4 +
+		InAttributeId * PCG_ATTRIBUTE_HEADER_SIZE_BYTES;
+}
+
+[numthreads(NUM_THREADS_PER_GROUP, 1, 1)]
+void MainCS(uint InThreadIndex : SV_DispatchThreadID)
+{
+	if (InThreadIndex >= InNumRemappedAttributes * InNumData + InNumData)
+	{
+		return;
+	}
+	
+	// Distribute update tasks among threads.
+
+	if (InThreadIndex < InNumData)
+	{
+		// Task: Update data element count.
+
+		const uint DataIndexToUpdate = InThreadIndex;
+		Out_SetNumElements(DataIndexToUpdate, InDataElementCounts[DataIndexToUpdate]);
+	}
+	else if ((InThreadIndex - InNumData) < (InNumRemappedAttributes * InNumData))
+	{
+		// Task: Remap attribute. Set attribute ID and address in output data.
+
+		const uint RemapDataIndex = (InThreadIndex - InNumData) / InNumRemappedAttributes;
+		const uint RemapAttrIndex = (InThreadIndex - InNumData) % InNumRemappedAttributes;
+
+		const int2 SourceIdToTargetId = InSourceToTargetAttributeId[RemapAttrIndex];
+		
+		const uint SourceAddress = GetAttributeHeaderAddress(RemapDataIndex, SourceIdToTargetId[0]);
+		const uint TargetAddress = GetAttributeHeaderAddress(RemapDataIndex, SourceIdToTargetId[1]);
+
+		// Write ID, stride, address to target to apply remap.
+		const uint2 AttrIDStrideAddress = InDataCollection.Load2(SourceAddress);
+		OutDataCollection.Store2(TargetAddress, AttrIDStrideAddress);
+	}
+}

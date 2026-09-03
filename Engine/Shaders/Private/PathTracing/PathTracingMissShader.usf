@@ -1,0 +1,9 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "PathTracingCommon.ush"
+
+RAY_TRACING_ENTRY_MISS(PathTracingDefaultMS, FPackedPathTracingPayload, Payload)
+{
+	Payload.SetMiss();
+	Payload.SetFlag(0); // clear input flags
+}

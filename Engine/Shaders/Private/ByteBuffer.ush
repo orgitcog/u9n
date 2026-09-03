@@ -1,0 +1,63 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+void LoadAndIncrementOffset(inout uint Value, ByteAddressBuffer InBuffer, inout uint Offset)
+{
+	Value = InBuffer.Load(Offset);
+	Offset += 4;
+}
+
+void LoadAndIncrementOffset(inout uint2 Value, ByteAddressBuffer InBuffer, inout uint Offset)
+{
+	Value = InBuffer.Load2(Offset);
+	Offset += 8;
+}
+
+void LoadAndIncrementOffset(inout uint3 Value, ByteAddressBuffer InBuffer, inout uint Offset)
+{
+	Value = InBuffer.Load3(Offset);
+	Offset += 12;
+}
+
+void LoadAndIncrementOffset(inout uint4 Value, ByteAddressBuffer InBuffer, inout uint Offset)
+{
+	Value = InBuffer.Load4(Offset);
+	Offset += 16;
+}
+
+void LoadAndIncrementOffset(inout float Value, ByteAddressBuffer InBuffer, inout uint Offset)
+{
+	uint UintValue;
+	LoadAndIncrementOffset(UintValue, InBuffer, Offset);
+	Value = asfloat(UintValue);
+}
+
+void LoadAndIncrementOffset(inout float2 Value, ByteAddressBuffer InBuffer, inout uint Offset)
+{
+	uint2 UintValue;
+	LoadAndIncrementOffset(UintValue, InBuffer, Offset);
+	Value = asfloat(UintValue);
+}
+
+void LoadAndIncrementOffset(inout float3 Value, ByteAddressBuffer InBuffer, inout uint Offset)
+{
+	uint3 UintValue;
+	LoadAndIncrementOffset(UintValue, InBuffer, Offset);
+	Value = asfloat(UintValue);
+}
+
+void LoadAndIncrementOffset(inout float4 Value, ByteAddressBuffer InBuffer, inout uint Offset)
+{
+	uint4 UintValue;
+	LoadAndIncrementOffset(UintValue, InBuffer, Offset);
+	Value = asfloat(UintValue);
+}
+
+void LoadAndIncrementOffset(inout float4x4 Value, ByteAddressBuffer InBuffer, inout uint Offset)
+{	
+	LoadAndIncrementOffset(Value[0], InBuffer, Offset);
+	LoadAndIncrementOffset(Value[1], InBuffer, Offset);
+	LoadAndIncrementOffset(Value[2], InBuffer, Offset);
+	LoadAndIncrementOffset(Value[3], InBuffer, Offset);
+}
