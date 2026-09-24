@@ -1,0 +1,7 @@
+{
+  "plugins": {
+    "mem0": {
+      "enabled": true
+    }
+  }
+}
