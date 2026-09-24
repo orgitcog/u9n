@@ -69,6 +69,12 @@ else()
             INTERFACE_INCLUDE_DIRECTORIES "${EIGEN3_INCLUDE_DIR}"
         )
     endif()
+
+    if(EIGEN3_INCLUDE_DIR STREQUAL EIGEN_3_3_DIR)
+        set_property(TARGET Eigen3::Eigen APPEND PROPERTY
+            INTERFACE_COMPILE_DEFINITIONS EIGEN_HAS_STD_RESULT_OF=0
+        )
+    endif()
 endif()
 
 # Set compiler flags
@@ -176,6 +182,7 @@ if(BUILD_TESTING)
     list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "ReservoirTopologyGeneratorTests.cpp")
     list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "ReservoirIntegrationTests.cpp")
     list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "SymbolicToNeuralEncoderTests.cpp")
+    list(FILTER UNIT_TEST_SOURCES EXCLUDE REGEX "QueueCapacityRegressionTests.cpp")
     
     if(UNIT_TEST_SOURCES)
         add_executable(DeepTreeEchoUnitTests ${UNIT_TEST_SOURCES})

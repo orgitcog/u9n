@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Miara Mesh Melody</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #050505; overflow: hidden; }
+    #hud {
+      position: absolute; left: 16px; top: 16px; color: #f4e8ff;
+      font: 13px/1.4 ui-sans-serif, system-ui, sans-serif;
+      text-shadow: 0 1px 4px #000;
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">Miara Mesh Melody — drag to orbit, scroll to zoom</div>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x050505);
+    const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.05, 40);
+    camera.position.set(0.55, 1.05, 2.4);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(devicePixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const key = new THREE.DirectionalLight(0xfff2ff, 1.15);
+    key.position.set(1.4, 2.2, 1.8);
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0xff7ad9, 0.65);
+    rim.position.set(-1.6, 1.2, -1.1);
+    scene.add(rim);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.85, 0);
+    controls.enableDamping = true;
+
+    const loader = new GLTFLoader();
+    loader.load("./miara_mesh_melody.glb", (gltf) => {
+      scene.add(gltf.scene);
+      document.getElementById("hud").textContent =
+        "Miara Mesh Melody — GLB loaded";
+    }, undefined, (err) => {
+      document.getElementById("hud").textContent = "Failed to load GLB: " + err;
+    });
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    (function tick() {
+      requestAnimationFrame(tick);
+      controls.update();
+      renderer.render(scene, camera);
+    })();
+  </script>
+</body>
+</html>

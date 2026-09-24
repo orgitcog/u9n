@@ -1,0 +1,18 @@
+{
+  "name": "Miara Mesh Melody",
+  "kind": "3d-avatar",
+  "sourceImage": "miara_mesh_melody.png",
+  "asset": "miara_mesh_melody.glb",
+  "viewer": "miara_mesh_melody.viewer.html",
+  "format": "glTF 2.0 binary",
+  "units": "meters",
+  "heightMeters": 1.7,
+  "look": {
+    "hair": "lavender ponytail",
+    "headphones": "metallic over-ear with amber glow",
+    "top": "holographic silver crop",
+    "skirt": "dark pleated mini with belts",
+    "boots": "white platform combat",
+    "wings": "iridescent feathers with musical streamers"
+  }
+}

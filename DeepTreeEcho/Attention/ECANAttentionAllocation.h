@@ -366,7 +366,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnHebbianLinkCreated, const FHebbia
  * - Hebbian learning strengthens co-activation pathways
  */
 UCLASS(ClassGroup=(DeepTreeEcho), meta=(BlueprintSpawnableComponent))
-class UNREALECHO_API UECANAttentionAllocation : public UActorComponent
+class DEEPTREEECHO_API UECANAttentionAllocation : public UActorComponent
 {
     GENERATED_BODY()
 

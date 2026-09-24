@@ -536,12 +536,4 @@ TEST_F(ReadoutLayerTrainingTest, EndToEndPipeline)
               << "  CV Mean MSE: " << Training.CVResults.MeanMetrics.MSE << "\n";
 }
 
-// ============================================================================
-// Main Test Runner
-// ============================================================================
-
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// main provided by GTest::gtest_main

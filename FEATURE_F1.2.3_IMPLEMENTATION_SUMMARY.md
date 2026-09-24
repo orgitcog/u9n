@@ -1,12 +1,42 @@
-# Feature F1.2.3: Reservoir Topology Generator - Implementation Summary
+# Feature F1.2.3: Reservoir Topology Generator & Manager - Implementation Summary
 
 ## Overview
 
-Feature F1.2.3 implements a comprehensive reservoir topology generator for the Deep Tree Echo cognitive architecture. The generator provides multiple network topology types optimized for different aspects of reservoir computing and cognitive processing.
+Feature F1.2.3 implements reservoir topology support for the Deep Tree Echo cognitive architecture in two layers:
+
+1. **Reservoir Topology Generator** - produces multiple network topology types (random sparse, small-world, scale-free, modular) optimized for different aspects of reservoir computing and cognitive processing.
+2. **Reservoir Topology Manager** - provides *dynamic reservoir configuration*: applying generated topologies to live reservoirs, switching named presets, adjusting spectral radius / weight scaling at runtime, validating topologies before commit, and broadcasting change notifications.
 
 ## Implementation Status
 
-✅ **COMPLETE** - All core functionality implemented and tested
+✅ **COMPLETE** - Generator and Manager implemented and tested
+
+## Update (2026-09-02): Reservoir Topology Manager
+
+Added the dynamic-configuration layer that the issue's "Manager" requirement calls for.
+
+### Files Created
+- **`/DeepTreeEcho/Reservoir/ReservoirTopologyManager.h`** - Manager component API (lifecycle, dynamics, presets, validation, state, `OnTopologyChanged` event)
+- **`/DeepTreeEcho/Reservoir/ReservoirTopologyManager.cpp`** - Manager implementation
+- **`/DeepTreeEcho/Testing/UnitTests/ReservoirTopologyManagerTests.cpp`** - 22 unit tests (all passing)
+- **`/.github/agents/u9ci/reservoir-topology-manager.md`** - Maintenance agent definition
+
+### Files Updated
+- **`/DeepTreeEcho/Testing/UnitTests/CMakeLists.txt`** - Registered `ReservoirTopologyManagerTests` target, `run_all_tests` dependency, and install entry
+- **`/FEATURE_F1.2.3_USAGE_GUIDE.md`** - Added "Reservoir Topology Manager (Dynamic Configuration)" section
+
+### Manager Capabilities
+- **Lifecycle:** `GenerateAndApply`, `ApplyTopology`, `ClearTopology`, `GetActiveTopology`, `HasActiveTopology`
+- **Dynamics:** `AdjustSpectralRadius`, `ScaleWeights` (runtime retuning without a full rebuild)
+- **Presets:** `RegisterPreset`, `UnregisterPreset`, `ActivatePreset`, `GetPresetNames`, `GetPreset`
+- **Validation & State:** `ValidateTopology` (size/self-loop/spectral-radius/node-count checks), `GetManagerState`, `OnTopologyChanged` delegate
+
+### Manager Test Coverage (22 tests, all passing)
+- Lifecycle: apply valid, reject invalid config, apply valid data, clear resets state
+- Validation: self-loops, size mismatch, spectral-radius bounds, valid topology
+- Dynamics: spectral radius adjustment (no active / success / out-of-range), weight scaling (valid / invalid factor)
+- Presets: register/list, get by name, activate, activate-unknown fails, unregister, empty-name ignored
+- State: change counting, active-topology reflection, seeded reproducibility
 
 ## Files Created
 

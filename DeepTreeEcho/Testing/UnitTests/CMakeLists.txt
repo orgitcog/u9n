@@ -351,6 +351,27 @@ gtest_discover_tests(ReservoirTopologyGeneratorTests
 )
 
 # ============================================================================
+# Reservoir Topology Manager Tests (Feature F1.2.3)
+# ============================================================================
+add_executable(ReservoirTopologyManagerTests
+    ReservoirTopologyManagerTests.cpp
+)
+
+target_link_libraries(ReservoirTopologyManagerTests ${GTEST_LIBS})
+
+target_include_directories(ReservoirTopologyManagerTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(ReservoirTopologyManagerTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;reservoir;topology;manager;F1.2.3"
+        TIMEOUT 120
+)
+
+# ============================================================================
 # Membrane Communication Channels Tests (Feature F1.3.4)
 # ============================================================================
 add_executable(MembraneCommChannelsTests
@@ -670,11 +691,129 @@ gtest_discover_tests(MessageProtocolTests
 )
 
 # ============================================================================
+# Inference Module Tests (Gap A — DTE reservoir core, ridge readout, MLP encoder)
+# ============================================================================
+add_executable(InferenceModuleTests
+    InferenceModuleTests.cpp
+)
+
+target_link_libraries(InferenceModuleTests ${GTEST_LIBS})
+
+target_include_directories(InferenceModuleTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+    ${CMAKE_SOURCE_DIR}/../../../ReservoirEcho/external/taskflow-3.8.0/3rd-party/eigen-3.3.7
+)
+
+gtest_discover_tests(InferenceModuleTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;inference;reservoir;gap-a"
+        TIMEOUT 120
+)
+
+# ============================================================================
+# Executive Module Tests (Gap B — cog0 task subsystem, reasoning, message bus)
+# ============================================================================
+add_executable(ExecutiveModuleTests
+    ExecutiveModuleTests.cpp
+)
+
+target_link_libraries(ExecutiveModuleTests ${GTEST_LIBS})
+
+target_include_directories(ExecutiveModuleTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(ExecutiveModuleTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;executive;cog0;gap-b"
+        TIMEOUT 120
+)
+
+# ============================================================================
+# Endocrine Avatar Tests (Gap E — endocrine bus + avatar expression adapter)
+# ============================================================================
+add_executable(EndocrineAvatarTests
+    EndocrineAvatarTests.cpp
+)
+
+target_link_libraries(EndocrineAvatarTests ${GTEST_LIBS})
+
+target_include_directories(EndocrineAvatarTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(EndocrineAvatarTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;endocrine;avatar;gap-e"
+        TIMEOUT 120
+)
+
+# ============================================================================
+# Relevance Kernel Tests (rr.kern — CogPrime RR port + grip convergence)
+# ============================================================================
+add_executable(RelevanceKernelTests
+    RelevanceKernelTests.cpp
+)
+
+target_link_libraries(RelevanceKernelTests ${GTEST_LIBS})
+
+target_include_directories(RelevanceKernelTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+
+gtest_discover_tests(RelevanceKernelTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;relevance;rr-kern"
+        TIMEOUT 120
+)
+
+# ============================================================================
+# Distributed AtomSpace Tests (inferno clusters as distributed ATenSpace)
+# ============================================================================
+add_executable(DistributedAtomSpaceTests
+    DistributedAtomSpaceTests.cpp
+)
+target_link_libraries(DistributedAtomSpaceTests ${GTEST_LIBS})
+target_include_directories(DistributedAtomSpaceTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/../../
+    ${CMAKE_SOURCE_DIR}/../../../
+)
+gtest_discover_tests(DistributedAtomSpaceTests
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    PROPERTIES
+        LABELS "unit;distributed;atenspace"
+        TIMEOUT 120
+)
+
+# MembraneModuleTests (P-Lingua AGI + MembraneDTEBridge)
+add_executable(MembraneModuleTests
+    MembraneModuleTests.cpp
+)
+target_link_libraries(MembraneModuleTests ${GTEST_LIBS})
+target_include_directories(MembraneModuleTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Membrane
+    ${EIGEN3_INCLUDE_DIR}
+)
+gtest_discover_tests(MembraneModuleTests
+    PROPERTIES LABELS "Membrane"
+)
+
+
+# ============================================================================
 # All Tests Target
 # ============================================================================
 add_custom_target(run_all_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --parallel 4
-    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests LockFreeMessageQueueTests MessageProtocolTests
+    DEPENDS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests ReservoirTopologyManagerTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests LockFreeMessageQueueTests MessageProtocolTests InferenceModuleTests ExecutiveModuleTests EndocrineAvatarTests RelevanceKernelTests DistributedAtomSpaceTests MembraneModuleTests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running all DeepTreeEcho unit tests"
 )
@@ -704,7 +843,7 @@ endif()
 # ============================================================================
 # Installation
 # ============================================================================
-install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests LockFreeMessageQueueTests MessageProtocolTests
+install(TARGETS CoreTests MemoryTests AvatarCognitionTests ReservoirIntegrationTests EchoStateNetworkTests ActiveInferenceTests CortisolDynamicsTests DNAIntegrationTests CognitiveLoopTests WisdomEntelechyTests Sys6OperadTests BehavioralFrameworkTests TensorLogicTests ReservoirTopologyGeneratorTests ReservoirTopologyManagerTests MembraneCommChannelsTests MembraneLifecycleTests ObjectTransportRulesTests HypergraphPatternMatcherTests FutureStatePredictionTests VirtualControllerDriverTests GamingMasterySystemTests DTEAvatarAgentTests EmbodiedAutonomyPipelineTests DopaminergicRewardSystemTests LiquidStateMachineTests SymbolicToNeuralEncoderTests NeuralToSymbolicTranslatorTests LockFreeMessageQueueTests MessageProtocolTests InferenceModuleTests ExecutiveModuleTests EndocrineAvatarTests RelevanceKernelTests DistributedAtomSpaceTests MembraneModuleTests
     RUNTIME DESTINATION bin/tests
 )
 

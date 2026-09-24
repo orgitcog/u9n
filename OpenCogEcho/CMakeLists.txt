@@ -75,6 +75,14 @@ add_library(opencog_echo STATIC
     src/afi/blanket.cpp
     src/afi/free_energy.cpp
     src/afi/precision.cpp
+
+    # Type Conversion Bridge (F1.1.3) — tensor ↔ atom conversions
+    src/bridge/tensor_to_atom.cpp
+    src/bridge/atom_to_tensor.cpp
+    src/bridge/type_conversion_bridge.cpp
+
+    # Synchronization Manager (F1.1.4) — cross-system timing & sync
+    src/sync/synchronization_manager.cpp
 )
 
 target_compile_features(opencog_echo PUBLIC ${OPENCOG_ECHO_CXX_STD})
@@ -85,7 +93,7 @@ target_include_directories(opencog_echo PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(opencog_echo PUBLIC Threads::Threads)
+target_link_libraries(opencog_echo PUBLIC Threads::Threads Eigen3::Eigen)
 
 # ----------------------------------------------------------------------------
 # Tests (custom lightweight harness in tests/test_main.cpp, ctest-registered)
@@ -126,6 +134,18 @@ if(BUILD_TESTING)
         )
     else()
         message(STATUS "OpenCogEcho: endocrine headers absent (layer 2), skipping test_integration.cpp")
+    endif()
+
+    # Type Conversion Bridge tests (F1.1.3) — enabled when bridge headers present
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/opencog/bridge/type_conversion_bridge.hpp")
+        list(APPEND OPENCOG_ECHO_TEST_SOURCES tests/test_type_conversion_bridge.cpp)
+        message(STATUS "OpenCogEcho: bridge headers present, enabling test_type_conversion_bridge.cpp")
+    endif()
+
+    # Synchronization Manager tests (F1.1.4) — enabled when sync headers present
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/opencog/sync/synchronization_manager.hpp")
+        list(APPEND OPENCOG_ECHO_TEST_SOURCES tests/test_synchronization.cpp)
+        message(STATUS "OpenCogEcho: sync headers present, enabling test_synchronization.cpp")
     endif()
 
     add_executable(opencog_echo_tests ${OPENCOG_ECHO_TEST_SOURCES})

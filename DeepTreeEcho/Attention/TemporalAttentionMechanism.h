@@ -371,7 +371,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnTemporalEventExpired, const FStri
  * - Support retrospective and prospective attention modes
  */
 UCLASS(ClassGroup=(DeepTreeEcho), meta=(BlueprintSpawnableComponent))
-class UNREALECHO_API UTemporalAttentionMechanism : public UActorComponent
+class DEEPTREEECHO_API UTemporalAttentionMechanism : public UActorComponent
 {
     GENERATED_BODY()
 
