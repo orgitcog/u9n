@@ -57,7 +57,18 @@ This example integrates adaptive attention allocation and hypergraph encoding:
     ((string-contains? path "DeepTreeEcho/Streams/") 0.85)
     ((string-contains? path "DeepTreeEcho/Enaction/") 0.85)
     ((string-contains? path "DeepTreeEcho/Wisdom/") 0.85)
-    ((string-contains? path "COGNITIVE_GRIP.md") 0.8)
+    ((string-contains? path "DeepTreeEcho/Self/COGNITIVE_GRIP.md") 0.8)
+    ((string-contains? path "Engine/Source/COGNITIVE_GRIP.md") 0.7)
+    ((string-contains? path "Engine/Source/EngineSourceFacade.h") 0.7)
+    ;; Engine hub ranking lives in Enaction/EngineGripMap.h (0.55–0.70).
+    ;; Packing must not raise files under Epic hubs (R4b):
+    ;;   CoreRuntime 0.70, EngineWorld 0.68, RenderReservoir 0.66,
+    ;;   BodyRuntime 0.64, MemoryRuntime 0.62, EditorAttention 0.60,
+    ;;   NetStreams 0.58, ActionRuntime 0.57, DevWisdom 0.55
+    ((string-contains? path "Engine/Source/ThirdParty") 0.15)
+    ((string-contains? path "Engine/Plugins") 0.15)
+    ((string-contains? path "Engine/Source/Runtime") 0.3)
+    ((string-contains? path "Engine/Source/") 0.3)
     ((string-contains? path "DeepTreeEcho/Testing/") 0.2)
     ((string-contains? path "DeepTreeEcho/_legacy/") 0.1)
     (else 0.5)))
