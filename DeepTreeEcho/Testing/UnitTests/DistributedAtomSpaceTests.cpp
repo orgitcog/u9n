@@ -106,7 +106,7 @@ TEST(ATenSpaceLiteTest, ThreadSafeConcurrentInsertion)
     constexpr int kThreads = 4, kPerThread = 200;
     std::vector<std::thread> threads;
     for (int t = 0; t < kThreads; ++t) {
-        threads.emplace_back([&space, t] {
+        threads.emplace_back([&space, t, kPerThread] {
             for (int i = 0; i < kPerThread; ++i)
                 space.addNode(Atom::Type::CONCEPT_NODE,
                               "atom_" + std::to_string(t) + "_" + std::to_string(i));

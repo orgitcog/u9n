@@ -528,12 +528,4 @@ TEST_F(ReservoirTopologyGeneratorTest, Integration_ExportAllFormats)
     EXPECT_FALSE(GraphML.empty());
 }
 
-// ============================================================================
-// Main Test Runner
-// ============================================================================
-
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// main provided by GTest::gtest_main
