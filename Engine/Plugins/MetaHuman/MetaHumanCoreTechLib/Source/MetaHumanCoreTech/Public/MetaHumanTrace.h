@@ -1,0 +1,15 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#define MHA_ENABLE_TRACE 0 // Change to one to enable Insights tracing
+
+#if MHA_ENABLE_TRACE
+#define MHA_CPUPROFILER_EVENT_SCOPE(Name)		TRACE_CPUPROFILER_EVENT_SCOPE(Name)
+#define MHA_CPUPROFILER_EVENT_SCOPE_STR(Name)	TRACE_CPUPROFILER_EVENT_SCOPE_STR(Name)
+#define MHA_CPUPROFILER_EVENT_SCOPE_TEXT(Name)	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(Name)
+#else
+#define MHA_CPUPROFILER_EVENT_SCOPE(Name)
+#define MHA_CPUPROFILER_EVENT_SCOPE_STR(Name)
+#define MHA_CPUPROFILER_EVENT_SCOPE_TEXT(Name)
+#endif
