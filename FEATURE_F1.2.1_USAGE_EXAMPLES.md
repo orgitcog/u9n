@@ -176,6 +176,10 @@ void AMyActor::TrainESN()
 }
 ```
 
+Training input and target sequences must have matching sample counts, each
+sample must match the configured input/output dimensions, and the washout
+period must leave at least one sample for training.
+
 ### Incremental Training
 
 ```cpp

@@ -67,11 +67,27 @@ public:
     }
 
     bool InitializeWithConfig(const MockESNConfig& NewConfig) {
-        Config = NewConfig;
-        
-        if (Config.ReservoirSize < 10 || Config.InputDim < 1 || Config.OutputDim < 1) {
+        if (NewConfig.ReservoirSize < 10 || NewConfig.ReservoirSize > 10000 ||
+            NewConfig.InputDim < 1 || NewConfig.OutputDim < 1 ||
+            !std::isfinite(NewConfig.SpectralRadius) ||
+            NewConfig.SpectralRadius < 0.0f || NewConfig.SpectralRadius > 2.0f ||
+            !std::isfinite(NewConfig.LeakRate) ||
+            NewConfig.LeakRate < 0.0f || NewConfig.LeakRate > 1.0f ||
+            !std::isfinite(NewConfig.ReservoirSparsity) ||
+            NewConfig.ReservoirSparsity < 0.0f || NewConfig.ReservoirSparsity > 1.0f ||
+            !std::isfinite(NewConfig.InputSparsity) ||
+            NewConfig.InputSparsity < 0.0f || NewConfig.InputSparsity > 1.0f ||
+            !std::isfinite(NewConfig.InputScaling) ||
+            !std::isfinite(NewConfig.OutputScaling) ||
+            !std::isfinite(NewConfig.BiasScaling) ||
+            !std::isfinite(NewConfig.NoiseLevel) || NewConfig.NoiseLevel < 0.0f ||
+            !std::isfinite(NewConfig.RegularizationLambda) ||
+            NewConfig.RegularizationLambda < 0.0f ||
+            (NewConfig.SpectralRadius > 0.0f && NewConfig.ReservoirSparsity == 0.0f)) {
             return false;
         }
+
+        Config = NewConfig;
         
         int Seed = GenerateSeed();
         
@@ -200,8 +216,18 @@ public:
     float TrainOutputWeights(const std::vector<std::vector<float>>& TrainingInputs,
                             const std::vector<std::vector<float>>& TrainingTargets,
                             int WashoutSteps) {
-        if (!State.bInitialized || TrainingInputs.size() != TrainingTargets.size()) {
+        if (!State.bInitialized || TrainingInputs.empty() ||
+            TrainingInputs.size() != TrainingTargets.size() ||
+            WashoutSteps < 0 || WashoutSteps >= static_cast<int>(TrainingInputs.size()) ||
+            std::abs(Config.OutputScaling) < 1e-6f) {
             return -1.0f;
+        }
+
+        for (size_t i = 0; i < TrainingInputs.size(); ++i) {
+            if (TrainingInputs[i].size() != static_cast<size_t>(Config.InputDim) ||
+                TrainingTargets[i].size() != static_cast<size_t>(Config.OutputDim)) {
+                return -1.0f;
+            }
         }
         
         ResetState();
@@ -233,7 +259,7 @@ public:
                 for (int k = 0; k < Config.OutputDim; ++k) {
                     if (k < static_cast<int>(TrainingTargets[targetIdx].size())) {
                         XTY[j * Config.OutputDim + k] += 
-                            States[i][j] * TrainingTargets[targetIdx][k];
+                            States[i][j] * (TrainingTargets[targetIdx][k] / Config.OutputScaling);
                     }
                 }
             }
@@ -244,7 +270,13 @@ public:
             w /= normalization;
         }
         
-        OutputWeights = XTY;
+        OutputWeights.resize(Config.ReservoirSize * Config.OutputDim);
+        for (int j = 0; j < Config.ReservoirSize; ++j) {
+            for (int k = 0; k < Config.OutputDim; ++k) {
+                OutputWeights[k * Config.ReservoirSize + j] =
+                    XTY[j * Config.OutputDim + k];
+            }
+        }
         
         // Compute error
         ResetState();

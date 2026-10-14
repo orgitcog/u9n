@@ -88,6 +88,16 @@ TEST_F(EchoStateNetworkTest, SparseMatrixDeterminism) {
     }
 }
 
+TEST_F(EchoStateNetworkTest, InvalidConfigurationIsRejected) {
+    MockESNConfig config;
+    config.ReservoirSparsity = 1.5f;
+    EXPECT_FALSE(esn->InitializeWithConfig(config));
+
+    config.ReservoirSparsity = 0.1f;
+    config.LeakRate = -0.1f;
+    EXPECT_FALSE(esn->InitializeWithConfig(config));
+}
+
 // ============================================================================
 // TEST: SPECTRAL RADIUS NORMALIZATION
 // ============================================================================
@@ -404,6 +414,27 @@ TEST_F(EchoStateNetworkTest, TrainingBasic) {
     EXPECT_LT(error, 10.0f);  // Should learn something reasonable
 }
 
+TEST_F(EchoStateNetworkTest, MultiOutputReadoutUsesConsistentLayout) {
+    MockESNConfig config;
+    config.ReservoirSize = 20;
+    config.InputDim = 1;
+    config.OutputDim = 2;
+    config.RandomSeed = 42;
+    ASSERT_TRUE(esn->InitializeWithConfig(config));
+
+    std::vector<std::vector<float>> inputs = {{0.0f}, {0.2f}, {0.4f}, {0.6f}};
+    std::vector<std::vector<float>> targets = {
+        {1.0f, 1.0f}, {0.8f, 0.8f}, {0.6f, 0.6f}, {0.4f, 0.4f}
+    };
+    ASSERT_GE(esn->TrainOutputWeights(inputs, targets, 0), 0.0f);
+
+    esn->ResetState();
+    esn->ProcessInput({0.3f});
+    const std::vector<float> output = esn->ComputeOutput();
+    ASSERT_EQ(output.size(), 2);
+    EXPECT_FLOAT_EQ(output[0], output[1]);
+}
+
 TEST_F(EchoStateNetworkTest, WashoutPeriod) {
     MockESNConfig config;
     config.ReservoirSize = 50;
@@ -458,6 +489,19 @@ TEST_F(EchoStateNetworkTest, InvalidInputDimensions) {
 
     // Should handle gracefully (return previous state or empty)
     EXPECT_TRUE(state.empty() || state.size() == 50);
+}
+
+TEST_F(EchoStateNetworkTest, TrainingRejectsInvalidDimensions) {
+    MockESNConfig config;
+    config.ReservoirSize = 20;
+    config.InputDim = 2;
+    config.OutputDim = 2;
+    config.RandomSeed = 42;
+    ASSERT_TRUE(esn->InitializeWithConfig(config));
+
+    std::vector<std::vector<float>> inputs = {{0.1f, 0.2f}, {0.2f, 0.3f}};
+    std::vector<std::vector<float>> targets = {{1.0f, 0.0f}, {0.0f}};
+    EXPECT_LT(esn->TrainOutputWeights(inputs, targets, 0), 0.0f);
 }
 
 TEST_F(EchoStateNetworkTest, ResetState) {

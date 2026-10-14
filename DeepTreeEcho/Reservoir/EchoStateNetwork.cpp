@@ -10,6 +10,7 @@
 
 #include "EchoStateNetwork.h"
 #include "Math/UnrealMathUtility.h"
+#include <cmath>
 #include <random>
 
 UEchoStateNetwork::UEchoStateNetwork()
@@ -336,24 +337,20 @@ float UEchoStateNetwork::TrainOutputWeights(
     }
     
     // Ridge regression: Wout = (X^T*X + λI)^-1 * X^T * Y
-    // Note: This is a simplified implementation suitable for small-scale problems
-    // For production use with large datasets, consider using:
-    // - Iterative solvers (Conjugate Gradient)
-    // - QR decomposition
-    // - SVD-based pseudoinverse
-    // - Online learning algorithms (FORCE, RLS)
+    // For large datasets or ill-conditioned features, consider QR, SVD, or iterative solvers.
     
     // Compute X^T * X
-    TArray<float> XTX;
+    TArray<double> XTX;
     XTX.SetNum(Config.ReservoirSize * Config.ReservoirSize);
     for (int32 i = 0; i < Config.ReservoirSize; ++i)
     {
         for (int32 j = 0; j < Config.ReservoirSize; ++j)
         {
-            float sum = 0.0f;
+            double sum = 0.0;
             for (int32 k = 0; k < NumSamples; ++k)
             {
-                sum += X[k * Config.ReservoirSize + i] * X[k * Config.ReservoirSize + j];
+                sum += static_cast<double>(X[k * Config.ReservoirSize + i]) *
+                       X[k * Config.ReservoirSize + j];
             }
             XTX[i * Config.ReservoirSize + j] = sum;
         }
@@ -366,29 +363,30 @@ float UEchoStateNetwork::TrainOutputWeights(
     }
     
     // Compute X^T * Y
-    TArray<float> XTY;
+    TArray<double> XTY;
     XTY.SetNum(Config.ReservoirSize * Config.OutputDim);
     for (int32 i = 0; i < Config.ReservoirSize; ++i)
     {
         for (int32 j = 0; j < Config.OutputDim; ++j)
         {
-            float sum = 0.0f;
+            double sum = 0.0;
             for (int32 k = 0; k < NumSamples; ++k)
             {
-                sum += X[k * Config.ReservoirSize + i] * Y[k * Config.OutputDim + j];
+                sum += static_cast<double>(X[k * Config.ReservoirSize + i]) *
+                       Y[k * Config.OutputDim + j];
             }
             XTY[i * Config.OutputDim + j] = sum;
         }
     }
     
     // Cholesky solve for (X^T*X + λI) * Wout = X^T * Y.
-    TArray<float> Cholesky;
+    TArray<double> Cholesky;
     Cholesky.SetNumZeroed(Config.ReservoirSize * Config.ReservoirSize);
     for (int32 i = 0; i < Config.ReservoirSize; ++i)
     {
         for (int32 j = 0; j <= i; ++j)
         {
-            float Value = XTX[i * Config.ReservoirSize + j];
+            double Value = XTX[i * Config.ReservoirSize + j];
             for (int32 k = 0; k < j; ++k)
             {
                 Value -= Cholesky[i * Config.ReservoirSize + k] *
@@ -397,12 +395,12 @@ float UEchoStateNetwork::TrainOutputWeights(
 
             if (i == j)
             {
-                if (!FMath::IsFinite(Value) || Value <= 1e-12f)
+                if (!std::isfinite(Value) || Value <= 1e-12)
                 {
                     UE_LOG(LogTemp, Error, TEXT("UEchoStateNetwork: Ridge regression matrix is not positive definite"));
                     return -1.0f;
                 }
-                Cholesky[i * Config.ReservoirSize + j] = FMath::Sqrt(Value);
+                Cholesky[i * Config.ReservoirSize + j] = std::sqrt(Value);
             }
             else
             {
@@ -416,12 +414,12 @@ float UEchoStateNetwork::TrainOutputWeights(
     TrainedWeights.SetNumZeroed(Config.ReservoirSize * Config.OutputDim);
     for (int32 Output = 0; Output < Config.OutputDim; ++Output)
     {
-        TArray<float> Solution;
+        TArray<double> Solution;
         Solution.SetNumZeroed(Config.ReservoirSize);
 
         for (int32 i = 0; i < Config.ReservoirSize; ++i)
         {
-            float Value = XTY[i * Config.OutputDim + Output];
+            double Value = XTY[i * Config.OutputDim + Output];
             for (int32 k = 0; k < i; ++k)
             {
                 Value -= Cholesky[i * Config.ReservoirSize + k] * Solution[k];
@@ -431,13 +429,13 @@ float UEchoStateNetwork::TrainOutputWeights(
 
         for (int32 i = Config.ReservoirSize - 1; i >= 0; --i)
         {
-            float Value = Solution[i];
+            double Value = Solution[i];
             for (int32 k = i + 1; k < Config.ReservoirSize; ++k)
             {
                 Value -= Cholesky[k * Config.ReservoirSize + i] * Solution[k];
             }
             Solution[i] = Value / Cholesky[i * Config.ReservoirSize + i];
-            TrainedWeights[Output * Config.ReservoirSize + i] = Solution[i];
+            TrainedWeights[Output * Config.ReservoirSize + i] = static_cast<float>(Solution[i]);
         }
     }
     OutputWeights = MoveTemp(TrainedWeights);
