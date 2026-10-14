@@ -1,0 +1,47 @@
+[
+  {
+    "path": "DTE_Avatar_Prototype.blend",
+    "bytes": 23403433,
+    "sha256": "dc3b977a3b19dc1ded7ea668fb2d67a5319d2c4c3fc2b8860a1e81c1f38acbba"
+  },
+  {
+    "path": "DTE_Avatar_Prototype.fbx",
+    "bytes": 4592364,
+    "sha256": "5c5a042e6ec096d9857d0323cdef21c8c1e62daab6c6c5df5dd17a2f72c18739"
+  },
+  {
+    "path": "DTE_Avatar_Prototype.glb",
+    "bytes": 45850900,
+    "sha256": "6491c173248e07f91b0176ad7fdf5cb4b3d87013f6d4d8d778bf92a911e67564"
+  },
+  {
+    "path": "DTE_Prototype_Preview.png",
+    "bytes": 845448,
+    "sha256": "b40219b6dcd0a21bee183f9a831b07d8b128f7217e5e2fb85f1e2f6076628218"
+  },
+  {
+    "path": "Textures/BaseColor.png",
+    "bytes": 20216146,
+    "sha256": "621292cf1cb26f25d92a866063a9356b96a5f12077624a980ee83aa398e572b3"
+  },
+  {
+    "path": "Textures/NormalGL.png",
+    "bytes": 6939774,
+    "sha256": "0aab7618f7bfa96094b45cbc69e8404419a1339be27eb38c4bfc673e2547dd2b"
+  },
+  {
+    "path": "Textures/ORM.png",
+    "bytes": 17139795,
+    "sha256": "11861c45278b7dabc7469525e0b8ccffa53b064522aa4f308d956ad524d432d1"
+  },
+  {
+    "path": "prototype-manifest.json",
+    "bytes": 8655,
+    "sha256": "d4e83be98b07b183bec47ade4205952d13c68d433017e572897fc21338a88bed"
+  },
+  {
+    "path": "validation.json",
+    "bytes": 433,
+    "sha256": "0b80d29145a606de540bb25a017d525b6c1dd6c272e0f84f31f83041ed102b91"
+  }
+]
