@@ -253,10 +253,11 @@ ReflectingESN->Config.LeakRate = 0.1f;
 - **Input/Output Scaling**: 3 tests
 - **State Harvesting**: 2 tests
 - **Training**: 2 tests
-- **Edge Cases**: 3 tests
+- **Edge Cases**: 5 tests
 - **Echo State Property**: 1 test
+- **Multi-output readout layout**: 1 test
 
-**Total: 18 test cases**
+**Total: 21 test cases**
 
 ### Test Execution
 
@@ -270,22 +271,22 @@ make EchoStateNetworkTests
 ./DeepTreeEcho/Testing/UnitTests/EchoStateNetworkTests
 
 # Expected output:
-# [==========] Running 18 tests from 1 test suite.
+# [==========] Running 21 tests from 1 test suite.
 # [----------] Global test environment set-up.
-# [----------] 18 tests from EchoStateNetworkTest
+# [----------] 21 tests from EchoStateNetworkTest
 # [ RUN      ] EchoStateNetworkTest.SparseMatrixGeneration
 # [       OK ] EchoStateNetworkTest.SparseMatrixGeneration (X ms)
 # ...
-# [==========] 18 tests from 1 test suite ran. (XXX ms total)
-# [  PASSED  ] 18 tests.
+# [==========] 21 tests from 1 test suite ran. (XXX ms total)
+# [  PASSED  ] 21 tests.
 ```
 
 ## Known Limitations
 
 1. **Training Algorithm**
-   - Simplified ridge regression (not full pseudoinverse)
-   - May not be optimal for all tasks
-   - Future: Implement iterative solvers
+   - Uses a Cholesky solve of the regularized normal equations
+   - Normal equations can be less stable than QR or SVD for ill-conditioned data
+   - Future: Add QR/SVD and iterative solver options for large datasets
 
 2. **Spectral Radius Computation**
    - Power iteration may not converge for pathological matrices
