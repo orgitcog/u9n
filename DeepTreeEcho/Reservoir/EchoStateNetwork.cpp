@@ -48,14 +48,29 @@ bool UEchoStateNetwork::Initialize()
 
 bool UEchoStateNetwork::InitializeWithConfig(const FESNConfig& NewConfig)
 {
-    Config = NewConfig;
-    
-    // Validate configuration
-    if (Config.ReservoirSize < 10 || Config.InputDim < 1 || Config.OutputDim < 1)
+    if (NewConfig.ReservoirSize < 10 || NewConfig.ReservoirSize > 10000 ||
+        NewConfig.InputDim < 1 || NewConfig.OutputDim < 1 ||
+        !FMath::IsFinite(NewConfig.SpectralRadius) ||
+        NewConfig.SpectralRadius < 0.0f || NewConfig.SpectralRadius > 2.0f ||
+        !FMath::IsFinite(NewConfig.LeakRate) ||
+        NewConfig.LeakRate < 0.0f || NewConfig.LeakRate > 1.0f ||
+        !FMath::IsFinite(NewConfig.ReservoirSparsity) ||
+        NewConfig.ReservoirSparsity < 0.0f || NewConfig.ReservoirSparsity > 1.0f ||
+        !FMath::IsFinite(NewConfig.InputSparsity) ||
+        NewConfig.InputSparsity < 0.0f || NewConfig.InputSparsity > 1.0f ||
+        !FMath::IsFinite(NewConfig.InputScaling) ||
+        !FMath::IsFinite(NewConfig.OutputScaling) ||
+        !FMath::IsFinite(NewConfig.BiasScaling) ||
+        !FMath::IsFinite(NewConfig.NoiseLevel) || NewConfig.NoiseLevel < 0.0f ||
+        !FMath::IsFinite(NewConfig.RegularizationLambda) ||
+        NewConfig.RegularizationLambda < 0.0f ||
+        (NewConfig.SpectralRadius > 0.0f && NewConfig.ReservoirSparsity == 0.0f))
     {
         UE_LOG(LogTemp, Error, TEXT("UEchoStateNetwork: Invalid configuration parameters"));
         return false;
     }
+
+    Config = NewConfig;
     
     int32 Seed = GenerateSeed();
     
@@ -254,6 +269,22 @@ float UEchoStateNetwork::TrainOutputWeights(
         UE_LOG(LogTemp, Error, TEXT("UEchoStateNetwork: Training data size mismatch"));
         return -1.0f;
     }
+
+    if (WashoutSteps < 0 || WashoutSteps >= TrainingInputs.Num() ||
+        FMath::IsNearlyZero(Config.OutputScaling))
+    {
+        UE_LOG(LogTemp, Error, TEXT("UEchoStateNetwork: Invalid washout period or output scaling"));
+        return -1.0f;
+    }
+
+    for (int32 i = 0; i < TrainingInputs.Num(); ++i)
+    {
+        if (!ValidateInput(TrainingInputs[i]) || TrainingTargets[i].Num() != Config.OutputDim)
+        {
+            UE_LOG(LogTemp, Error, TEXT("UEchoStateNetwork: Invalid training sample dimensions"));
+            return -1.0f;
+        }
+    }
     
     // Reset state before training
     ResetState();
@@ -296,14 +327,11 @@ float UEchoStateNetwork::TrainOutputWeights(
             X.Add(s);
         }
         
-        // Add target
+        // Fit unscaled targets because inference applies OutputScaling.
         int32 TargetIdx = i + WashoutSteps;
-        if (TargetIdx < TrainingTargets.Num())
+        for (float Target : TrainingTargets[TargetIdx])
         {
-            for (float t : TrainingTargets[TargetIdx])
-            {
-                Y.Add(t);
-            }
+            Y.Add(Target / Config.OutputScaling);
         }
     }
     
@@ -353,28 +381,66 @@ float UEchoStateNetwork::TrainOutputWeights(
         }
     }
     
-    // Solve (X^T*X + λI) * Wout = X^T * Y using simple diagonal approximation
-    // For better results, use a proper linear solver (Cholesky, LU, or iterative methods)
-    // This approximation works reasonably well when λ is relatively large
-    OutputWeights.SetNum(Config.ReservoirSize * Config.OutputDim);
+    // Cholesky solve for (X^T*X + λI) * Wout = X^T * Y.
+    TArray<float> Cholesky;
+    Cholesky.SetNumZeroed(Config.ReservoirSize * Config.ReservoirSize);
     for (int32 i = 0; i < Config.ReservoirSize; ++i)
     {
-        float diagVal = XTX[i * Config.ReservoirSize + i];
-        if (FMath::Abs(diagVal) > 1e-10f)
+        for (int32 j = 0; j <= i; ++j)
         {
-            for (int32 j = 0; j < Config.OutputDim; ++j)
+            float Value = XTX[i * Config.ReservoirSize + j];
+            for (int32 k = 0; k < j; ++k)
             {
-                OutputWeights[i * Config.OutputDim + j] = XTY[i * Config.OutputDim + j] / diagVal;
+                Value -= Cholesky[i * Config.ReservoirSize + k] *
+                         Cholesky[j * Config.ReservoirSize + k];
             }
-        }
-        else
-        {
-            for (int32 j = 0; j < Config.OutputDim; ++j)
+
+            if (i == j)
             {
-                OutputWeights[i * Config.OutputDim + j] = 0.0f;
+                if (!FMath::IsFinite(Value) || Value <= 1e-12f)
+                {
+                    UE_LOG(LogTemp, Error, TEXT("UEchoStateNetwork: Ridge regression matrix is not positive definite"));
+                    return -1.0f;
+                }
+                Cholesky[i * Config.ReservoirSize + j] = FMath::Sqrt(Value);
+            }
+            else
+            {
+                Cholesky[i * Config.ReservoirSize + j] =
+                    Value / Cholesky[j * Config.ReservoirSize + j];
             }
         }
     }
+
+    TArray<float> TrainedWeights;
+    TrainedWeights.SetNumZeroed(Config.ReservoirSize * Config.OutputDim);
+    for (int32 Output = 0; Output < Config.OutputDim; ++Output)
+    {
+        TArray<float> Solution;
+        Solution.SetNumZeroed(Config.ReservoirSize);
+
+        for (int32 i = 0; i < Config.ReservoirSize; ++i)
+        {
+            float Value = XTY[i * Config.OutputDim + Output];
+            for (int32 k = 0; k < i; ++k)
+            {
+                Value -= Cholesky[i * Config.ReservoirSize + k] * Solution[k];
+            }
+            Solution[i] = Value / Cholesky[i * Config.ReservoirSize + i];
+        }
+
+        for (int32 i = Config.ReservoirSize - 1; i >= 0; --i)
+        {
+            float Value = Solution[i];
+            for (int32 k = i + 1; k < Config.ReservoirSize; ++k)
+            {
+                Value -= Cholesky[k * Config.ReservoirSize + i] * Solution[k];
+            }
+            Solution[i] = Value / Cholesky[i * Config.ReservoirSize + i];
+            TrainedWeights[Output * Config.ReservoirSize + i] = Solution[i];
+        }
+    }
+    OutputWeights = MoveTemp(TrainedWeights);
     
     // Compute training error (NRMSE)
     ResetState();
