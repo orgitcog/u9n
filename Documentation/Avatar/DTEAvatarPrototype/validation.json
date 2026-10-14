@@ -1,0 +1,16 @@
+{
+  "blender_roundtrip_pass": true,
+  "fbx_height_m": 1.720000030118812,
+  "fbx_mesh_count": 1,
+  "fbx_armature_count": 1,
+  "fbx_bones": 27,
+  "glb_skin_count": 1,
+  "glb_joint_count": 27,
+  "glb_animations": [
+    "DTE_Idle_WingPulse_Diagnostic"
+  ],
+  "vertices_without_weights": 0,
+  "maximum_weight_sum_error": 4.470348358154297e-08,
+  "native_unreal_import_tested": false,
+  "production_deformation_quality_certified": false
+}

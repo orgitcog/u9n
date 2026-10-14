@@ -1,0 +1,18 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "DTE Avatar Bridge",
+  "Description": "Portable Blueprint-facing Deep Tree Echo avatar telemetry, animation, and bounded scene-feedback bridge.",
+  "Category": "Deep Tree Echo",
+  "CreatedBy": "orgitcog/u9n contributors",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "Modules": [
+    {
+      "Name": "DTEAvatarBridge",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ]
+}
