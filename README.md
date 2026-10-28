@@ -45,6 +45,7 @@ For UnrealEngineCog-specific features, see:
 *   **Avatar Systems** - See `Source/Avatar/` and `Source/Live2DCubism/` for 3D and 2D avatar implementations
 *   **Neurochemical Systems** - See `Source/Neurochemical/` for echo pulse, resonance, and homeostasis systems
 *   **Personality Systems** - See `Source/Personality/` for dynamic personality trait implementations
+*   **Language Model Bridge** - See `docs/LANGUAGE_MODEL_BRIDGE.md`; every word the character says or writes is requested from a model (locally served by default), never from templates or fallbacks
 
 If you need more, just ask! Many Epic developers read the [Discussion](https://forums.unrealengine.com/latest?exclude_tag=question) and [Q&A](https://forums.unrealengine.com/tag/question) forums on the [Epic Games Dev Community](https://dev.epicgames.com/community/) site, and we're proud to be part of a well-meaning, friendly, and welcoming community of thousands.
 

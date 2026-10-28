@@ -114,6 +114,7 @@ Execution contexts follow rooted tree enumeration:
 | `UDeepTreeEchoReservoir` | `DeepTreeEcho/Reservoir/` | ESN integration with hierarchical processing |
 | `UEmbodiedCognitionComponent` | `DeepTreeEcho/4ECognition/` | 4E cognition state management |
 | `UAvatarEvolutionSystem` | `DeepTreeEcho/Avatar/` | Ontogenetic development stages |
+| `UDTELanguageModelBridge` | `DeepTreeEcho/Core/` | The only source of character text: OpenAI-compatible model client (Ollama/llama-server by default) |
 | `DNACalib` | `MetaHuman-DNA-Calibration/dnacalib/` | DNA file manipulation and calibration |
 | `DNAViewer` | `MetaHuman-DNA-Calibration/dna_viewer/` | Maya rig generation from DNA |
 
@@ -127,6 +128,7 @@ Execution contexts follow rooted tree enumeration:
 
 ### Key Patterns
 - Actor components for modular cognitive subsystems
+- Every character utterance (speech, diary, blog, inner thought, reply) is requested from the model through `UDTELanguageModelBridge` / `FDTELanguageModelClient`; no fixed, templated, random or fallback text may stand in for it (see `docs/LANGUAGE_MODEL_BRIDGE.md`)
 - State structs (`F*State`) for data containers
 - Configuration via `EditAnywhere` properties
 - Tick-based processing in `TickComponent`

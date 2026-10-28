@@ -45,6 +45,8 @@ public class DeepTreeEcho : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"InputCore",
+				"HTTP",            // DTELanguageModelBridge: OpenAI-compatible chat completions
+				"Json",            // DTELanguageModelBridge: request/response bodies
 			}
 		);
 
