@@ -192,9 +192,6 @@ UDeepTreeEchoExpressionSystem::UDeepTreeEchoExpressionSystem()
     MicroExpressionDuration = 0.2f;
 
     // Wonder-to-Joy
-    bWonderToJoyActive = false;
-    WonderToJoyProgress = 0.0f;
-    WonderToJoyDuration = 1.5f;
 
     // Emissive
     CurrentEmissiveIntensity = 1.0f;
@@ -283,7 +280,6 @@ void UDeepTreeEchoExpressionSystem::TickComponent(float DeltaTime, ELevelTick Ti
     UpdateProceduralSaccades(DeltaTime);
     UpdateMicroExpression(DeltaTime);
     UpdateEmissivePulse(DeltaTime);
-    UpdateWonderToJoyTransition(DeltaTime);
 
     // Combine base expression with procedural animations
     CurrentMorphTargets = FDeepTreeEchoMorphTargets::Add(BaseExpressionMorphTargets, ProceduralMorphTargets, 1.0f);
@@ -1537,55 +1533,6 @@ void UDeepTreeEchoExpressionSystem::UpdateEmissivePulse(float DeltaTime)
     CurrentEmissiveIntensity = FMath::Lerp(TargetEmissiveIntensity, EmissivePulsePeak, PulseValue);
 }
 
-void UDeepTreeEchoExpressionSystem::UpdateWonderToJoyTransition(float DeltaTime)
-{
-    if (!bWonderToJoyActive)
-        return;
-
-    WonderToJoyProgress += DeltaTime / WonderToJoyDuration;
-
-    if (WonderToJoyProgress >= 1.0f)
-    {
-        bWonderToJoyActive = false;
-        WonderToJoyProgress = 0.0f;
-        SetExpressionState(EExpressionState::GentleSmile, 0.3f);
-        return;
-    }
-
-    // Phase 1 (0-0.4): Wonder/Contemplative with raised brows
-    // Phase 2 (0.4-0.6): Deliberate blink (the "aha" moment)
-    // Phase 3 (0.6-1.0): Transition to smile
-
-    if (WonderToJoyProgress < 0.4f)
-    {
-        // Wonder phase
-        float WonderAlpha = WonderToJoyProgress / 0.4f;
-        SetExpressionState(EExpressionState::Contemplative, 0.1f);
-    }
-    else if (WonderToJoyProgress < 0.6f)
-    {
-        // Deliberate blink phase
-        float BlinkAlpha = (WonderToJoyProgress - 0.4f) / 0.2f;
-        float BlinkValue = FMath::Sin(BlinkAlpha * PI);
-        ProceduralMorphTargets.EyeCloseL = BlinkValue * 0.8f;
-        ProceduralMorphTargets.EyeCloseR = BlinkValue * 0.8f;
-    }
-    else
-    {
-        // Joy phase
-        float JoyAlpha = (WonderToJoyProgress - 0.6f) / 0.4f;
-        if (JoyAlpha < 0.1f)
-        {
-            SetExpressionState(EExpressionState::GentleSmile, 0.3f);
-        }
-        // Pulse emissives at the moment of insight
-        if (JoyAlpha > 0.1f && JoyAlpha < 0.2f)
-        {
-            PulseEmissives(0.3f, 1.8f);
-        }
-    }
-}
-
 void UDeepTreeEchoExpressionSystem::TriggerMicroExpression(EMicroExpression MicroExp, float Duration)
 {
     if (bMicroExpressionActive)
@@ -1597,21 +1544,6 @@ void UDeepTreeEchoExpressionSystem::TriggerMicroExpression(EMicroExpression Micr
     bMicroExpressionActive = true;
 
     UE_LOG(LogTemp, Log, TEXT("Microexpression triggered: %d for %.2fs"), (int32)MicroExp, Duration);
-}
-
-void UDeepTreeEchoExpressionSystem::TriggerWonderToJoyTransition(float Duration)
-{
-    if (bWonderToJoyActive)
-        return;
-
-    bWonderToJoyActive = true;
-    WonderToJoyProgress = 0.0f;
-    WonderToJoyDuration = Duration;
-
-    // Start in contemplative state
-    SetExpressionState(EExpressionState::Contemplative, 0.2f);
-
-    UE_LOG(LogTemp, Log, TEXT("Wonder-to-Joy transition triggered for %.2fs"), Duration);
 }
 
 void UDeepTreeEchoExpressionSystem::SetBlinkingEnabled(bool bEnabled)
