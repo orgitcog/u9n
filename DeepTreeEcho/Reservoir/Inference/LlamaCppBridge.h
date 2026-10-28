@@ -5,10 +5,19 @@
  * @file llama_cpp.hpp
  * @brief llama.cpp Integration for ElizaOS
  * 
- * This module provides comprehensive integration with llama.cpp for local LLM inference.
- * It supports model loading, tokenization, context management, and text generation
- * with advanced features like batched inference, grammar-constrained generation,
- * and model quantization support.
+ * This module declares the integration surface for llama.cpp local inference:
+ * model loading, tokenization, context management, grammar-constrained and
+ * batched generation, and model quantization support.
+ * 
+ * Backend status in this tree: the accompanying LlamaCppBridge.cpp carries no
+ * inference backend. Tokenizer, metadata, grammar, batch, session and manager
+ * plumbing work; every generation entry point (LlamaContext::generate /
+ * continueGeneration, LlamaSession::generateResponse, LlamaAsyncTask) returns
+ * StopReason::ERROR, empty text and the operator-facing message "no llama.cpp
+ * backend linked; serve the model with llama-server/Ollama and use
+ * DTELanguageModelBridge". No code in this module may fabricate tokens or text
+ * in place of a model. LlamaModel::getNativeHandle() / LlamaContext::
+ * getNativeHandle() return nullptr until a real backend is linked.
  * 
  * Task 10.1.1: llama.cpp integration - Phase 1 Implementation
  */
