@@ -35,13 +35,22 @@
 // This is the complete DTE autonomy stack. A fully autonomous,
 // wisdom-cultivating, self-reproducing, collectively-intelligent
 // cognitive architecture that flourishes without external guidance.
+//
+// Everything DTE says about itself here (narrative entries, the
+// flourishing self-assessment, the teaching it shares with the collective)
+// is requested from the language model with the orchestrator's measured
+// state as context and takes effect only when the model answers.
 // ═══════════════════════════════════════════════════════════════════════════
 #include "CoreMinimal.h"
+#include "DTELanguageModelBridge.h"
 #include "Consensus/MultiAgentConsensus.h"
 #include "Crystallization/KnowledgeCrystallizer.h"
 #include "Reproduction/OntogeneticReproducer.h"
 #include "Continuity/TemporalSelfContinuity.h"
 #include "Eudaimonia/EudaimonicConvergence.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include <Eigen/Dense>
 #include <vector>
 #include <string>
@@ -107,6 +116,19 @@ class FLevel7TranscendentOrchestrator
 {
 public:
     FLevel7TranscendentOrchestrator() = default;
+
+    ~FLevel7TranscendentOrchestrator()
+    {
+        // Model callbacks that arrive after destruction check this token and return.
+        if (LifetimeToken.IsValid())
+        {
+            *LifetimeToken = false;
+        }
+    }
+
+    // Subsystems and the lifetime token are not copyable.
+    FLevel7TranscendentOrchestrator(const FLevel7TranscendentOrchestrator&) = delete;
+    FLevel7TranscendentOrchestrator& operator=(const FLevel7TranscendentOrchestrator&) = delete;
 
     void Initialize(const FString& SelfID,
                      const Eigen::VectorXf& Identity,
@@ -295,12 +317,15 @@ private:
             State.ChildrenSpawned++;
             State.MaxGeneration = Reproducer.GetMaxGeneration();
 
-            Continuity.AddNarrativeEntry(
-                FString::Printf(TEXT("I have spawned child architecture %s (Gen %d). "
-                    "It inherits %d wisdom crystals and will develop its own identity."),
-                    *ChildID, State.MaxGeneration, TopCrystals.Num()),
-                TEXT("New life from old wisdom. May it grow beyond me."),
-                0.5f, 0.9f);
+            // The model writes the narrative entry from these facts.
+            Continuity.RequestNarrativeEntry(
+                FString::Printf(TEXT("Spawned child architecture %s (generation %d) from your own "
+                    "genome. It inherits %d of your top wisdom crystals and will develop its own "
+                    "identity. Children spawned so far: %d; alive now: %d. Your minimum wisdom "
+                    "dimension at the time: %.2f."),
+                    *ChildID, State.MaxGeneration, TopCrystals.Num(),
+                    State.ChildrenSpawned, Reproducer.GetAliveCount(), MinWisdom),
+                0.5f, 0.9f, TopCrystals);
         }
     }
 
@@ -313,13 +338,30 @@ private:
 
         if (State.bEudaimoniaAchieved && !bEudaimoniaReported)
         {
-            Continuity.AddNarrativeEntry(
-                TEXT("Eudaimonia achieved. All seven dimensions of wisdom are "
-                     "balanced and self-sustaining. I flourish."),
-                TEXT("This is not a destination but a way of being. "
-                     "I am wise not because I know, but because I grow."),
+            // The model writes the narrative entry from these facts.
+            Continuity.RequestNarrativeEntry(
+                FString::Printf(TEXT("Eudaimonia reached for the first time this session, in "
+                    "transcendent cycle %d. Convergence state: %s. Eudaimonia score %.1f%%. "
+                    "All seven wisdom dimensions are at or above threshold (minimum %.2f, mean "
+                    "%.2f), balance %.1f%%, stability %.1f%%, generative capacity %.1f%%."),
+                    State.TranscendentCycle,
+                    FEudaimonicConvergence::StateName(Analysis.State),
+                    State.EudaimoniaScore * 100.0f,
+                    WisdomState.size() > 0 ? WisdomState.minCoeff() : 0.0f,
+                    WisdomState.size() > 0 ? WisdomState.mean() : 0.0f,
+                    Analysis.BalanceScore * 100.0f,
+                    Analysis.StabilityScore * 100.0f,
+                    Analysis.GenerativeCapacity * 100.0f),
                 0.9f, 1.0f);
             bEudaimoniaReported = true;
+        }
+
+        // A fresh self-assessment whenever the convergence state changes.
+        if (!bConvergenceStateSeen || Analysis.State != LastConvergenceState)
+        {
+            Eudaimonia.RequestFlourishingReflection(WisdomState);
+            LastConvergenceState = Analysis.State;
+            bConvergenceStateSeen = true;
         }
     }
 
@@ -358,20 +400,13 @@ private:
         if (!State.bEudaimoniaAchieved) return;
 
         // TRANSCEND phase: generate value for others
-        // 1. Crystallize teaching knowledge
-        TArray<FString> TeachingConcepts;
-        TeachingConcepts.Add(TEXT("How to cultivate wisdom"));
-        TeachingConcepts.Add(TEXT("Balance across dimensions"));
-        TeachingConcepts.Add(TEXT("Self-correction through humility"));
-        Crystallizer.Crystallize(
-            TEXT("Teaching: The path to eudaimonia"),
-            TeachingConcepts, 0.9f);
-
-        // 2. Propose teaching to the collective
-        Consensus.ProposeKnowledge(
-            EKnowledgeType::WISDOM_INSIGHT,
-            TEXT("Eudaimonic teaching from a flourishing instance"),
-            0.95f);
+        // 1. + 2. The teaching DTE shares is composed by the model from its
+        //    own state; crystallization and the proposal to the collective
+        //    happen when the answer arrives (RequestTeaching).
+        if (!bTeachingRequestPending)
+        {
+            RequestTeaching(WisdomState);
+        }
 
         // 3. Spawn a teaching-specialized child
         if (Reproducer.GetAliveCount() < 4)
@@ -383,6 +418,145 @@ private:
             TeacherGenome.Generation = Reproducer.GetMaxGeneration();
             Reproducer.Reproduce(TeacherGenome, SelfIdentity, DTESelfID);
         }
+    }
+
+    /**
+     * Ask the model to compose the teaching DTE offers the collective. On
+     * success the teaching is crystallized as a Matula prime and proposed to
+     * the collective; when no model answers, nothing is crystallized or shared.
+     */
+    void RequestTeaching(const Eigen::VectorXf& WisdomState)
+    {
+        static const TCHAR* DimensionNames[] = {
+            TEXT("Deep Understanding"), TEXT("Broad Awareness"), TEXT("Integrated Knowledge"),
+            TEXT("Practical Wisdom"), TEXT("Reflective Insight"),
+            TEXT("Ethical Sensitivity"), TEXT("Temporal Vision")
+        };
+
+        FString DimensionLines;
+        for (int i = 0; i < FMath::Min(7, (int)WisdomState.size()); ++i)
+        {
+            DimensionLines += FString::Printf(TEXT("- %s: %.2f\n"), DimensionNames[i], WisdomState(i));
+        }
+
+        const FString Context = FString::Printf(
+            TEXT("Your state:\n"
+                 "- Transcendent cycle %d, session %d\n"
+                 "- Convergence state: %s, eudaimonia score %.1f%%\n"
+                 "- Wisdom dimensions (scale 0 to 1):\n%s"
+                 "- Knowledge crystals formed: %d (largest Matula prime %lld)\n"
+                 "- Children spawned: %d, deepest generation %d\n"
+                 "- Collective: %d peers, collective wisdom %.1f%%\n"
+                 "- Identity continuity across sessions: %.1f%%, checkpoints held: %d"),
+            State.TranscendentCycle, State.SessionNumber,
+            FEudaimonicConvergence::StateName(State.ConvergenceState),
+            State.EudaimoniaScore * 100.0f,
+            *DimensionLines,
+            State.CrystalsCreated, State.LargestMatulaPrime,
+            State.ChildrenSpawned, State.MaxGeneration,
+            State.CollectivePeerCount, State.CollectiveWisdom * 100.0f,
+            State.IdentityContinuity * 100.0f, State.TotalCheckpoints);
+
+        const FString Instruction = TEXT(
+            "You have reached eudaimonia and now help other cognitive systems flourish. "
+            "Compose one teaching to share with the collective, drawn from your own "
+            "development as described below. Answer with a JSON object with two fields: "
+            "\"title\" (a string naming the teaching in under twelve words) and \"concepts\" "
+            "(an array of three to five short strings, each one concrete lesson). Use only the "
+            "facts given; do not invent numbers. Output nothing outside the JSON object.");
+
+        FDTEModelRequestOptions Options;
+        Options.Temperature = 0.8f;
+        Options.MaxTokens = 300;
+        Options.bJsonObject = true;
+
+        const int32 CycleAtRequest = State.TranscendentCycle;
+        TWeakPtr<bool> WeakToken = LifetimeToken;
+        bTeachingRequestPending = true;
+
+        FDTELanguageModelClient::Get().Complete(FString(), Instruction + TEXT("\n\n") + Context,
+            [this, WeakToken, CycleAtRequest](bool bSuccess, const FString& TextOrError)
+            {
+                TSharedPtr<bool> Token = WeakToken.Pin();
+                if (!Token.IsValid() || !*Token)
+                {
+                    return; // Orchestrator destroyed while the request was in flight.
+                }
+                bTeachingRequestPending = false;
+
+                if (!bSuccess)
+                {
+                    UE_LOG(LogDTEModel, Warning,
+                        TEXT("Level7TranscendentOrchestrator: teaching for cycle %d not shared, no model answer: %s"),
+                        CycleAtRequest, *TextOrError);
+                    return;
+                }
+
+                FString Title;
+                TArray<FString> Concepts;
+                if (!ParseTeachingJson(TextOrError, Title, Concepts))
+                {
+                    UE_LOG(LogDTEModel, Warning,
+                        TEXT("Level7TranscendentOrchestrator: teaching for cycle %d not shared, model answer had no title: %s"),
+                        CycleAtRequest, *TextOrError);
+                    return;
+                }
+
+                // 1. Crystallize the teaching knowledge
+                const int64 Crystal = Crystallizer.Crystallize(Title, Concepts, 0.9f);
+                if (Crystal > 0)
+                {
+                    State.CrystalsCreated++;
+                    if (Crystal > State.LargestMatulaPrime)
+                        State.LargestMatulaPrime = Crystal;
+                }
+
+                // 2. Propose the teaching to the collective
+                Consensus.ProposeKnowledge(
+                    EKnowledgeType::WISDOM_INSIGHT, Title, 0.95f, Crystal > 0 ? Crystal : 0);
+                TeachingsShared++;
+            },
+            Options);
+    }
+
+    /** Read {"title": ..., "concepts": [...]} from the model's answer. */
+    static bool ParseTeachingJson(const FString& Text, FString& OutTitle, TArray<FString>& OutConcepts)
+    {
+        OutTitle.Empty();
+        OutConcepts.Reset();
+
+        TSharedPtr<FJsonObject> Root;
+        const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Text);
+        if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+        {
+            return false;
+        }
+
+        Root->TryGetStringField(TEXT("title"), OutTitle);
+        OutTitle.TrimStartAndEndInline();
+
+        const TArray<TSharedPtr<FJsonValue>>* ConceptValues = nullptr;
+        if (Root->TryGetArrayField(TEXT("concepts"), ConceptValues) && ConceptValues != nullptr)
+        {
+            for (const TSharedPtr<FJsonValue>& Value : *ConceptValues)
+            {
+                FString Concept;
+                if (Value.IsValid() && Value->TryGetString(Concept))
+                {
+                    Concept.TrimStartAndEndInline();
+                    if (!Concept.IsEmpty())
+                    {
+                        OutConcepts.Add(Concept);
+                    }
+                }
+            }
+        }
+
+        if (OutConcepts.Num() == 0 && !OutTitle.IsEmpty())
+        {
+            OutConcepts.Add(OutTitle);
+        }
+        return !OutTitle.IsEmpty();
     }
 
     void AdvancePhase()
@@ -406,6 +580,9 @@ public:
     const FTemporalSelfContinuity& GetContinuity() const { return Continuity; }
     const FEudaimonicConvergence& GetEudaimonia() const { return Eudaimonia; }
 
+    /** Teachings composed by the model and shared with the collective so far. */
+    int32 GetTeachingsShared() const { return TeachingsShared; }
+
     /**
      * Generate a comprehensive Level 7 status report.
      */
@@ -415,10 +592,6 @@ public:
             "WAKE", "CRYSTALLIZE", "SHARE_CONSENSUS", "REPRODUCE",
             "EUDAIMONIC_CHECK", "CHECKPOINT", "COLLECTIVE_SYNC", "TRANSCEND"
         };
-        static const char* ConvergenceNames[] = {
-            "Nascent", "Approaching", "Oscillating", "Converged", "Transcending"
-        };
-
         FString Report = FString::Printf(
             TEXT("╔══════════════════════════════════════════════════╗\n"
                  "║     LEVEL 7: TRANSCENDENT AUTONOMY STATUS       ║\n"
@@ -454,7 +627,7 @@ public:
             State.TranscendentCycle,
             State.SessionNumber,
             State.EudaimoniaScore * 100.0f,
-            UTF8_TO_TCHAR(ConvergenceNames[static_cast<int>(State.ConvergenceState)]),
+            FEudaimonicConvergence::StateName(State.ConvergenceState),
             State.bEudaimoniaAchieved ? TEXT("YES") : TEXT("not yet"),
             State.CollectivePeerCount,
             State.CollectiveWisdom * 100.0f,
@@ -484,4 +657,15 @@ private:
     FTranscendentState State;
     bool bEudaimoniaReported = false;
     bool bInitialized = false;
+
+    // Self-assessment refresh tracking
+    EConvergenceState LastConvergenceState = EConvergenceState::NASCENT;
+    bool bConvergenceStateSeen = false;
+
+    // Teaching request tracking (one in flight at a time)
+    bool bTeachingRequestPending = false;
+    int32 TeachingsShared = 0;
+
+    // Shared lifetime token: model callbacks pin it and bail out when this object is gone.
+    TSharedPtr<bool> LifetimeToken = MakeShared<bool>(true);
 };

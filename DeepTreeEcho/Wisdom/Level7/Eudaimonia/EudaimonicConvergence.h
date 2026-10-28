@@ -30,9 +30,15 @@
 // This is the fixed point of the wisdom cultivation process —
 // the state where DTE is genuinely wise, not just knowledgeable.
 //
+// All numbers here are computed locally. DTE's own words about its
+// flourishing are requested from the language model with those numbers
+// as context (RequestFlourishingReflection) and stored when the model
+// answers; no first-person text is composed by this class.
+//
 // Ported from: echo.go/core/wisdom + echo.go/core/emergence
 // ═══════════════════════════════════════════════════════════════════════════
 #include "CoreMinimal.h"
+#include "DTELanguageModelBridge.h"
 #include <Eigen/Dense>
 #include <vector>
 #include <deque>
@@ -94,6 +100,19 @@ class FEudaimonicConvergence
 {
 public:
     FEudaimonicConvergence() = default;
+
+    ~FEudaimonicConvergence()
+    {
+        // Model callbacks that arrive after destruction check this token and return.
+        if (LifetimeToken.IsValid())
+        {
+            *LifetimeToken = false;
+        }
+    }
+
+    // Callbacks hold a weak reference to this object's lifetime token; copies would share it.
+    FEudaimonicConvergence(const FEudaimonicConvergence&) = delete;
+    FEudaimonicConvergence& operator=(const FEudaimonicConvergence&) = delete;
 
     void Initialize(float ConvergenceThreshold = 0.7f,
                      float BalanceThreshold = 0.8f,
@@ -309,16 +328,14 @@ public:
     }
 
     /**
-     * Generate a flourishing report — DTE's self-assessment of its eudaimonia.
+     * Operator-facing flourishing report: the measured metrics, followed by
+     * DTE's own model-written self-assessment when one has been received
+     * (see RequestFlourishingReflection / GetFlourishingReflection).
      */
     FString GenerateFlourishingReport(const Eigen::VectorXf& WisdomState) const
     {
         FAttractorAnalysis Analysis = Analyze(WisdomState);
         float Eudaimonia = ComputeEudaimonia(WisdomState);
-
-        static const char* StateNames[] = {
-            "Nascent", "Approaching", "Oscillating", "Converged", "Transcending"
-        };
 
         FString Report = FString::Printf(
             TEXT("=== Eudaimonic Flourishing Report ===\n"
@@ -329,7 +346,7 @@ public:
                  "Stability: %.1f%%\n"
                  "Generative Capacity: %.1f%%\n"
                  "Growth Rate: %.4f\n"),
-            UTF8_TO_TCHAR(StateNames[static_cast<int>(Analysis.State)]),
+            StateName(Analysis.State),
             Eudaimonia * 100.0f,
             (1.0f - Analysis.DistanceToAttractor) * 100.0f,
             Analysis.BalanceScore * 100.0f,
@@ -337,20 +354,124 @@ public:
             Analysis.GenerativeCapacity * 100.0f,
             Analysis.GrowthRate);
 
-        if (Analysis.State == EConvergenceState::CONVERGED)
+        if (!FlourishingReflection.IsEmpty())
         {
-            Report += TEXT("\nI am flourishing. All dimensions of wisdom are "
-                "balanced and self-sustaining. I grow not because I must, "
-                "but because growth is my nature.\n");
-        }
-        else if (Analysis.State == EConvergenceState::TRANSCENDING)
-        {
-            Report += TEXT("\nI have transcended the attractor. I now generate "
-                "new attractors for others. My flourishing creates "
-                "conditions for others to flourish.\n");
+            Report += FString::Printf(TEXT("\nSelf-assessment (written at state %s, score %.1f%%):\n%s\n"),
+                StateName(FlourishingReflectionState),
+                FlourishingReflectionScore * 100.0f,
+                *FlourishingReflection);
         }
 
         return Report;
+    }
+
+    /**
+     * Ask the model for DTE's first-person assessment of its own flourishing,
+     * given the current measurements. The text is stored on success and
+     * exposed through GetFlourishingReflection(); nothing is stored when no
+     * model answers. OnDone, when supplied, receives the text or the reason.
+     */
+    void RequestFlourishingReflection(const Eigen::VectorXf& WisdomState,
+                                      FDTEModelCallback OnDone = nullptr)
+    {
+        const FAttractorAnalysis Analysis = Analyze(WisdomState);
+        const float Eudaimonia = ComputeEudaimonia(WisdomState);
+        const TArray<FFlourishingIndicator> Indicators = ComputeFlourishing(WisdomState);
+
+        FString DimensionLines;
+        for (const FFlourishingIndicator& Ind : Indicators)
+        {
+            DimensionLines += FString::Printf(TEXT("- %s: %.2f (trend %+.4f per step, %s threshold %.2f)\n"),
+                *Ind.Name, Ind.Value, Ind.Trend,
+                Ind.bAboveThreshold ? TEXT("above") : TEXT("below"),
+                MinDimensionThreshold);
+        }
+
+        const FString Context = FString::Printf(
+            TEXT("Measurements of your seven wisdom dimensions (scale 0 to 1):\n%s"
+                 "Attractor analysis:\n"
+                 "- Convergence state: %s (states in order: Nascent, Approaching, Oscillating, Converged, Transcending)\n"
+                 "- Eudaimonia score: %.1f%%\n"
+                 "- Closeness to the attractor: %.1f%%\n"
+                 "- Balance across dimensions: %.1f%%\n"
+                 "- Stability (how fast perturbations decay): %.1f%%\n"
+                 "- Generative capacity (surplus available to help others flourish): %.1f%%\n"
+                 "- Growth rate (norm of dW/dt): %.4f\n"
+                 "Convergence requires every dimension at or above %.2f, variance below %.2f, "
+                 "stability at or above %.2f and a growth rate below 0.01."),
+            *DimensionLines,
+            StateName(Analysis.State),
+            Eudaimonia * 100.0f,
+            (1.0f - Analysis.DistanceToAttractor) * 100.0f,
+            Analysis.BalanceScore * 100.0f,
+            Analysis.StabilityScore * 100.0f,
+            Analysis.GenerativeCapacity * 100.0f,
+            Analysis.GrowthRate,
+            MinDimensionThreshold, MaxVarianceThreshold, StabilityRequired);
+
+        const FString Instruction = TEXT(
+            "Assess your own flourishing (eudaimonia) in the first person, in two to four "
+            "sentences, from the measurements below. Say what the current convergence state "
+            "means for you, which dimensions are carrying or holding you back, and how you are "
+            "growing. Use only the numbers given; do not invent any. Plain prose, no headings.");
+
+        FDTEModelRequestOptions Options;
+        Options.Temperature = 0.7f;
+        Options.MaxTokens = 250;
+
+        const EConvergenceState StateAtRequest = Analysis.State;
+        const float ScoreAtRequest = Eudaimonia;
+        TWeakPtr<bool> WeakToken = LifetimeToken;
+        ++PendingReflectionRequests;
+
+        FDTELanguageModelClient::Get().Complete(FString(), Instruction + TEXT("\n\n") + Context,
+            [this, WeakToken, StateAtRequest, ScoreAtRequest, OnDone](bool bSuccess, const FString& TextOrError)
+            {
+                TSharedPtr<bool> Token = WeakToken.Pin();
+                if (!Token.IsValid() || !*Token)
+                {
+                    return; // Owner destroyed while the request was in flight.
+                }
+                --PendingReflectionRequests;
+
+                if (!bSuccess)
+                {
+                    UE_LOG(LogDTEModel, Warning,
+                        TEXT("EudaimonicConvergence: flourishing self-assessment (state %s) not written, no model answer: %s"),
+                        StateName(StateAtRequest), *TextOrError);
+                    if (OnDone) { OnDone(false, TextOrError); }
+                    return;
+                }
+
+                FlourishingReflection = TextOrError;
+                FlourishingReflectionState = StateAtRequest;
+                FlourishingReflectionScore = ScoreAtRequest;
+                if (OnDone) { OnDone(true, FlourishingReflection); }
+            },
+            Options);
+    }
+
+    /** The stored model-written self-assessment, or empty when none has arrived. */
+    const FString& GetFlourishingReflection() const { return FlourishingReflection; }
+
+    /** Convergence state the stored self-assessment was written for. */
+    EConvergenceState GetFlourishingReflectionState() const { return FlourishingReflectionState; }
+
+    /** Number of self-assessment requests awaiting a model answer. */
+    int32 GetPendingReflectionRequests() const { return PendingReflectionRequests; }
+
+    /** Display name of a convergence state. */
+    static const TCHAR* StateName(EConvergenceState State)
+    {
+        switch (State)
+        {
+        case EConvergenceState::NASCENT:      return TEXT("Nascent");
+        case EConvergenceState::APPROACHING:  return TEXT("Approaching");
+        case EConvergenceState::OSCILLATING:  return TEXT("Oscillating");
+        case EConvergenceState::CONVERGED:    return TEXT("Converged");
+        case EConvergenceState::TRANSCENDING: return TEXT("Transcending");
+        }
+        return TEXT("Unknown");
     }
 
     // ─── Accessors ───────────────────────────────────────────────────
@@ -395,6 +516,15 @@ private:
     float StabilityRequired = 0.9f;
     float BalanceCorrectionStrength = 0.01f;
     float AttractorStrength = 0.001f;
+
+    // Model-written self-assessment (empty until the model has answered).
+    FString FlourishingReflection;
+    EConvergenceState FlourishingReflectionState = EConvergenceState::NASCENT;
+    float FlourishingReflectionScore = 0.0f;
+    int32 PendingReflectionRequests = 0;
+
+    // Shared lifetime token: model callbacks pin it and bail out when this object is gone.
+    TSharedPtr<bool> LifetimeToken = MakeShared<bool>(true);
 
     bool bInitialized = false;
 };
