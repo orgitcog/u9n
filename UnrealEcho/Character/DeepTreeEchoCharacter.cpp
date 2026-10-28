@@ -20,6 +20,41 @@
 #include "Interaction/DeepTreeEchoInteractionComponent.h"
 #include "Cosmetics/DeepTreeEchoCosmeticsComponent.h"
 
+namespace
+{
+	/**
+	 * Deterministic mapping from the character's measured affect (valence, arousal,
+	 * dominance in 0..1, 0.5 neutral) to the music/ambience layer the audio manager
+	 * mixes. This drives the soundtrack only; it never triggers a sound presented as
+	 * the character's own reaction.
+	 */
+	EAvatarEmotionalState MapAffectToMusicLayer(const FEmotionalState& EmotionalState, float& OutIntensity)
+	{
+		const float ValenceOffset = FMath::Clamp(EmotionalState.Valence, 0.0f, 1.0f) - 0.5f;
+		const float ArousalOffset = FMath::Clamp(EmotionalState.Arousal, 0.0f, 1.0f) - 0.5f;
+		const float Dominance = FMath::Clamp(EmotionalState.Dominance, 0.0f, 1.0f);
+
+		OutIntensity = FMath::Clamp(FMath::Max(FMath::Abs(ValenceOffset), FMath::Abs(ArousalOffset)) * 2.0f, 0.0f, 1.0f);
+
+		if (OutIntensity < 0.15f)
+		{
+			return EAvatarEmotionalState::Neutral;
+		}
+
+		if (ValenceOffset >= 0.0f)
+		{
+			return ArousalOffset > 0.15f ? EAvatarEmotionalState::Excited : EAvatarEmotionalState::Happy;
+		}
+
+		if (ArousalOffset > 0.15f)
+		{
+			return Dominance > 0.5f ? EAvatarEmotionalState::Angry : EAvatarEmotionalState::Surprised;
+		}
+
+		return EAvatarEmotionalState::Sad;
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////
 // FDeepTreeEchoReplicatedState
 
@@ -423,10 +458,12 @@ void ADeepTreeEchoCharacter::UpdateEmotionalEffects()
 	// Update avatar visuals based on emotion
 	AvatarComponent->SetEmotionalState(EmotionalState);
 
-	// Update audio based on emotion
+	// Feed the measured affect to the music layers (soundtrack, not a reaction cue)
 	if (AudioManager)
 	{
-		AudioManager->SetEmotionalState(EmotionalState);
+		float MusicIntensity = 0.0f;
+		const EAvatarEmotionalState MusicLayer = MapAffectToMusicLayer(EmotionalState, MusicIntensity);
+		AudioManager->UpdateMusicLayers(MusicLayer, MusicIntensity);
 	}
 
 	// Update cosmetics based on emotion
@@ -508,11 +545,8 @@ void ADeepTreeEchoCharacter::InitializeComponents()
 		CosmeticsComponent->Initialize(GetMesh());
 	}
 
-	// Initialize audio manager
-	if (AudioManager)
-	{
-		AudioManager->Initialize();
-	}
+	// The audio manager creates its voice, music and ambience components in its own
+	// BeginPlay; it has no separate initialization entry point.
 }
 
 void ADeepTreeEchoCharacter::InitializeAbilitySystem()
@@ -549,11 +583,8 @@ void ADeepTreeEchoCharacter::OnPersonalityShift(const FPersonalityState& OldStat
 		CosmeticsComponent->ApplyPersonalityOutfit(NewState);
 	}
 
-	// Play audio feedback
-	if (AudioManager)
-	{
-		AudioManager->OnPersonalityShift(OldState, NewState);
-	}
+	// No audio cue is played for a personality shift: a fixed sound here would be a
+	// canned reaction. The soundtrack follows the measured affect in UpdateEmotionalEffects.
 
 	// Broadcast to blueprints
 	OnPersonalityShiftEvent.Broadcast(OldState, NewState);
@@ -567,10 +598,12 @@ void ADeepTreeEchoCharacter::OnEmotionalStateChanged(const FEmotionalState& NewS
 		AvatarComponent->SetEmotionalState(NewState);
 	}
 
-	// Update audio
+	// Feed the measured affect to the music layers
 	if (AudioManager)
 	{
-		AudioManager->SetEmotionalState(NewState);
+		float MusicIntensity = 0.0f;
+		const EAvatarEmotionalState MusicLayer = MapAffectToMusicLayer(NewState, MusicIntensity);
+		AudioManager->UpdateMusicLayers(MusicLayer, MusicIntensity);
 	}
 }
 
