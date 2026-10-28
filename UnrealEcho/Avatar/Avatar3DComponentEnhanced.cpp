@@ -1,9 +1,64 @@
 #include "Avatar3DComponentEnhanced.h"
 #include "DeepTreeEchoExpressionSystem.h"
+#include "DTELanguageModelBridge.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Animation/AnimInstance.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "GameFramework/Actor.h"
+#include "UObject/Class.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+
+namespace
+{
+    // Chaotic event menu: capability data the chooser picks from.
+    const TCHAR* const ChaoticEventMicroExpression = TEXT("micro_expression");
+    const TCHAR* const ChaoticEventGlitch = TEXT("glitch");
+    const TCHAR* const ChaoticEventEyeSparkle = TEXT("eye_sparkle");
+    const TCHAR* const ChaoticEventNone = TEXT("none");
+
+    FString EmotionMenu()
+    {
+        const UEnum* Enum = StaticEnum<EAvatarEmotionalState>();
+        FString Menu;
+        // The last entry of a reflected enum is the generated _MAX sentinel.
+        for (int32 Index = 0; Index < Enum->NumEnums() - 1; ++Index)
+        {
+            if (!Menu.IsEmpty())
+            {
+                Menu += TEXT(", ");
+            }
+            Menu += Enum->GetNameStringByIndex(Index);
+        }
+        return Menu;
+    }
+
+    FString EmotionName(EAvatarEmotionalState Emotion)
+    {
+        return StaticEnum<EAvatarEmotionalState>()->GetNameStringByValue((int64)Emotion);
+    }
+
+    TSharedPtr<FJsonObject> ParseModelJson(const FString& ModelText)
+    {
+        int32 Open = INDEX_NONE;
+        int32 Close = INDEX_NONE;
+        ModelText.FindChar(TEXT('{'), Open);
+        ModelText.FindLastChar(TEXT('}'), Close);
+        if (Open == INDEX_NONE || Close == INDEX_NONE || Close <= Open)
+        {
+            return nullptr;
+        }
+
+        TSharedPtr<FJsonObject> Object;
+        TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ModelText.Mid(Open, Close - Open + 1));
+        if (!FJsonSerializer::Deserialize(Reader, Object) || !Object.IsValid())
+        {
+            return nullptr;
+        }
+        return Object;
+    }
+}
 
 UAvatar3DComponentEnhanced::UAvatar3DComponentEnhanced()
 {
@@ -18,8 +73,14 @@ UAvatar3DComponentEnhanced::UAvatar3DComponentEnhanced()
     
     ChaosFactor = 0.3f;
     ChaosTimer = 0.0f;
-    NextChaoticEventTime = FMath::FRandRange(2.0f, 5.0f);
-    
+    NextChaoticEventTime = FMath::FRandRange(2.0f, 5.0f); // cadence jitter only; the event itself is never random
+    ModelBridge = nullptr;
+    bChaoticChoicePending = false;
+
+    bMicroExpressionActive = false;
+    MicroExpressionReturnEmotion = EAvatarEmotionalState::Neutral;
+    MicroExpressionReturnTimer = 0.0f;
+
     EchoResonanceIntensity = 0.0f;
     GlitchIntensity = 0.0f;
     AuraIntensity = 0.5f;
@@ -63,9 +124,11 @@ void UAvatar3DComponentEnhanced::BeginPlay()
     
     // Apply initial appearance
     UpdateMaterialParameters();
-    
-    UE_LOG(LogTemp, Log, TEXT("Avatar3DComponentEnhanced initialized for %s"), 
-           *GetOwner()->GetName());
+
+    ModelBridge = UDTELanguageModelBridge::FindOrAdd(GetOwner());
+
+    UE_LOG(LogTemp, Log, TEXT("Avatar3DComponentEnhanced initialized for %s"),
+           *GetNameSafe(GetOwner()));
 }
 
 void UAvatar3DComponentEnhanced::TickComponent(float DeltaTime, ELevelTick TickType, 
@@ -135,9 +198,12 @@ void UAvatar3DComponentEnhanced::ApplySuperHotGirlAesthetic()
 
 void UAvatar3DComponentEnhanced::SetEmotionalState(EAvatarEmotionalState Emotion, float Intensity)
 {
+    // An explicit emotion cancels any micro-expression still due to return
+    bMicroExpressionActive = false;
+
     EmotionalState.CurrentEmotion = Emotion;
     EmotionalState.EmotionIntensity = FMath::Clamp(Intensity, 0.0f, 1.0f);
-    
+
     ApplyEmotionToFacialAnimation();
     
     UE_LOG(LogTemp, Log, TEXT("Emotional state set to: %d with intensity %.2f"), 
@@ -221,14 +287,77 @@ void UAvatar3DComponentEnhanced::SetHyperChaoticBehavior(float ChaosFactor_)
 
 void UAvatar3DComponentEnhanced::TriggerChaoticMicroExpression()
 {
-    // Generate random micro-expression
-    float RandomIntensity = FMath::FRandRange(0.1f, 0.3f);
-    int32 RandomEmotion = FMath::RandRange(0, 9);
-    
-    EAvatarEmotionalState TempEmotion = static_cast<EAvatarEmotionalState>(RandomEmotion);
-    TransitionToEmotion(TempEmotion, 0.1f);
-    
-    UE_LOG(LogTemp, Log, TEXT("Chaotic micro-expression triggered"));
+    // The flash is what the current affect would look like with the arousal
+    // pushed up by the chaos factor: the same feeling, momentarily sharper.
+    const float FlashArousal = FMath::Clamp(EmotionalState.Arousal + 0.5f * ChaosFactor, 0.0f, 1.0f);
+    const EAvatarEmotionalState Flash = EmotionFromDimensions(EmotionalState.Valence, FlashArousal, EmotionalState.Dominance);
+
+    if (Flash == EmotionalState.CurrentEmotion)
+    {
+        UE_LOG(LogTemp, Verbose, TEXT("Chaotic micro-expression: affect already shows %s, nothing to flash"), *EmotionName(Flash));
+        return;
+    }
+
+    FlashMicroExpression(Flash);
+}
+
+void UAvatar3DComponentEnhanced::FlashMicroExpression(EAvatarEmotionalState Flash)
+{
+    if (Flash == EmotionalState.CurrentEmotion && !bMicroExpressionActive)
+    {
+        return;
+    }
+
+    if (!bMicroExpressionActive)
+    {
+        MicroExpressionReturnEmotion = EmotionalState.CurrentEmotion;
+        bMicroExpressionActive = true;
+    }
+    MicroExpressionReturnTimer = 0.35f;
+
+    TransitionToEmotion(Flash, 0.1f);
+
+    UE_LOG(LogTemp, Log, TEXT("Micro-expression: %s, returning to %s"), *EmotionName(Flash), *EmotionName(MicroExpressionReturnEmotion));
+}
+
+EAvatarEmotionalState UAvatar3DComponentEnhanced::EmotionFromDimensions(float Valence, float Arousal, float Dominance)
+{
+    Valence = FMath::Clamp(Valence, -1.0f, 1.0f);
+    Arousal = FMath::Clamp(Arousal, 0.0f, 1.0f);
+    Dominance = FMath::Clamp(Dominance, 0.0f, 1.0f);
+
+    if (Valence > 0.4f)
+    {
+        if (Arousal > 0.7f)
+        {
+            return EAvatarEmotionalState::Excited;
+        }
+        return Dominance > 0.65f ? EAvatarEmotionalState::Flirty : EAvatarEmotionalState::Happy;
+    }
+
+    if (Valence < -0.4f)
+    {
+        if (Arousal > 0.6f)
+        {
+            return Dominance > 0.5f ? EAvatarEmotionalState::Angry : EAvatarEmotionalState::Afraid;
+        }
+        if (Dominance > 0.6f)
+        {
+            return EAvatarEmotionalState::Contemptuous;
+        }
+        return Arousal < 0.3f ? EAvatarEmotionalState::Grieving : EAvatarEmotionalState::Sad;
+    }
+
+    // Near-neutral valence
+    if (Arousal > 0.75f)
+    {
+        return EAvatarEmotionalState::Surprised;
+    }
+    if (Arousal < 0.35f)
+    {
+        return EAvatarEmotionalState::Thoughtful;
+    }
+    return Dominance > 0.7f ? EAvatarEmotionalState::Mysterious : EAvatarEmotionalState::Neutral;
 }
 
 void UAvatar3DComponentEnhanced::SetConfidenceLevel(float Confidence)
@@ -443,6 +572,17 @@ void UAvatar3DComponentEnhanced::UpdateEmotionalTransition(float DeltaTime)
             ApplyEmotionToFacialAnimation();
         }
     }
+
+    // A micro-expression returns to the emotion that was showing before it
+    if (bMicroExpressionActive)
+    {
+        MicroExpressionReturnTimer -= DeltaTime;
+        if (MicroExpressionReturnTimer <= 0.0f)
+        {
+            bMicroExpressionActive = false;
+            TransitionToEmotion(MicroExpressionReturnEmotion, 0.2f);
+        }
+    }
 }
 
 void UAvatar3DComponentEnhanced::UpdateChaoticBehavior(float DeltaTime)
@@ -453,8 +593,9 @@ void UAvatar3DComponentEnhanced::UpdateChaoticBehavior(float DeltaTime)
         
         if (ChaosTimer >= NextChaoticEventTime)
         {
-            TriggerRandomChaoticEvent();
+            TriggerChaoticEvent();
             ChaosTimer = 0.0f;
+            // Cadence jitter is numeric timing noise; which event happens is chosen above.
             NextChaoticEventTime = FMath::FRandRange(2.0f / ChaosFactor, 5.0f / ChaosFactor);
         }
     }
@@ -608,24 +749,162 @@ void UAvatar3DComponentEnhanced::ApplyEmotionToFacialAnimation()
         (int32)EmotionalState.CurrentEmotion, (int32)TargetExpression);
 }
 
-void UAvatar3DComponentEnhanced::TriggerRandomChaoticEvent()
+FString UAvatar3DComponentEnhanced::DescribeStateForModel() const
 {
-    int32 EventType = FMath::RandRange(0, 2);
-    
-    switch (EventType)
+    FString Traits;
+    for (const auto& TraitPair : PersonalityTraits)
     {
-        case 0:
-            // Micro-expression
+        Traits += FString::Printf(TEXT(" %s=%.2f"),
+            *StaticEnum<EAvatarPersonalityTrait>()->GetNameStringByValue((int64)TraitPair.Key), TraitPair.Value);
+    }
+
+    return FString::Printf(
+        TEXT("affect dimensions: valence=%.2f arousal=%.2f dominance=%.2f\n")
+        TEXT("currently showing: %s at intensity %.2f\n")
+        TEXT("chaos factor: %.2f\n")
+        TEXT("personality traits:%s"),
+        EmotionalState.Valence, EmotionalState.Arousal, EmotionalState.Dominance,
+        *EmotionName(EmotionalState.CurrentEmotion), EmotionalState.EmotionIntensity,
+        ChaosFactor,
+        *Traits);
+}
+
+void UAvatar3DComponentEnhanced::TriggerChaoticEvent()
+{
+    if (bChaoticChoicePending)
+    {
+        return;
+    }
+
+    if (!ModelBridge && GetOwner())
+    {
+        ModelBridge = UDTELanguageModelBridge::FindOrAdd(GetOwner());
+    }
+
+    if (!ModelBridge || !ModelBridge->IsModelAvailable())
+    {
+        // No model: the event follows from the affect dimensions alone.
+        const float Arousal = EmotionalState.Arousal;
+        const float Valence = EmotionalState.Valence;
+
+        if (Arousal > 0.6f)
+        {
+            // Heightened arousal breaks through as a micro-expression
+            ApplyChaoticEvent(ChaoticEventMicroExpression, false, EAvatarEmotionalState::Neutral, Arousal);
+        }
+        else if (Valence < -0.3f)
+        {
+            // Negative affect under chaos shows as visual instability
+            ApplyChaoticEvent(ChaoticEventGlitch, false, EAvatarEmotionalState::Neutral, FMath::Abs(Valence) * ChaosFactor);
+        }
+        else if (Valence > 0.5f)
+        {
+            // Positive affect brightens the eyes
+            ApplyChaoticEvent(ChaoticEventEyeSparkle, false, EAvatarEmotionalState::Neutral, Valence);
+        }
+        else
+        {
+            // Nothing in the affect state calls for an event: stay idle
+            UE_LOG(LogTemp, Verbose, TEXT("Chaotic event: affect state calls for nothing; avatar stays idle"));
+        }
+        return;
+    }
+
+    const FString Instruction =
+        TEXT("A moment of chaotic behaviour is due for this character. Choose the event that fits the ")
+        TEXT("current state. Reply with one JSON object: {\"event\": <exactly one of the event menu>, ")
+        TEXT("\"expression\": <exactly one name from the expression menu, used when event is micro_expression>, ")
+        TEXT("\"intensity\": <number between 0 and 1>}. Choose \"none\" when nothing should happen. ")
+        TEXT("The choice must suit the state described, not be arbitrary.");
+
+    const FString Context = FString::Printf(
+        TEXT("%s\nevent menu: %s, %s, %s, %s\nexpression menu: %s"),
+        *DescribeStateForModel(),
+        ChaoticEventMicroExpression, ChaoticEventGlitch, ChaoticEventEyeSparkle, ChaoticEventNone,
+        *EmotionMenu());
+
+    bChaoticChoicePending = true;
+
+    TWeakObjectPtr<UAvatar3DComponentEnhanced> WeakThis(this);
+    ModelBridge->RequestJson(Instruction, Context,
+        [WeakThis](bool bSuccess, const FString& TextOrError)
+        {
+            if (!WeakThis.IsValid())
+            {
+                return;
+            }
+            UAvatar3DComponentEnhanced* Self = WeakThis.Get();
+            Self->bChaoticChoicePending = false;
+
+            if (!bSuccess)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Avatar3DComponentEnhanced: chaotic event skipped, model unavailable: %s"), *TextOrError);
+                return;
+            }
+
+            TSharedPtr<FJsonObject> Object = ParseModelJson(TextOrError);
+            FString EventText;
+            if (!Object.IsValid() || !Object->TryGetStringField(TEXT("event"), EventText))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("Avatar3DComponentEnhanced: chaotic event skipped, model reply was not the requested JSON object"));
+                return;
+            }
+            EventText.TrimStartAndEndInline();
+            EventText.ToLowerInline();
+
+            bool bHasExpression = false;
+            EAvatarEmotionalState Expression = EAvatarEmotionalState::Neutral;
+            FString ExpressionText;
+            if (Object->TryGetStringField(TEXT("expression"), ExpressionText))
+            {
+                ExpressionText.TrimStartAndEndInline();
+                const int64 Value = StaticEnum<EAvatarEmotionalState>()->GetValueByNameString(ExpressionText);
+                if (Value != INDEX_NONE)
+                {
+                    bHasExpression = true;
+                    Expression = static_cast<EAvatarEmotionalState>(Value);
+                }
+                else if (!ExpressionText.IsEmpty() && !ExpressionText.Equals(ChaoticEventNone, ESearchCase::IgnoreCase))
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("Avatar3DComponentEnhanced: model answered expression \"%s\", which is not on the menu"), *ExpressionText);
+                }
+            }
+
+            double Intensity = Self->ChaosFactor;
+            Object->TryGetNumberField(TEXT("intensity"), Intensity);
+
+            Self->ApplyChaoticEvent(EventText, bHasExpression, Expression, FMath::Clamp((float)Intensity, 0.0f, 1.0f));
+        });
+}
+
+void UAvatar3DComponentEnhanced::ApplyChaoticEvent(const FString& EventName, bool bHasExpression, EAvatarEmotionalState Expression, float Intensity)
+{
+    if (EventName == ChaoticEventMicroExpression)
+    {
+        if (bHasExpression)
+        {
+            FlashMicroExpression(Expression);
+        }
+        else
+        {
             TriggerChaoticMicroExpression();
-            break;
-        case 1:
-            // Glitch effect
-            TriggerGlitchEffect(FMath::FRandRange(0.2f, 0.5f) * ChaosFactor);
-            break;
-        case 2:
-            // Eye sparkle burst
-            SetEyeSparkle(1.0f);
-            break;
+        }
+    }
+    else if (EventName == ChaoticEventGlitch)
+    {
+        TriggerGlitchEffect(FMath::Clamp(Intensity, 0.0f, 1.0f) * 0.5f);
+    }
+    else if (EventName == ChaoticEventEyeSparkle)
+    {
+        SetEyeSparkle(FMath::Clamp(Intensity, 0.0f, 1.0f));
+    }
+    else if (EventName == ChaoticEventNone)
+    {
+        UE_LOG(LogTemp, Verbose, TEXT("Chaotic event: nothing chosen for this moment"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Avatar3DComponentEnhanced: chaotic event \"%s\" is not on the event menu; ignored"), *EventName);
     }
 }
 
