@@ -4,37 +4,49 @@
 #include "DeepTreeEchoCharacter.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Animation/AnimInstance.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "AbilitySystemComponent.h"
+#include "UObject/Class.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 
 // Deep Tree Echo components
 #include "Personality/PersonalityTraitSystem.h"
-#include "Cognitive/CognitiveStateComponent.h"
 #include "Neurochemical/NeurochemicalSimulationComponent.h"
 #include "Avatar/Avatar3DComponent.h"
+#include "Avatar/FacialAnimationSystem.h"
+#include "Avatar/GestureSystem.h"
+#include "Avatar/EmotionalAuraComponent.h"
+#include "Avatar/CognitiveVisualizationComponent.h"
+#include "Avatar/DeepTreeEchoExpressionSystem.h"
 #include "Audio/AudioManagerComponent.h"
 #include "Interaction/DeepTreeEchoInteractionComponent.h"
 #include "Cosmetics/DeepTreeEchoCosmeticsComponent.h"
+#include "Character/DeepTreeEchoMovementComponent.h"
+#include "DTELanguageModelBridge.h"
 
 namespace
 {
-	/**
-	 * Deterministic mapping from the character's measured affect (valence, arousal,
-	 * dominance in 0..1, 0.5 neutral) to the music/ambience layer the audio manager
-	 * mixes. This drives the soundtrack only; it never triggers a sound presented as
-	 * the character's own reaction.
-	 */
-	EAvatarEmotionalState MapAffectToMusicLayer(const FEmotionalState& EmotionalState, float& OutIntensity)
-	{
-		const float ValenceOffset = FMath::Clamp(EmotionalState.Valence, 0.0f, 1.0f) - 0.5f;
-		const float ArousalOffset = FMath::Clamp(EmotionalState.Arousal, 0.0f, 1.0f) - 0.5f;
-		const float Dominance = FMath::Clamp(EmotionalState.Dominance, 0.0f, 1.0f);
+	/** Chaotic event the personality system publishes for a listener with a gesture library. */
+	const FName ChaoticEventUnpredictableGesture(TEXT("unpredictable_gesture"));
 
-		OutIntensity = FMath::Clamp(FMath::Max(FMath::Abs(ValenceOffset), FMath::Abs(ArousalOffset)) * 2.0f, 0.0f, 1.0f);
+	/**
+	 * Deterministic mapping from the character's measured affect to the music/ambience
+	 * layer the audio manager mixes. This drives the soundtrack only; it never triggers
+	 * a sound presented as the character's own reaction.
+	 */
+	EAvatarEmotionalState MapAffectToMusicLayer(const FDeepTreeEchoAffect& Affect, float& OutIntensity)
+	{
+		const float ValenceOffset = Affect.Valence - 0.5f;
+		const float ArousalOffset = Affect.Arousal - 0.5f;
+
+		OutIntensity = Affect.Intensity;
 
 		if (OutIntensity < 0.15f)
 		{
@@ -48,11 +60,81 @@ namespace
 
 		if (ArousalOffset > 0.15f)
 		{
-			return Dominance > 0.5f ? EAvatarEmotionalState::Angry : EAvatarEmotionalState::Surprised;
+			return Affect.Dominance > 0.5f ? EAvatarEmotionalState::Angry : EAvatarEmotionalState::Surprised;
 		}
 
 		return EAvatarEmotionalState::Sad;
 	}
+
+	/** Comma-separated names of a reflected enum, without the generated _MAX sentinel. */
+	FString EnumMenu(const UEnum* Enum)
+	{
+		FString Menu;
+		if (!Enum)
+		{
+			return Menu;
+		}
+		for (int32 Index = 0; Index < Enum->NumEnums() - 1; ++Index)
+		{
+			if (!Menu.IsEmpty())
+			{
+				Menu += TEXT(", ");
+			}
+			Menu += Enum->GetNameStringByIndex(Index);
+		}
+		return Menu;
+	}
+
+	/**
+	 * Pull the JSON object out of a model reply (tolerating text around it).
+	 * Returns nullptr when the reply holds no parsable object.
+	 */
+	TSharedPtr<FJsonObject> ExtractJsonObject(const FString& ModelText)
+	{
+		int32 Open = INDEX_NONE;
+		int32 Close = INDEX_NONE;
+		ModelText.FindChar(TEXT('{'), Open);
+		ModelText.FindLastChar(TEXT('}'), Close);
+		if (Open == INDEX_NONE || Close == INDEX_NONE || Close <= Open)
+		{
+			return nullptr;
+		}
+
+		const FString JsonText = ModelText.Mid(Open, Close - Open + 1);
+		TSharedPtr<FJsonObject> Object;
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonText);
+		if (!FJsonSerializer::Deserialize(Reader, Object) || !Object.IsValid())
+		{
+			return nullptr;
+		}
+		return Object;
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+// FDeepTreeEchoAffect
+
+FDeepTreeEchoAffect FDeepTreeEchoAffect::FromChemistry(const FEmotionalChemistry& Chemistry)
+{
+	// Chemistry readings are 0..1 with a ~0.5 baseline; offsets from baseline move the dimensions.
+	const float Happiness = FMath::Clamp(Chemistry.Happiness, 0.0f, 1.0f) - 0.5f;
+	const float Excitement = FMath::Clamp(Chemistry.Excitement, 0.0f, 1.0f) - 0.5f;
+	const float Calmness = FMath::Clamp(Chemistry.Calmness, 0.0f, 1.0f) - 0.5f;
+	const float Anxiety = FMath::Clamp(Chemistry.Anxiety, 0.0f, 1.0f) - 0.5f;
+	const float Affection = FMath::Clamp(Chemistry.Affection, 0.0f, 1.0f) - 0.5f;
+	const float Focus = FMath::Clamp(Chemistry.Focus, 0.0f, 1.0f) - 0.5f;
+
+	FDeepTreeEchoAffect Affect;
+	Affect.Valence = FMath::Clamp(0.5f + 0.6f * Happiness + 0.3f * Affection - 0.5f * Anxiety, 0.0f, 1.0f);
+	Affect.Arousal = FMath::Clamp(0.5f + 0.6f * Excitement + 0.4f * Anxiety - 0.5f * Calmness, 0.0f, 1.0f);
+	Affect.Dominance = FMath::Clamp(0.5f + 0.5f * Focus + 0.3f * Happiness - 0.5f * Anxiety, 0.0f, 1.0f);
+	Affect.Intensity = FMath::Clamp(FMath::Max(FMath::Abs(Affect.Valence - 0.5f), FMath::Abs(Affect.Arousal - 0.5f)) * 2.0f, 0.0f, 1.0f);
+	return Affect;
+}
+
+FString FDeepTreeEchoAffect::Describe() const
+{
+	return FString::Printf(TEXT("valence %.2f, arousal %.2f, dominance %.2f (intensity %.2f)"), Valence, Arousal, Dominance, Intensity);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -66,11 +148,10 @@ bool FDeepTreeEchoReplicatedState::NetSerialize(FArchive& Ar, UPackageMap* Map, 
 	Ar << Arousal;
 	Ar << Dominance;
 	Ar << CognitiveLoad;
-	Ar << Openness;
-	Ar << Conscientiousness;
-	Ar << Extraversion;
-	Ar << Agreeableness;
-	Ar << Neuroticism;
+	for (uint8& Trait : TraitIntensities)
+	{
+		Ar << Trait;
+	}
 	Ar << BehaviorFlags;
 
 	return true;
@@ -81,8 +162,12 @@ bool FDeepTreeEchoReplicatedState::NetSerialize(FArchive& Ar, UPackageMap* Map, 
 
 ADeepTreeEchoCharacter::ADeepTreeEchoCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<UDeepTreeEchoMovementComponent>(ACharacter::CharacterMovementComponentName))
-	, CachedCognitiveLoad(0.0f)
-	, CachedEmotionalState(FVector::ZeroVector)
+	, bHasAppliedFacialEmotion(false)
+	, LastFacialEmotion(EEmotionState::Neutral)
+	, bHasAppliedAuraEmotion(false)
+	, LastAuraEmotion(EAuraEmotionType::Neutral)
+	, bBehaviorRequestPending(false)
+	, PendingUtteranceRequests(0)
 	, ReplicationUpdateTimer(0.0f)
 	, VisualizationUpdateTimer(0.0f)
 {
@@ -98,10 +183,7 @@ ADeepTreeEchoCharacter::ADeepTreeEchoCharacter(const FObjectInitializer& ObjectI
 	// Create personality system
 	PersonalitySystem = CreateDefaultSubobject<UPersonalityTraitSystem>(TEXT("PersonalitySystem"));
 
-	// Create cognitive state component
-	CognitiveState = CreateDefaultSubobject<UCognitiveStateComponent>(TEXT("CognitiveState"));
-
-	// Create neurochemical simulation
+	// Create neurochemical simulation (the character's affect source)
 	NeurochemicalSystem = CreateDefaultSubobject<UNeurochemicalSimulationComponent>(TEXT("NeurochemicalSystem"));
 
 	// Create avatar 3D component
@@ -140,33 +222,10 @@ void ADeepTreeEchoCharacter::PossessedBy(AController* NewController)
 
 	// Initialize ability system for server
 	InitializeAbilitySystem();
-
-	// Bind to personality events
-	if (PersonalitySystem)
-	{
-		PersonalitySystem->OnPersonalityShift.AddDynamic(this, &ADeepTreeEchoCharacter::OnPersonalityShift);
-	}
-
-	// Bind to cognitive events
-	if (CognitiveState)
-	{
-		CognitiveState->OnCognitiveLoadChanged.AddDynamic(this, &ADeepTreeEchoCharacter::OnCognitiveLoadChanged);
-	}
 }
 
 void ADeepTreeEchoCharacter::UnPossessed()
 {
-	// Unbind events
-	if (PersonalitySystem)
-	{
-		PersonalitySystem->OnPersonalityShift.RemoveDynamic(this, &ADeepTreeEchoCharacter::OnPersonalityShift);
-	}
-
-	if (CognitiveState)
-	{
-		CognitiveState->OnCognitiveLoadChanged.RemoveDynamic(this, &ADeepTreeEchoCharacter::OnCognitiveLoadChanged);
-	}
-
 	Super::UnPossessed();
 }
 
@@ -174,18 +233,35 @@ void ADeepTreeEchoCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// The model bridge is the only source of words and of behaviour choices
+	ModelBridge = UDTELanguageModelBridge::FindOrAdd(this);
+	if (!ModelBridge)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: no language model bridge could be created; the character will stay silent"), *GetName());
+	}
+
+	// Optional expression system (added in Blueprint) drives the face from affect and model choices
+	ExpressionSystem = FindComponentByClass<UDeepTreeEchoExpressionSystem>();
+
 	// Initialize all components
 	InitializeComponents();
 
-	// Start with default emotional state
-	if (AvatarComponent)
+	// Chaotic events chosen by the model arrive here; gesture events are routed back through the model
+	if (PersonalitySystem)
 	{
-		AvatarComponent->SetEmotionalState(FEmotionalState(0.5f, 0.5f, 0.5f));
+		PersonalitySystem->OnChaoticEventChosen.AddDynamic(this, &ADeepTreeEchoCharacter::HandleChaoticEventChosen);
 	}
+
+	// The face starts neutral; the first UpdateEmotionalEffects applies the measured affect.
 }
 
 void ADeepTreeEchoCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (PersonalitySystem)
+	{
+		PersonalitySystem->OnChaoticEventChosen.RemoveDynamic(this, &ADeepTreeEchoCharacter::HandleChaoticEventChosen);
+	}
+
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -220,33 +296,31 @@ UAbilitySystemComponent* ADeepTreeEchoCharacter::GetAbilitySystemComponent() con
 }
 
 //////////////////////////////////////////////////////////////////////////
-// Emotional State Accessors
+// Affect Accessors
+
+FDeepTreeEchoAffect ADeepTreeEchoCharacter::GetAffect() const
+{
+	if (NeurochemicalSystem)
+	{
+		return FDeepTreeEchoAffect::FromChemistry(NeurochemicalSystem->GetEmotionalChemistry());
+	}
+	// No affect source: neutral, nothing is synthesized
+	return FDeepTreeEchoAffect();
+}
 
 float ADeepTreeEchoCharacter::GetEmotionalValence() const
 {
-	if (PersonalitySystem)
-	{
-		return PersonalitySystem->GetCurrentEmotionalState().Valence;
-	}
-	return 0.5f;
+	return GetAffect().Valence;
 }
 
 float ADeepTreeEchoCharacter::GetEmotionalArousal() const
 {
-	if (PersonalitySystem)
-	{
-		return PersonalitySystem->GetCurrentEmotionalState().Arousal;
-	}
-	return 0.5f;
+	return GetAffect().Arousal;
 }
 
 float ADeepTreeEchoCharacter::GetEmotionalDominance() const
 {
-	if (PersonalitySystem)
-	{
-		return PersonalitySystem->GetCurrentEmotionalState().Dominance;
-	}
-	return 0.5f;
+	return GetAffect().Dominance;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -254,20 +328,24 @@ float ADeepTreeEchoCharacter::GetEmotionalDominance() const
 
 float ADeepTreeEchoCharacter::GetCognitiveLoad() const
 {
-	if (CognitiveState)
+	if (NeurochemicalSystem)
 	{
-		return CognitiveState->GetCurrentCognitiveLoad();
+		return FMath::Clamp(1.0f - NeurochemicalSystem->GetCognitiveClarity(), 0.0f, 1.0f);
 	}
 	return 0.0f;
 }
 
 float ADeepTreeEchoCharacter::GetAttentionLevel() const
 {
-	if (CognitiveState)
+	if (ExpressionSystem)
 	{
-		return CognitiveState->GetAttentionLevel();
+		return FMath::Clamp(ExpressionSystem->GetAttentionLevel(), 0.0f, 1.0f);
 	}
-	return 1.0f;
+	if (NeurochemicalSystem)
+	{
+		return FMath::Clamp(NeurochemicalSystem->GetEmotionalChemistry().Focus, 0.0f, 1.0f);
+	}
+	return 0.0f;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -275,11 +353,20 @@ float ADeepTreeEchoCharacter::GetAttentionLevel() const
 
 float ADeepTreeEchoCharacter::GetPersonalityTrait(FName TraitName) const
 {
-	if (PersonalitySystem)
+	if (!PersonalitySystem || TraitName.IsNone())
 	{
-		return PersonalitySystem->GetTraitValue(TraitName);
+		return 0.0f;
 	}
-	return 0.5f;
+
+	const UEnum* TraitEnum = StaticEnum<EPersonalityTraitType>();
+	const int64 Value = TraitEnum ? TraitEnum->GetValueByNameString(TraitName.ToString()) : INDEX_NONE;
+	if (Value == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("DeepTreeEchoCharacter: \"%s\" is not an EPersonalityTraitType"), *TraitName.ToString());
+		return 0.0f;
+	}
+
+	return PersonalitySystem->GetTraitIntensity(static_cast<EPersonalityTraitType>(Value));
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -287,36 +374,210 @@ float ADeepTreeEchoCharacter::GetPersonalityTrait(FName TraitName) const
 
 void ADeepTreeEchoCharacter::TriggerEmergentBehavior(FName BehaviorName)
 {
-	if (PersonalitySystem)
+	if (BehaviorName.IsNone())
 	{
-		PersonalitySystem->TriggerEmergentBehavior(BehaviorName);
+		return;
 	}
 
-	// Trigger corresponding animation or effect
-	if (AvatarComponent)
+	if (!ModelBridge)
 	{
-		AvatarComponent->PlayGesture(BehaviorName);
+		UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: behaviour \"%s\" skipped, no model bridge to choose a gesture"),
+			*GetName(), *BehaviorName.ToString());
+		return;
 	}
 
-	// Play audio feedback
+	if (bBehaviorRequestPending)
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("DeepTreeEchoCharacter %s: behaviour \"%s\" skipped, a gesture choice is already in flight"),
+			*GetName(), *BehaviorName.ToString());
+		return;
+	}
+
+	const FString Instruction = TEXT(
+		"The character is about to act on the behaviour named in the context. Choose the single gesture from the gesture menu "
+		"that fits this behaviour and her current state, or \"none\" if no gesture fits. "
+		"Answer with one JSON object: {\"gesture\": <a name from the gesture menu or none>, \"intensity\": <0.0-1.0>}.");
+
+	const FString Context = FString::Printf(TEXT("behaviour: %s\ngesture menu: %s\n%s"),
+		*BehaviorName.ToString(), *EnumMenu(StaticEnum<EGestureType>()), *DescribeStateForModel());
+
+	bBehaviorRequestPending = true;
+
+	TWeakObjectPtr<ADeepTreeEchoCharacter> WeakThis(this);
+	ModelBridge->RequestJson(Instruction, Context,
+		[WeakThis, BehaviorName](bool bSuccess, const FString& TextOrError)
+		{
+			if (!WeakThis.IsValid())
+			{
+				return;
+			}
+			ADeepTreeEchoCharacter* Self = WeakThis.Get();
+			Self->bBehaviorRequestPending = false;
+
+			if (!bSuccess)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: behaviour \"%s\" skipped, model unavailable: %s"),
+					*Self->GetName(), *BehaviorName.ToString(), *TextOrError);
+				return;
+			}
+
+			TSharedPtr<FJsonObject> Object = ExtractJsonObject(TextOrError);
+			FString GestureText;
+			if (!Object.IsValid() || !Object->TryGetStringField(TEXT("gesture"), GestureText))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: behaviour \"%s\" skipped, model reply was not the requested JSON object"),
+					*Self->GetName(), *BehaviorName.ToString());
+				return;
+			}
+
+			GestureText.TrimStartAndEndInline();
+			if (GestureText.IsEmpty() || GestureText.Equals(TEXT("none"), ESearchCase::IgnoreCase))
+			{
+				UE_LOG(LogTemp, Log, TEXT("DeepTreeEchoCharacter %s: model chose no gesture for behaviour \"%s\""),
+					*Self->GetName(), *BehaviorName.ToString());
+				Self->OnBehaviorChosen.Broadcast(BehaviorName, NAME_None, 0.0f);
+				return;
+			}
+
+			const int64 Value = StaticEnum<EGestureType>()->GetValueByNameString(GestureText);
+			if (Value == INDEX_NONE)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: behaviour \"%s\" skipped, \"%s\" is not on the gesture menu"),
+					*Self->GetName(), *BehaviorName.ToString(), *GestureText);
+				return;
+			}
+
+			double Intensity = 1.0;
+			Object->TryGetNumberField(TEXT("intensity"), Intensity);
+
+			Self->ApplyBehavior(BehaviorName, static_cast<EGestureType>(Value), FMath::Clamp(static_cast<float>(Intensity), 0.0f, 1.0f));
+		});
+}
+
+void ADeepTreeEchoCharacter::ApplyBehavior(FName BehaviorName, EGestureType Gesture, float Intensity)
+{
+	const FName GestureName(*StaticEnum<EGestureType>()->GetNameStringByValue(static_cast<int64>(Gesture)));
+
+	if (AvatarComponent && AvatarComponent->GestureSystem)
+	{
+		AvatarComponent->GestureSystem->TriggerGesture(Gesture, Intensity);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: no gesture system on the avatar to play %s"), *GetName(), *GestureName.ToString());
+	}
+
+	// The gesture's own foley, if the operator assigned a sound asset to this gesture name
 	if (AudioManager)
 	{
-		AudioManager->PlayGestureSound(BehaviorName);
+		AudioManager->PlayGestureSound(GestureName);
 	}
+
+	// Let the model also pick the face for this moment when an expression system is present
+	if (ExpressionSystem)
+	{
+		ExpressionSystem->RequestExpressionForEvent(FString::Printf(TEXT("behaviour \"%s\" with gesture %s"), *BehaviorName.ToString(), *GestureName.ToString()));
+	}
+
+	OnBehaviorChosen.Broadcast(BehaviorName, GestureName, Intensity);
 }
 
 void ADeepTreeEchoCharacter::InterruptCurrentBehavior()
 {
-	if (PersonalitySystem)
+	// Stop current gesture montages on the character mesh and the avatar mesh
+	if (UAnimInstance* MeshAnim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
 	{
-		PersonalitySystem->InterruptCurrentBehavior();
+		MeshAnim->Montage_Stop(0.2f);
+	}
+	if (UAnimInstance* AvatarAnim = AvatarComponent ? AvatarComponent->GetAnimInstance() : nullptr)
+	{
+		AvatarAnim->Montage_Stop(0.2f);
 	}
 
-	// Stop current animations
-	if (AvatarComponent)
+	// Stop speech that is playing
+	if (AudioManager)
 	{
-		AvatarComponent->StopAllMontages();
+		AudioManager->StopSpeaking();
 	}
+
+	if (InteractionComponent && InteractionComponent->IsInteracting())
+	{
+		InteractionComponent->CancelInteraction();
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Speech
+
+bool ADeepTreeEchoCharacter::RequestUtterance(const FString& Instruction, const FString& Context)
+{
+	if (!ModelBridge)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: utterance not requested, no model bridge"), *GetName());
+		return false;
+	}
+
+	if (!AudioManager)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: utterance not requested, no audio manager to speak through"), *GetName());
+		return false;
+	}
+
+	if (!AudioManager->IsSpeechSynthesizerBound())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: utterance not requested, no speech synthesizer is bound so nothing could be heard"), *GetName());
+		return false;
+	}
+
+	FString FullContext = DescribeStateForModel();
+	if (!Context.IsEmpty())
+	{
+		FullContext = Context + TEXT("\n") + FullContext;
+	}
+
+	++PendingUtteranceRequests;
+
+	TWeakObjectPtr<ADeepTreeEchoCharacter> WeakThis(this);
+	ModelBridge->RequestText(Instruction, FullContext,
+		[WeakThis, Instruction](bool bSuccess, const FString& TextOrError)
+		{
+			if (!WeakThis.IsValid())
+			{
+				return;
+			}
+			ADeepTreeEchoCharacter* Self = WeakThis.Get();
+			Self->PendingUtteranceRequests = FMath::Max(0, Self->PendingUtteranceRequests - 1);
+
+			if (!bSuccess)
+			{
+				UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: nothing said, model unavailable: %s"), *Self->GetName(), *TextOrError);
+				return;
+			}
+
+			const FString Text = TextOrError.TrimStartAndEnd();
+			if (Text.IsEmpty() || !Self->AudioManager)
+			{
+				return;
+			}
+
+			// Speech is only ever synthesized audio of the model's words
+			const FString RequestId = Self->AudioManager->Speak(Text, Self->GetAffect().Arousal);
+			if (RequestId.IsEmpty())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter %s: model text could not be handed to speech synthesis"), *Self->GetName());
+				return;
+			}
+
+			// The model also chooses the face for its own words when an expression system is present
+			if (Self->ExpressionSystem)
+			{
+				Self->ExpressionSystem->RequestExpressionForUtterance(Text, Instruction);
+			}
+
+			Self->OnUtteranceRequested.Broadcast(Text, RequestId);
+		});
+
+	return true;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -329,41 +590,29 @@ void ADeepTreeEchoCharacter::InteractWithObject(AActor* TargetObject)
 		return;
 	}
 
-	// Delegate to interaction component
-	InteractionComponent->InteractWith(TargetObject);
+	// The interaction component records the interaction and its cognitive/emotional impact itself
+	const FInteractionResult Result = InteractionComponent->InteractWith(TargetObject);
 
-	// Record interaction in memory
-	if (CognitiveState)
+	// Feed the interaction's measured emotional impact into the neurochemistry (the affect source)
+	if (NeurochemicalSystem && Result.bSuccess)
 	{
-		CognitiveState->RecordInteraction(TargetObject);
-	}
-
-	// Update personality based on interaction
-	if (PersonalitySystem)
-	{
-		PersonalitySystem->ProcessInteractionFeedback(TargetObject);
+		NeurochemicalSystem->SimulateSocialInteraction(FMath::Clamp(0.5f + 0.5f * Result.EmotionalImpact, 0.0f, 1.0f), 1.0f);
+		if (Result.CognitiveImpact > 0.0f)
+		{
+			NeurochemicalSystem->SimulateCognitiveTask(FMath::Clamp(Result.CognitiveImpact, 0.0f, 1.0f), 1.0f);
+		}
 	}
 }
 
 TArray<AActor*> ADeepTreeEchoCharacter::GetNearbyInteractableObjects(float Radius) const
 {
-	TArray<AActor*> InteractableObjects;
-
 	if (!InteractionComponent)
 	{
-		return InteractableObjects;
+		return TArray<AActor*>();
 	}
 
-	// Query interaction component for nearby objects
-	InteractableObjects = InteractionComponent->FindInteractableObjects(Radius);
-
-	// Filter based on cognitive state (attention, priorities)
-	if (CognitiveState)
-	{
-		InteractableObjects = CognitiveState->FilterByAttention(InteractableObjects);
-	}
-
-	return InteractableObjects;
+	// The interaction component already weighs candidates by attention and personality
+	return InteractionComponent->FindInteractableObjects(Radius);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -371,19 +620,34 @@ TArray<AActor*> ADeepTreeEchoCharacter::GetNearbyInteractableObjects(float Radiu
 
 void ADeepTreeEchoCharacter::SetEmotionalAuraColor(FLinearColor Color, float Intensity)
 {
-	if (AvatarComponent)
+	if (AvatarComponent && AvatarComponent->EmotionalAura)
 	{
-		AvatarComponent->SetEmotionalAuraColor(Color);
-		AvatarComponent->SetEmotionalAuraIntensity(Intensity);
+		AvatarComponent->EmotionalAura->SetCustomAuraColors(Color, Color);
+		AvatarComponent->EmotionalAura->SetAuraIntensity(Intensity);
+	}
+
+	if (CosmeticsComponent)
+	{
+		CosmeticsComponent->SetEmotionalAura(Color, Intensity);
 	}
 }
 
 void ADeepTreeEchoCharacter::TriggerCognitiveVisualization(FName VisualizationType)
 {
-	if (AvatarComponent)
+	if (!AvatarComponent || !AvatarComponent->CognitiveViz || VisualizationType.IsNone())
 	{
-		AvatarComponent->TriggerCognitiveEffect(VisualizationType);
+		return;
 	}
+
+	const UEnum* ActivityEnum = StaticEnum<ECognitiveActivityType>();
+	const int64 Value = ActivityEnum ? ActivityEnum->GetValueByNameString(VisualizationType.ToString()) : INDEX_NONE;
+	if (Value == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("DeepTreeEchoCharacter: \"%s\" is not an ECognitiveActivityType"), *VisualizationType.ToString());
+		return;
+	}
+
+	AvatarComponent->CognitiveViz->SetCognitiveActivity(static_cast<ECognitiveActivityType>(Value), 1.0f);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -396,87 +660,116 @@ void ADeepTreeEchoCharacter::UpdateReplicatedState()
 		return;
 	}
 
-	// Update emotional state
-	FEmotionalState EmotionalState = PersonalitySystem ? PersonalitySystem->GetCurrentEmotionalState() : FEmotionalState();
-	ReplicatedState.Valence = FMath::Clamp(FMath::RoundToInt(EmotionalState.Valence * 255.0f), 0, 255);
-	ReplicatedState.Arousal = FMath::Clamp(FMath::RoundToInt(EmotionalState.Arousal * 255.0f), 0, 255);
-	ReplicatedState.Dominance = FMath::Clamp(FMath::RoundToInt(EmotionalState.Dominance * 255.0f), 0, 255);
+	// Affect
+	const FDeepTreeEchoAffect Affect = GetAffect();
+	ReplicatedState.Valence = FMath::Clamp(FMath::RoundToInt(Affect.Valence * 255.0f), 0, 255);
+	ReplicatedState.Arousal = FMath::Clamp(FMath::RoundToInt(Affect.Arousal * 255.0f), 0, 255);
+	ReplicatedState.Dominance = FMath::Clamp(FMath::RoundToInt(Affect.Dominance * 255.0f), 0, 255);
 
-	// Update cognitive load
-	float CogLoad = CognitiveState ? CognitiveState->GetCurrentCognitiveLoad() : 0.0f;
-	ReplicatedState.CognitiveLoad = FMath::Clamp(FMath::RoundToInt(CogLoad * 255.0f), 0, 255);
+	// Cognitive load
+	ReplicatedState.CognitiveLoad = FMath::Clamp(FMath::RoundToInt(GetCognitiveLoad() * 255.0f), 0, 255);
 
-	// Update personality traits
+	// Personality traits
 	if (PersonalitySystem)
 	{
-		ReplicatedState.Openness = FMath::Clamp(FMath::RoundToInt(PersonalitySystem->GetTraitValue(TEXT("Openness")) * 255.0f), 0, 255);
-		ReplicatedState.Conscientiousness = FMath::Clamp(FMath::RoundToInt(PersonalitySystem->GetTraitValue(TEXT("Conscientiousness")) * 255.0f), 0, 255);
-		ReplicatedState.Extraversion = FMath::Clamp(FMath::RoundToInt(PersonalitySystem->GetTraitValue(TEXT("Extraversion")) * 255.0f), 0, 255);
-		ReplicatedState.Agreeableness = FMath::Clamp(FMath::RoundToInt(PersonalitySystem->GetTraitValue(TEXT("Agreeableness")) * 255.0f), 0, 255);
-		ReplicatedState.Neuroticism = FMath::Clamp(FMath::RoundToInt(PersonalitySystem->GetTraitValue(TEXT("Neuroticism")) * 255.0f), 0, 255);
+		const UEnum* TraitEnum = StaticEnum<EPersonalityTraitType>();
+		const int32 TraitCount = TraitEnum ? FMath::Min(TraitEnum->NumEnums() - 1, (int32)UE_ARRAY_COUNT(ReplicatedState.TraitIntensities)) : 0;
+		for (int32 Index = 0; Index < TraitCount; ++Index)
+		{
+			const EPersonalityTraitType Trait = static_cast<EPersonalityTraitType>(TraitEnum->GetValueByIndex(Index));
+			ReplicatedState.TraitIntensities[Index] = FMath::Clamp(FMath::RoundToInt(PersonalitySystem->GetTraitIntensity(Trait) * 255.0f), 0, 255);
+		}
 	}
+
+	// Behaviour flags
+	uint8 Flags = 0;
+	if (AudioManager && AudioManager->IsSpeaking())
+	{
+		Flags |= EDeepTreeEchoBehaviorFlags::Speaking;
+	}
+	if (AvatarComponent && AvatarComponent->GestureSystem && AvatarComponent->GestureSystem->IsGesturePlaying())
+	{
+		Flags |= EDeepTreeEchoBehaviorFlags::GesturePlaying;
+	}
+	if (bBehaviorRequestPending)
+	{
+		Flags |= EDeepTreeEchoBehaviorFlags::BehaviorPending;
+	}
+	if (PendingUtteranceRequests > 0)
+	{
+		Flags |= EDeepTreeEchoBehaviorFlags::UtterancePending;
+	}
+	ReplicatedState.BehaviorFlags = Flags;
 }
 
 void ADeepTreeEchoCharacter::UpdateComponentSynchronization()
 {
-	// Synchronize neurochemical effects with personality
-	if (NeurochemicalSystem && PersonalitySystem)
-	{
-		FNeurochemicalState Neurochem = NeurochemicalSystem->GetCurrentState();
-		PersonalitySystem->ApplyNeurochemicalInfluence(Neurochem);
-	}
+	// The personality system reads the neurochemical state itself; nothing to push.
 
-	// Synchronize cognitive state with avatar visuals
-	if (CognitiveState && AvatarComponent)
+	// Synchronize cognitive load with movement responsiveness
+	if (UDeepTreeEchoMovementComponent* DTEMovement = Cast<UDeepTreeEchoMovementComponent>(GetCharacterMovement()))
 	{
-		float CogLoad = CognitiveState->GetCurrentCognitiveLoad();
-		AvatarComponent->SetCognitiveLoadVisualization(CogLoad);
-	}
-
-	// Synchronize personality with movement
-	if (PersonalitySystem && GetCharacterMovement())
-	{
-		UDeepTreeEchoMovementComponent* DTEMovement = Cast<UDeepTreeEchoMovementComponent>(GetCharacterMovement());
-		if (DTEMovement)
-		{
-			FEmotionalState EmotionalState = PersonalitySystem->GetCurrentEmotionalState();
-			DTEMovement->SetEmotionalState(EmotionalState);
-		}
+		DTEMovement->SetCognitiveLoad(GetCognitiveLoad());
 	}
 }
 
 void ADeepTreeEchoCharacter::UpdateEmotionalEffects()
 {
-	if (!AvatarComponent || !PersonalitySystem)
+	if (!NeurochemicalSystem)
 	{
+		// No affect source: nothing is shown as a reaction
 		return;
 	}
 
-	// Get current emotional state
-	FEmotionalState EmotionalState = PersonalitySystem->GetCurrentEmotionalState();
+	const FDeepTreeEchoAffect Affect = GetAffect();
 
-	// Update avatar visuals based on emotion
-	AvatarComponent->SetEmotionalState(EmotionalState);
+	// Face: when an expression system is present it derives the face from the same chemistry itself.
+	if (!ExpressionSystem && AvatarComponent && AvatarComponent->FacialSystem)
+	{
+		const EEmotionState FacialEmotion = MapAffectToFacialEmotion(Affect);
+		if (!bHasAppliedFacialEmotion || FacialEmotion != LastFacialEmotion)
+		{
+			AvatarComponent->FacialSystem->SetEmotionState(FacialEmotion, 0.5f);
+			LastFacialEmotion = FacialEmotion;
+			bHasAppliedFacialEmotion = true;
+		}
+	}
 
-	// Feed the measured affect to the music layers (soundtrack, not a reaction cue)
+	// Aura: discrete emotion from affect, intensity from how far the affect is from neutral
+	if (AvatarComponent && AvatarComponent->EmotionalAura)
+	{
+		const EAuraEmotionType AuraEmotion = MapAffectToAuraEmotion(Affect);
+		if (!bHasAppliedAuraEmotion || AuraEmotion != LastAuraEmotion)
+		{
+			AvatarComponent->EmotionalAura->SetEmotionalState(AuraEmotion, 1.0f);
+			LastAuraEmotion = AuraEmotion;
+			bHasAppliedAuraEmotion = true;
+		}
+		AvatarComponent->EmotionalAura->SetAuraIntensity(Affect.Intensity);
+	}
+
+	// Soundtrack follows the measured affect (music layer, not a reaction cue)
 	if (AudioManager)
 	{
 		float MusicIntensity = 0.0f;
-		const EAvatarEmotionalState MusicLayer = MapAffectToMusicLayer(EmotionalState, MusicIntensity);
+		const EAvatarEmotionalState MusicLayer = MapAffectToMusicLayer(Affect, MusicIntensity);
 		AudioManager->UpdateMusicLayers(MusicLayer, MusicIntensity);
 	}
 
-	// Update cosmetics based on emotion
+	// Cosmetics: the same deterministic affect -> material mappings the component uses internally
 	if (CosmeticsComponent)
 	{
-		CosmeticsComponent->ApplyEmotionalEffects(EmotionalState);
+		CosmeticsComponent->SetBlushIntensity(FMath::Clamp(Affect.Arousal * Affect.Valence, 0.0f, 1.0f));
+		CosmeticsComponent->SetEyeSparkle(FMath::Clamp(Affect.Valence * Affect.Arousal, 0.0f, 1.0f));
+		CosmeticsComponent->SetHairShimmer(FMath::Clamp(Affect.Dominance * Affect.Valence * 0.8f, 0.0f, 1.0f));
+		CosmeticsComponent->SetSkinGlow(FMath::Clamp(Affect.Valence * 0.5f, 0.0f, 1.0f));
 	}
 }
 
 void ADeepTreeEchoCharacter::UpdateCognitiveVisualization()
 {
 	VisualizationUpdateTimer += GetWorld()->GetDeltaSeconds();
-	
+
 	if (VisualizationUpdateTimer < 0.5f) // Update twice per second
 	{
 		return;
@@ -484,14 +777,117 @@ void ADeepTreeEchoCharacter::UpdateCognitiveVisualization()
 
 	VisualizationUpdateTimer = 0.0f;
 
-	if (!AvatarComponent || !CognitiveState)
+	const float CogLoad = GetCognitiveLoad();
+
+	if (AvatarComponent && AvatarComponent->CognitiveViz)
 	{
-		return;
+		AvatarComponent->CognitiveViz->SetVisualizationIntensity(CogLoad);
 	}
 
-	// Update cognitive visualization effects
-	float CogLoad = CognitiveState->GetCurrentCognitiveLoad();
-	AvatarComponent->UpdateCognitiveVisualization(CogLoad);
+	if (CosmeticsComponent)
+	{
+		CosmeticsComponent->SetCognitiveVisualization(CogLoad);
+	}
+
+	// Ambience follows measured load and the live chaos trait
+	if (AudioManager)
+	{
+		const float ChaosFactor = PersonalitySystem ? PersonalitySystem->GetTraitIntensity(EPersonalityTraitType::HyperChaotic) : 0.0f;
+		AudioManager->UpdateAmbientSound(CogLoad, ChaosFactor);
+	}
+}
+
+FString ADeepTreeEchoCharacter::DescribeStateForModel() const
+{
+	FString Description = FString::Printf(TEXT("affect: %s"), *GetAffect().Describe());
+
+	if (NeurochemicalSystem)
+	{
+		const FEmotionalChemistry Chemistry = NeurochemicalSystem->GetEmotionalChemistry();
+		Description += FString::Printf(TEXT("\nchemistry: happiness %.2f, excitement %.2f, calmness %.2f, anxiety %.2f, affection %.2f, focus %.2f"),
+			Chemistry.Happiness, Chemistry.Excitement, Chemistry.Calmness, Chemistry.Anxiety, Chemistry.Affection, Chemistry.Focus);
+	}
+
+	Description += FString::Printf(TEXT("\ncognitive load %.2f, attention %.2f"), GetCognitiveLoad(), GetAttentionLevel());
+
+	if (PersonalitySystem)
+	{
+		const UEnum* TraitEnum = StaticEnum<EPersonalityTraitType>();
+		FString Traits;
+		for (EPersonalityTraitType Trait : PersonalitySystem->GetDominantTraits(3))
+		{
+			if (!Traits.IsEmpty())
+			{
+				Traits += TEXT(", ");
+			}
+			Traits += FString::Printf(TEXT("%s %.2f"),
+				TraitEnum ? *TraitEnum->GetNameStringByValue(static_cast<int64>(Trait)) : TEXT("?"),
+				PersonalitySystem->GetTraitIntensity(Trait));
+		}
+		Description += FString::Printf(TEXT("\ndominant traits: %s"), *Traits);
+	}
+
+	if (AudioManager)
+	{
+		Description += AudioManager->IsSpeaking() ? TEXT("\ncurrently speaking") : TEXT("\ncurrently silent");
+	}
+
+	return Description;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Affect -> discrete emotion mappings
+
+EEmotionState ADeepTreeEchoCharacter::MapAffectToFacialEmotion(const FDeepTreeEchoAffect& Affect)
+{
+	if (Affect.Intensity < 0.15f)
+	{
+		return EEmotionState::Neutral;
+	}
+
+	if (Affect.Valence >= 0.5f)
+	{
+		if (Affect.Arousal <= 0.65f && Affect.Dominance > 0.6f)
+		{
+			return EEmotionState::Confident;
+		}
+		return EEmotionState::Happy;
+	}
+
+	if (Affect.Arousal > 0.65f)
+	{
+		return Affect.Dominance > 0.5f ? EEmotionState::Angry : EEmotionState::Fearful;
+	}
+
+	return EEmotionState::Sad;
+}
+
+EAuraEmotionType ADeepTreeEchoCharacter::MapAffectToAuraEmotion(const FDeepTreeEchoAffect& Affect)
+{
+	if (Affect.Intensity < 0.15f)
+	{
+		return EAuraEmotionType::Neutral;
+	}
+
+	if (Affect.Valence >= 0.5f)
+	{
+		if (Affect.Arousal > 0.65f)
+		{
+			return EAuraEmotionType::Excitement;
+		}
+		if (Affect.Arousal < 0.35f)
+		{
+			return EAuraEmotionType::Calm;
+		}
+		return Affect.Dominance > 0.6f ? EAuraEmotionType::Confidence : EAuraEmotionType::Joy;
+	}
+
+	if (Affect.Arousal > 0.65f)
+	{
+		return Affect.Dominance > 0.5f ? EAuraEmotionType::Anger : EAuraEmotionType::Fear;
+	}
+
+	return EAuraEmotionType::Sadness;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -509,29 +905,8 @@ void ADeepTreeEchoCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty
 
 void ADeepTreeEchoCharacter::InitializeComponents()
 {
-	// Initialize personality system
-	if (PersonalitySystem)
-	{
-		PersonalitySystem->Initialize();
-	}
-
-	// Initialize cognitive state
-	if (CognitiveState)
-	{
-		CognitiveState->Initialize();
-	}
-
-	// Initialize neurochemical simulation
-	if (NeurochemicalSystem)
-	{
-		NeurochemicalSystem->Initialize();
-	}
-
-	// Initialize avatar component
-	if (AvatarComponent)
-	{
-		AvatarComponent->Initialize(GetMesh());
-	}
+	// The personality, neurochemical and avatar components set themselves up in their own
+	// BeginPlay; only the components with an explicit initialization entry point are called.
 
 	// Initialize interaction component
 	if (InteractionComponent)
@@ -556,74 +931,23 @@ void ADeepTreeEchoCharacter::InitializeAbilitySystem()
 		return;
 	}
 
-	// Initialize ability system component
+	// Initialize ability system component; abilities are granted by gameplay data, not by personality
 	AbilitySystemComponent->InitAbilityActorInfo(this, this);
-
-	// Grant default abilities (personality traits as abilities)
-	if (PersonalitySystem)
-	{
-		PersonalitySystem->GrantAbilities(AbilitySystemComponent);
-	}
 }
 
 //////////////////////////////////////////////////////////////////////////
 // Event Handlers
 
-void ADeepTreeEchoCharacter::OnPersonalityShift(const FPersonalityState& OldState, const FPersonalityState& NewState)
+void ADeepTreeEchoCharacter::HandleChaoticEventChosen(FName EventName, float Intensity)
 {
-	// Update visuals based on personality shift
-	if (AvatarComponent)
+	// The personality system has already dispatched the event to its own listeners. The one
+	// event it cannot act on itself (it has no gesture library) comes back through the model,
+	// which chooses the gesture for it.
+	if (EventName == ChaoticEventUnpredictableGesture)
 	{
-		AvatarComponent->OnPersonalityChanged(NewState);
+		TriggerEmergentBehavior(EventName);
+		return;
 	}
 
-	// Update cosmetics
-	if (CosmeticsComponent)
-	{
-		CosmeticsComponent->ApplyPersonalityOutfit(NewState);
-	}
-
-	// No audio cue is played for a personality shift: a fixed sound here would be a
-	// canned reaction. The soundtrack follows the measured affect in UpdateEmotionalEffects.
-
-	// Broadcast to blueprints
-	OnPersonalityShiftEvent.Broadcast(OldState, NewState);
-}
-
-void ADeepTreeEchoCharacter::OnEmotionalStateChanged(const FEmotionalState& NewState)
-{
-	// Update avatar visuals
-	if (AvatarComponent)
-	{
-		AvatarComponent->SetEmotionalState(NewState);
-	}
-
-	// Feed the measured affect to the music layers
-	if (AudioManager)
-	{
-		float MusicIntensity = 0.0f;
-		const EAvatarEmotionalState MusicLayer = MapAffectToMusicLayer(NewState, MusicIntensity);
-		AudioManager->UpdateMusicLayers(MusicLayer, MusicIntensity);
-	}
-}
-
-void ADeepTreeEchoCharacter::OnCognitiveLoadChanged(float NewLoad)
-{
-	CachedCognitiveLoad = NewLoad;
-
-	// Update visualization
-	if (AvatarComponent)
-	{
-		AvatarComponent->SetCognitiveLoadVisualization(NewLoad);
-	}
-
-	// Affect movement speed
-	if (GetCharacterMovement())
-	{
-		UDeepTreeEchoMovementComponent* DTEMovement = Cast<UDeepTreeEchoMovementComponent>(GetCharacterMovement());
-		if (DTEMovement)
-		{
-			DTEMovement->SetCognitiveLoad(NewLoad);
-		}
-	}
+	UE_LOG(LogTemp, Verbose, TEXT("DeepTreeEchoCharacter %s: chaotic event %s (intensity %.2f)"), *GetName(), *EventName.ToString(), Intensity);
 }
