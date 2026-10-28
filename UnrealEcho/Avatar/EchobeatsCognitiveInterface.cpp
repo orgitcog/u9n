@@ -1,4 +1,5 @@
 #include "EchobeatsCognitiveInterface.h"
+#include "../Neurochemical/NeurochemicalSimulationComponent.h"
 
 UEchobeatsCognitiveInterface::UEchobeatsCognitiveInterface()
 {
@@ -8,6 +9,7 @@ UEchobeatsCognitiveInterface::UEchobeatsCognitiveInterface()
     ExpressionSystem = nullptr;
     StateMachine = nullptr;
     ProceduralAnim = nullptr;
+    Neurochemistry = nullptr;
 
     bLoopRunning = false;
     bLoopPaused = false;
@@ -39,13 +41,18 @@ void UEchobeatsCognitiveInterface::BeginPlay()
     Super::BeginPlay();
 
     // Find components on owner
-    ExpressionSystem = GetOwner()->FindComponentByClass<UDeepTreeEchoExpressionSystem>();
-    StateMachine = GetOwner()->FindComponentByClass<UExpressionStateMachine>();
-    ProceduralAnim = GetOwner()->FindComponentByClass<UProceduralAnimationComponent>();
+    if (AActor* Owner = GetOwner())
+    {
+        ExpressionSystem = Owner->FindComponentByClass<UDeepTreeEchoExpressionSystem>();
+        StateMachine = Owner->FindComponentByClass<UExpressionStateMachine>();
+        ProceduralAnim = Owner->FindComponentByClass<UProceduralAnimationComponent>();
+        Neurochemistry = Owner->FindComponentByClass<UNeurochemicalSimulationComponent>();
+    }
 
     InitializeStepConfigs();
 
-    UE_LOG(LogTemp, Log, TEXT("EchobeatsCognitiveInterface initialized with %d step configs"), StepConfigs.Num());
+    UE_LOG(LogTemp, Log, TEXT("EchobeatsCognitiveInterface initialized with %d step configs (affect source: %s)"),
+        StepConfigs.Num(), Neurochemistry ? TEXT("neurochemistry") : TEXT("none"));
 }
 
 void UEchobeatsCognitiveInterface::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -91,158 +98,45 @@ void UEchobeatsCognitiveInterface::TickComponent(float DeltaTime, ELevelTick Tic
 
 void UEchobeatsCognitiveInterface::InitializeStepConfigs()
 {
+    // Each step names its phase and mode and sets the emissive level that visualizes the cycle.
+    // No step names an expression: the face is re-derived from affect when the step begins.
+
     StepConfigs.Empty();
     StepConfigs.Reserve(12);
 
+    auto AddStep = [this](int32 StepNumber, const TCHAR* PhaseName, ECognitiveMode Mode, float EmissiveMultiplier)
+    {
+        FCognitiveStepConfig Config;
+        Config.StepNumber = StepNumber;
+        Config.PhaseName = PhaseName;
+        Config.Mode = Mode;
+        Config.EmissiveMultiplier = EmissiveMultiplier;
+        StepConfigs.Add(Config);
+    };
+
     // ========== Steps {1,5,9}: Pivotal Relevance Realization (Stream 1) ==========
     // These are the "orienting present commitment" steps
-
-    // Step 1: Pivotal-Perception (Stream 1 perceives)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 1;
-        Config.PhaseName = TEXT("Pivotal-Perception");
-        Config.Mode = ECognitiveMode::Expressive;
-        Config.ExpressionHint = EExpressionState::AlertGaze;
-        Config.EmissiveMultiplier = 1.2f;
-        Config.bTriggerMicroExpression = true;
-        Config.MicroExpressionType = EMicroExpression::UnilateralBrowRaise;
-        StepConfigs.Add(Config);
-    }
-
-    // Step 5: Pivotal-Action (Stream 1 acts)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 5;
-        Config.PhaseName = TEXT("Pivotal-Action");
-        Config.Mode = ECognitiveMode::Expressive;
-        Config.ExpressionHint = EExpressionState::GentleSmile;
-        Config.EmissiveMultiplier = 1.1f;
-        StepConfigs.Add(Config);
-    }
-
-    // Step 9: Pivotal-Simulation (Stream 1 simulates)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 9;
-        Config.PhaseName = TEXT("Pivotal-Simulation");
-        Config.Mode = ECognitiveMode::Reflective;
-        Config.ExpressionHint = EExpressionState::Contemplative;
-        Config.EmissiveMultiplier = 0.9f;
-        StepConfigs.Add(Config);
-    }
+    AddStep(1, TEXT("Pivotal-Perception"),    ECognitiveMode::Expressive, 1.2f);
+    AddStep(5, TEXT("Pivotal-Action"),        ECognitiveMode::Expressive, 1.1f);
+    AddStep(9, TEXT("Pivotal-Simulation"),    ECognitiveMode::Reflective, 0.9f);
 
     // ========== Steps {2,6,10}: Affordance Interaction (Stream 2) ==========
     // These are the "conditioning past performance" steps
-
-    // Step 2: Affordance-Perception (Stream 2 perceives)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 2;
-        Config.PhaseName = TEXT("Affordance-Perception");
-        Config.Mode = ECognitiveMode::Expressive;
-        Config.ExpressionHint = EExpressionState::CuriousGaze;
-        Config.EmissiveMultiplier = 1.15f;
-        StepConfigs.Add(Config);
-    }
-
-    // Step 6: Affordance-Action (Stream 2 acts)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 6;
-        Config.PhaseName = TEXT("Affordance-Action");
-        Config.Mode = ECognitiveMode::Expressive;
-        Config.ExpressionHint = EExpressionState::SpeakingVowel;
-        Config.EmissiveMultiplier = 1.0f;
-        StepConfigs.Add(Config);
-    }
-
-    // Step 10: Affordance-Simulation (Stream 2 simulates)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 10;
-        Config.PhaseName = TEXT("Affordance-Simulation");
-        Config.Mode = ECognitiveMode::Reflective;
-        Config.ExpressionHint = EExpressionState::Contemplative;
-        Config.EmissiveMultiplier = 0.85f;
-        StepConfigs.Add(Config);
-    }
+    AddStep(2, TEXT("Affordance-Perception"), ECognitiveMode::Expressive, 1.15f);
+    AddStep(6, TEXT("Affordance-Action"),     ECognitiveMode::Expressive, 1.0f);
+    AddStep(10, TEXT("Affordance-Simulation"), ECognitiveMode::Reflective, 0.85f);
 
     // ========== Steps {3,7,11}: Salience Processing (Stream 3) ==========
     // These are the "anticipating future potential" steps
-
-    // Step 3: Salience-Perception (Stream 3 perceives)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 3;
-        Config.PhaseName = TEXT("Salience-Perception");
-        Config.Mode = ECognitiveMode::Expressive;
-        Config.ExpressionHint = EExpressionState::Awe;
-        Config.EmissiveMultiplier = 1.3f;
-        Config.bTriggerMicroExpression = true;
-        Config.MicroExpressionType = EMicroExpression::EyelidFlutter;
-        StepConfigs.Add(Config);
-    }
-
-    // Step 7: Salience-Action (Stream 3 acts)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 7;
-        Config.PhaseName = TEXT("Salience-Action");
-        Config.Mode = ECognitiveMode::Expressive;
-        Config.ExpressionHint = EExpressionState::BroadSmile;
-        Config.EmissiveMultiplier = 1.4f;
-        StepConfigs.Add(Config);
-    }
-
-    // Step 11: Salience-Simulation (Stream 3 simulates)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 11;
-        Config.PhaseName = TEXT("Salience-Simulation");
-        Config.Mode = ECognitiveMode::Reflective;
-        Config.ExpressionHint = EExpressionState::Blissful;
-        Config.EmissiveMultiplier = 1.1f;
-        StepConfigs.Add(Config);
-    }
+    AddStep(3, TEXT("Salience-Perception"),   ECognitiveMode::Expressive, 1.3f);
+    AddStep(7, TEXT("Salience-Action"),       ECognitiveMode::Expressive, 1.4f);
+    AddStep(11, TEXT("Salience-Simulation"),  ECognitiveMode::Reflective, 1.1f);
 
     // ========== Steps {4,8,12}: Integration/Transition ==========
     // These are the integration points between triads
-
-    // Step 4: Integration-1 (Triad 1 complete)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 4;
-        Config.PhaseName = TEXT("Integration-1");
-        Config.Mode = ECognitiveMode::Expressive;
-        Config.ExpressionHint = EExpressionState::GentleSmile;
-        Config.EmissiveMultiplier = 1.0f;
-        StepConfigs.Add(Config);
-    }
-
-    // Step 8: Integration-2 (Triad 2 complete)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 8;
-        Config.PhaseName = TEXT("Integration-2");
-        Config.Mode = ECognitiveMode::Reflective;
-        Config.ExpressionHint = EExpressionState::Neutral;
-        Config.EmissiveMultiplier = 0.95f;
-        Config.bTriggerMicroExpression = true;
-        Config.MicroExpressionType = EMicroExpression::Blink;
-        StepConfigs.Add(Config);
-    }
-
-    // Step 12: Integration-3 (Cycle complete)
-    {
-        FCognitiveStepConfig Config;
-        Config.StepNumber = 12;
-        Config.PhaseName = TEXT("Integration-3");
-        Config.Mode = ECognitiveMode::Reflective;
-        Config.ExpressionHint = EExpressionState::Contemplative;
-        Config.EmissiveMultiplier = 0.9f;
-        StepConfigs.Add(Config);
-    }
+    AddStep(4, TEXT("Integration-1"),         ECognitiveMode::Expressive, 1.0f);
+    AddStep(8, TEXT("Integration-2"),         ECognitiveMode::Reflective, 0.95f);
+    AddStep(12, TEXT("Integration-3"),        ECognitiveMode::Reflective, 0.9f);
 
     // Sort by step number
     StepConfigs.Sort([](const FCognitiveStepConfig& A, const FCognitiveStepConfig& B)
@@ -263,7 +157,7 @@ void UEchobeatsCognitiveInterface::ProcessStepChange(int32 NewStep)
     }
 
     UpdateStreams();
-    ApplyStepExpression();
+    ReevaluateAffectForStep();
 
     UE_LOG(LogTemp, Verbose, TEXT("Echobeats step %d: %s"), NewStep, Config ? *Config->PhaseName : TEXT("Unknown"));
 }
@@ -272,7 +166,7 @@ void UEchobeatsCognitiveInterface::UpdateStreams()
 {
     // Update each stream's phase based on current step
     // Streams are phased 4 steps apart: Stream 0 at step 1, Stream 1 at step 5, Stream 2 at step 9
-    
+
     for (int32 i = 0; i < 3; i++)
     {
         // Calculate this stream's effective step (offset by stream index * 4)
@@ -296,41 +190,21 @@ void UEchobeatsCognitiveInterface::UpdateStreams()
     }
 }
 
-void UEchobeatsCognitiveInterface::ApplyStepExpression()
+void UEchobeatsCognitiveInterface::ReevaluateAffectForStep()
 {
     const FCognitiveStepConfig* Config = GetStepConfig(CurrentStep);
-    if (!Config)
+    if (!Config || !ExpressionSystem)
         return;
 
-    // Apply expression hint (unless external state overrides)
+    // The step is the moment to re-read affect; externally reported speaking/thinking
+    // states own the face while they last and are left alone here.
     if (!bExternalSpeaking && !bExternalThinking)
     {
-        if (StateMachine)
-        {
-            FExpressionTransitionRequest Request;
-            Request.TargetState = Config->ExpressionHint;
-            Request.Duration = StepDuration * 0.5f;  // Transition in first half of step
-            Request.Priority = EExpressionPriority::Normal;
-            Request.Curve = ETransitionCurve::EaseInOut;
-            StateMachine->RequestTransition(Request);
-        }
-        else if (ExpressionSystem)
-        {
-            ExpressionSystem->SetExpressionState(Config->ExpressionHint, StepDuration * 0.5f);
-        }
+        ExpressionSystem->RefreshExpressionFromAffect(StepDuration * 0.5f);  // Transition in first half of step
     }
 
-    // Apply emissive multiplier
-    if (ExpressionSystem)
-    {
-        ExpressionSystem->SetEmissiveIntensity(Config->EmissiveMultiplier);
-    }
-
-    // Trigger microexpression if configured
-    if (Config->bTriggerMicroExpression && ExpressionSystem)
-    {
-        ExpressionSystem->TriggerMicroExpression(Config->MicroExpressionType, 0.2f);
-    }
+    // Emissive level visualizes the cycle (tech marking, not a facial reaction)
+    ExpressionSystem->SetEmissiveIntensity(Config->EmissiveMultiplier);
 }
 
 const FCognitiveStepConfig* UEchobeatsCognitiveInterface::GetStepConfig(int32 StepNumber) const
@@ -412,14 +286,19 @@ void UEchobeatsCognitiveInterface::SignalRelevanceRealization(const FRelevanceRe
     // Fire event
     OnRelevanceRealization.Broadcast(StreamIndex, Event.Salience);
 
-    // If this is an insight, trigger Wonder-to-Joy
+    // Salience is real attention; it shapes gaze deterministically through the affect mapping
+    if (ExpressionSystem)
+    {
+        ExpressionSystem->SetAttentionLevel(Event.Salience);
+    }
+
     if (Event.bIsInsight)
     {
         SignalInsight(Event.Significance);
     }
     else if (Event.Salience > 0.8f)
     {
-        // High salience triggers emissive pulse
+        // High salience marks itself in the tech glow
         if (ExpressionSystem)
         {
             ExpressionSystem->PulseEmissives(0.3f, 1.5f + Event.Salience * 0.5f);
@@ -432,26 +311,29 @@ void UEchobeatsCognitiveInterface::SignalRelevanceRealization(const FRelevanceRe
 
 void UEchobeatsCognitiveInterface::SignalInsight(float Intensity)
 {
-    // Trigger the Wonder-to-Joy transition
-    if (StateMachine)
+    Intensity = FMath::Clamp(Intensity, 0.0f, 1.0f);
+
+    // An insight is a real event: it moves the affect source, and the face follows
+    if (Neurochemistry)
     {
-        StateMachine->PlayWonderToJoy(1.5f * (2.0f - Intensity));  // Higher intensity = faster
-    }
-    else if (ExpressionSystem)
-    {
-        ExpressionSystem->TriggerWonderToJoyTransition(1.5f);
+        Neurochemistry->TriggerRewardResponse(Intensity);
     }
 
-    // Pulse emissives
     if (ExpressionSystem)
     {
-        ExpressionSystem->PulseEmissives(0.5f, 2.0f + Intensity);
-    }
+        ExpressionSystem->RefreshExpressionFromAffect(0.3f);
 
-    // Trigger deliberate blink
-    if (ProceduralAnim)
-    {
-        ProceduralAnim->TriggerDeliberateBlink(0.4f);
+        // The model decides what, if anything, shows on the face for this moment
+        const FString Event = FString::Printf(
+            TEXT("An insight just landed (intensity %.2f of 1): a pattern the character had been working on suddenly made sense."),
+            Intensity);
+        if (!ExpressionSystem->RequestExpressionForEvent(Event))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("EchobeatsCognitiveInterface: insight expression not requested, no model bridge; face follows affect only"));
+        }
+
+        // Tech marking pulse visualizes the event
+        ExpressionSystem->PulseEmissives(0.5f, 2.0f + Intensity);
     }
 
     UE_LOG(LogTemp, Log, TEXT("Insight signaled with intensity %.2f"), Intensity);
@@ -490,6 +372,7 @@ void UEchobeatsCognitiveInterface::ReceiveCognitiveUpdate(ECognitiveState NewSta
 {
     if (ExpressionSystem)
     {
+        // Records the state and re-derives the face from affect
         ExpressionSystem->SetCognitiveState(NewState);
     }
 
@@ -503,16 +386,18 @@ void UEchobeatsCognitiveInterface::ReceiveCognitiveUpdate(ECognitiveState NewSta
 void UEchobeatsCognitiveInterface::ReceiveSpeechUpdate(bool bIsSpeaking, float Amplitude)
 {
     bExternalSpeaking = bIsSpeaking;
-    ExternalSpeakingAmplitude = Amplitude;
+    ExternalSpeakingAmplitude = bIsSpeaking ? Amplitude : 0.0f;
 
     if (ProceduralAnim)
     {
         ProceduralAnim->SetSpeakingState(bIsSpeaking);
     }
 
-    if (ExpressionSystem && bIsSpeaking)
+    // The amplitude is the caller's real audio level; it is held only briefly by the
+    // expression system, so a speaking caller refreshes it every frame.
+    if (ExpressionSystem)
     {
-        ExpressionSystem->SetSpeakingAmplitude(Amplitude);
+        ExpressionSystem->SetSpeakingAmplitude(ExternalSpeakingAmplitude);
     }
 }
 
