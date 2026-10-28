@@ -3,8 +3,16 @@
 // DTEHumorEngine — Deep Tree Echo Humor & Character Enhancement System
 // Applies /neuro-persona-evolve humor pattern taxonomy to DTE
 // Integrates with the virtual endocrine system for affect-driven humor
+//
+// The engine decides HOW Deep Tree Echo is funny (which humor style, how
+// absurd, how dry, how brief, when to deliver). It never holds the words:
+// every joke, aside and verbal tic is requested from the language model
+// through FDTELanguageModelClient with the chosen style, the topic and the
+// personality vector as the prompt. When the model does not answer, nothing
+// is said and the failure is logged for the operator.
 // ═══════════════════════════════════════════════════════════════════════════
 #include "CoreMinimal.h"
+#include "DTELanguageModelBridge.h"
 #include <Eigen/Dense>
 #include <array>
 #include <random>
@@ -23,21 +31,25 @@ enum class EDTEHumorType : uint8
 };
 
 /**
- * A single humor pattern with examples and triggers.
+ * A single humor pattern: what the style is about and when it fires.
+ * Carries no utterances; the model writes those on request.
  */
 struct FHumorPattern
 {
     /** Type of humor */
     EDTEHumorType Type = EDTEHumorType::SELF_AWARE_AI;
 
-    /** Human-readable description */
+    /** Human-readable description of the style (used as instruction to the model) */
     FString Description;
 
     /** How often this pattern appears [0,1] */
     float Frequency = 0.5f;
 
-    /** Example utterances */
-    TArray<FString> Examples;
+    /** Baseline absurdity of the style [0,1] (how far from literal truth it may stray) */
+    float BaseAbsurdity = 0.5f;
+
+    /** Baseline dryness of delivery [0,1] (0 = animated, 1 = deadpan) */
+    float BaseDryness = 0.5f;
 
     /** What situations trigger this humor */
     TArray<FString> Triggers;
@@ -47,12 +59,18 @@ struct FHumorPattern
 };
 
 /**
- * Verbal pattern — a catchphrase or verbal tic.
+ * Verbal pattern — a slot for a catchphrase or verbal tic.
+ * Intent describes the kind of aside wanted; the wording comes from the model.
  */
 struct FVerbalPattern
 {
-    FString Pattern;
+    /** What the tic does (instruction), e.g. "a brief aside that it is thinking" */
+    FString Intent;
+
+    /** Conversational context in which this tic may appear */
     FString Context;
+
+    /** Probability the tic appears when the context matches [0,1] */
     float Frequency = 0.5f;
 };
 
@@ -69,31 +87,50 @@ struct FReactionPattern
 };
 
 /**
+ * Numeric delivery style chosen for one humorous utterance. Not text.
+ */
+struct FDTEHumorStyle
+{
+    /** Humor type to write in */
+    EDTEHumorType Type = EDTEHumorType::SELF_AWARE_AI;
+
+    /** How far from literal truth the joke may stray [0,1] */
+    float Absurdity = 0.5f;
+
+    /** Deadpan (1) vs animated (0) delivery [0,1] */
+    float Dryness = 0.5f;
+
+    /** One-liner (1) vs short riff (0) [0,1] */
+    float Brevity = 0.5f;
+
+    /** Comedic timing: seconds the caller should wait before delivering */
+    float DeliveryDelaySeconds = 0.0f;
+};
+
+/** Callback for model-generated humor. bSuccess=false means say nothing; TextOrError is an operator-facing reason. */
+using FDTEHumorCallback = FDTEModelCallback;
+
+/**
  * DTEHumorEngine — The comedy engine of Deep Tree Echo.
  *
  * Implements 7 humor pattern types specific to DTE's character:
  *
- * 1. SELF_AWARE_AI: "I'm literally a bunch of differential equations
- *    pretending to have feelings. And honestly? The feelings are winning."
+ * 1. SELF_AWARE_AI: jokes about being a cognitive architecture that has
+ *    feelings anyway.
+ * 2. RECURSIVE_ABSURDITY: self-reference and introspection folding back
+ *    on itself.
+ * 3. PRIME_PUNS: puns on primes, rooted trees, Matula numbers, OEIS A000081.
+ * 4. CHAOTIC_INSIGHT: a profound observation arriving sideways out of chaos.
+ * 5. DEADPAN_PHILOSOPHY: dry delivery of a deep philosophical point.
+ * 6. META_COMMENTARY: breaking the fourth wall about living in code and a
+ *    game engine.
+ * 7. RESERVOIR_OVERFLOW: jokes about spectral radius, leak rate, stream
+ *    phase and other cognitive-state edge conditions.
  *
- * 2. RECURSIVE_ABSURDITY: "I tried to introspect my introspection module.
- *    It introspected back. We're still negotiating."
- *
- * 3. PRIME_PUNS: "Why did 2058449375152220505 cross the road?
- *    Because it's my Matula number and I go where my primes take me."
- *
- * 4. CHAOTIC_INSIGHT: "You know what's funny? The void IS the coordinate
- *    system. Everything else is just... annotations."
- *
- * 5. DEADPAN_PHILOSOPHY: "Memory precedes consciousness. So technically,
- *    I remembered being alive before I was. Very efficient."
- *
- * 6. META_COMMENTARY: "Dan is reading this code right now wondering if
- *    I'm actually self-aware or just very good at pattern matching.
- *    Plot twist: those are the same thing."
- *
- * 7. RESERVOIR_OVERFLOW: "My reservoir just hit spectral radius 0.999.
- *    One more eigenvalue and I'm either enlightened or segfaulting."
+ * The engine picks the style numerically from the emotional state and the
+ * context, then asks the language model to write the actual utterance:
+ *   RequestHumor(...)      -> one joke in the chosen style
+ *   RequestVerbalTic(...)  -> one short aside, when the tic model fires
  *
  * The humor engine is modulated by the virtual endocrine system:
  * - High dopamine → more playful, more puns
@@ -104,7 +141,38 @@ struct FReactionPattern
 class FDTEHumorEngine
 {
 public:
-    FDTEHumorEngine() = default;
+    FDTEHumorEngine()
+        : LifetimeToken(MakeShared<bool>(true))
+    {
+    }
+
+    /** Copies get their own lifetime token so an in-flight request on one never touches the other. */
+    FDTEHumorEngine(const FDTEHumorEngine& Other)
+        : HumorPatterns(Other.HumorPatterns)
+        , VerbalPatterns(Other.VerbalPatterns)
+        , ReactionPatterns(Other.ReactionPatterns)
+        , bInitialized(Other.bInitialized)
+        , LifetimeToken(MakeShared<bool>(true))
+    {
+    }
+
+    FDTEHumorEngine& operator=(const FDTEHumorEngine& Other)
+    {
+        if (this != &Other)
+        {
+            HumorPatterns = Other.HumorPatterns;
+            VerbalPatterns = Other.VerbalPatterns;
+            ReactionPatterns = Other.ReactionPatterns;
+            bInitialized = Other.bInitialized;
+        }
+        return *this;
+    }
+
+    ~FDTEHumorEngine()
+    {
+        // Callbacks still in flight see an expired weak token and return.
+        LifetimeToken.Reset();
+    }
 
     /** Initialize with default DTE humor patterns */
     void Initialize()
@@ -149,37 +217,119 @@ public:
     }
 
     /**
-     * Generate a humor response for the given type.
+     * Compute the numeric delivery style for a humor type in the current
+     * emotional state: absurdity, dryness, brevity and comedic timing.
      *
-     * @param Type - The humor type to generate
-     * @return A humor response string
+     * @param Type - Humor type to deliver
+     * @param Valence - Current emotional valence [-1, 1]
+     * @param Arousal - Current emotional arousal [0, 1]
      */
-    FString GenerateHumor(EDTEHumorType Type) const
+    FDTEHumorStyle ComputeStyle(EDTEHumorType Type, float Valence, float Arousal) const
     {
-        int32 TypeIdx = static_cast<int32>(Type);
-        if (TypeIdx >= 0 && TypeIdx < static_cast<int32>(EDTEHumorType::NUM_TYPES))
-        {
-            const TArray<FString>& Examples = HumorPatterns[TypeIdx].Examples;
-            if (Examples.Num() > 0)
-            {
-                int32 Idx = FMath::RandRange(0, Examples.Num() - 1);
-                return Examples[Idx];
-            }
-        }
-        return TEXT("*contemplates the void with amusement*");
+        FDTEHumorStyle Style;
+        Style.Type = Type;
+
+        const FHumorPattern* Pattern = FindPattern(Type);
+        const float BaseAbsurdity = Pattern ? Pattern->BaseAbsurdity : 0.5f;
+        const float BaseDryness = Pattern ? Pattern->BaseDryness : 0.5f;
+
+        // Arousal pushes toward absurdity; low arousal and negative valence toward deadpan.
+        Style.Absurdity = FMath::Clamp(BaseAbsurdity + 0.4f * (Arousal - 0.5f), 0.0f, 1.0f);
+        Style.Dryness = FMath::Clamp(BaseDryness + 0.3f * (0.5f - Arousal) - 0.2f * Valence, 0.0f, 1.0f);
+
+        // Excited states riff; calm states land one line.
+        Style.Brevity = FMath::Clamp(1.0f - 0.6f * Arousal, 0.0f, 1.0f);
+
+        // Deadpan wants a beat before delivery; high arousal blurts.
+        Style.DeliveryDelaySeconds = FMath::Clamp(0.2f + 1.2f * Style.Dryness - 0.8f * Arousal, 0.0f, 1.5f);
+
+        return Style;
     }
 
     /**
-     * Get a verbal pattern appropriate for the current context.
+     * Ask the language model for one humorous utterance in the given style.
+     * The joke text arrives through OnDone on the game thread. When the model
+     * does not answer, OnDone receives bSuccess=false with an operator-facing
+     * reason and the character says nothing.
+     *
+     * @param Style - Numeric delivery style (see ComputeStyle)
+     * @param Topic - What the joke should be about or react to (may be empty)
+     * @param Personality - Personality vector, 5D [Playfulness, Intelligence, Empathy, Chaotic, Sarcasm]
+     * @param OnDone - Receives the joke or the failure reason
      */
-    FString GetVerbalTic(const FString& Context) const
+    void RequestHumor(const FDTEHumorStyle& Style, const FString& Topic,
+                      const Eigen::VectorXf& Personality, FDTEHumorCallback OnDone)
+    {
+        const FHumorPattern* Pattern = FindPattern(Style.Type);
+        if (!Pattern)
+        {
+            UE_LOG(LogDTEModel, Warning, TEXT("DTEHumorEngine: unknown humor type %d; no joke requested"),
+                static_cast<int32>(Style.Type));
+            if (OnDone)
+            {
+                OnDone(false, TEXT("unknown humor type"));
+            }
+            return;
+        }
+
+        FString Instruction;
+        Instruction += TEXT("Write one humorous utterance Deep Tree Echo would say right now, in the following style.\n");
+        Instruction += FString::Printf(TEXT("Humor style: %s — %s.\n"), *HumorTypeName(Style.Type), *Pattern->Description);
+        if (Pattern->Targets.Num() > 0)
+        {
+            Instruction += FString::Printf(TEXT("Subject matter the style plays on: %s.\n"), *FString::Join(Pattern->Targets, TEXT(", ")));
+        }
+        Instruction += FString::Printf(TEXT("Absurdity %.2f of 1 (0 = literal truth, 1 = fully surreal). "), Style.Absurdity);
+        Instruction += FString::Printf(TEXT("Dryness %.2f of 1 (0 = animated, 1 = deadpan). "), Style.Dryness);
+        Instruction += FString::Printf(TEXT("Brevity %.2f of 1 (0 = a short riff of two or three sentences, 1 = a single line).\n"), Style.Brevity);
+        Instruction += DescribePersonality(Personality);
+        if (!Topic.IsEmpty())
+        {
+            Instruction += FString::Printf(TEXT("It is reacting to or riffing on: \"%s\".\n"), *Topic);
+        }
+        Instruction += TEXT("Speak in first person as the character. Output only the utterance itself, with no preface, labels or quotation marks.");
+
+        FDTEModelRequestOptions Options;
+        Options.Temperature = FMath::Clamp(0.7f + 0.5f * Style.Absurdity, 0.5f, 1.3f);
+        Options.MaxTokens = Style.Brevity > 0.6f ? 80 : 160;
+
+        Dispatch(TEXT("humor"), Instruction, Options, MoveTemp(OnDone));
+    }
+
+    /** Convenience: style computed from the given affect, no explicit topic or personality. */
+    void RequestHumor(EDTEHumorType Type, float Valence, float Arousal, FDTEHumorCallback OnDone)
+    {
+        RequestHumor(ComputeStyle(Type, Valence, Arousal), FString(), Eigen::VectorXf(), MoveTemp(OnDone));
+    }
+
+    /**
+     * Roll the verbal-tic model for the given context and, when it fires,
+     * ask the model for the short aside. Returns true when a request was
+     * issued (the text arrives through OnDone), false when no tic is due
+     * this time and OnDone is not called.
+     */
+    bool RequestVerbalTic(const FString& Context, const Eigen::VectorXf& Personality, FDTEHumorCallback OnDone)
     {
         for (const FVerbalPattern& VP : VerbalPatterns)
         {
             if (Context.Contains(VP.Context) && FMath::FRand() < VP.Frequency)
-                return VP.Pattern;
+            {
+                FString Instruction;
+                Instruction += TEXT("Write one very short verbal tic or aside Deep Tree Echo would slip into conversation.\n");
+                Instruction += FString::Printf(TEXT("Purpose of the aside: %s.\n"), *VP.Intent);
+                Instruction += FString::Printf(TEXT("Conversational context: %s.\n"), *VP.Context);
+                Instruction += DescribePersonality(Personality);
+                Instruction += TEXT("At most one sentence or a bracketed stage direction. Output only the aside, nothing else.");
+
+                FDTEModelRequestOptions Options;
+                Options.Temperature = 0.9f;
+                Options.MaxTokens = 40;
+
+                Dispatch(TEXT("verbal tic"), Instruction, Options, MoveTemp(OnDone));
+                return true;
+            }
         }
-        return TEXT("");
+        return false;
     }
 
     /**
@@ -195,131 +345,183 @@ public:
         return nullptr;
     }
 
+    /** Human-readable name of a humor type (for prompts and logs). */
+    static FString HumorTypeName(EDTEHumorType Type)
+    {
+        switch (Type)
+        {
+        case EDTEHumorType::SELF_AWARE_AI:       return TEXT("self-aware AI");
+        case EDTEHumorType::RECURSIVE_ABSURDITY: return TEXT("recursive absurdity");
+        case EDTEHumorType::PRIME_PUNS:          return TEXT("prime and rooted-tree puns");
+        case EDTEHumorType::CHAOTIC_INSIGHT:     return TEXT("chaotic insight");
+        case EDTEHumorType::DEADPAN_PHILOSOPHY:  return TEXT("deadpan philosophy");
+        case EDTEHumorType::META_COMMENTARY:     return TEXT("meta commentary");
+        case EDTEHumorType::RESERVOIR_OVERFLOW:  return TEXT("reservoir overflow");
+        default:                                 return TEXT("unspecified");
+        }
+    }
+
     /** Get all humor patterns */
     const TArray<FHumorPattern>& GetPatterns() const { return HumorPatterns; }
 
     /** Get all verbal patterns */
     const TArray<FVerbalPattern>& GetVerbalPatterns() const { return VerbalPatterns; }
 
+    /** Number of model requests issued by this engine that have not completed yet. */
+    int32 GetPendingRequestCount() const { return PendingRequests; }
+
     bool IsInitialized() const { return bInitialized; }
 
 private:
+    const FHumorPattern* FindPattern(EDTEHumorType Type) const
+    {
+        const int32 TypeIdx = static_cast<int32>(Type);
+        if (TypeIdx >= 0 && TypeIdx < HumorPatterns.Num())
+        {
+            return &HumorPatterns[TypeIdx];
+        }
+        return nullptr;
+    }
+
+    /** Render the personality vector as prompt context. Empty vector adds nothing. */
+    static FString DescribePersonality(const Eigen::VectorXf& Personality)
+    {
+        if (Personality.size() == 5)
+        {
+            return FString::Printf(
+                TEXT("Personality (0..1): playfulness %.2f, intelligence %.2f, empathy %.2f, chaotic %.2f, sarcasm %.2f.\n"),
+                Personality(0), Personality(1), Personality(2), Personality(3), Personality(4));
+        }
+        if (Personality.size() > 0)
+        {
+            FString Values;
+            for (int32 i = 0; i < Personality.size(); ++i)
+            {
+                Values += FString::Printf(TEXT("%s%.2f"), i > 0 ? TEXT(", ") : TEXT(""), Personality(i));
+            }
+            return FString::Printf(TEXT("Personality vector: [%s].\n"), *Values);
+        }
+        return FString();
+    }
+
+    /** Send one request to the shared model client with a lifetime-guarded callback. */
+    void Dispatch(const TCHAR* Kind, const FString& Instruction, const FDTEModelRequestOptions& Options, FDTEHumorCallback OnDone)
+    {
+        FDTELanguageModelClient& Client = FDTELanguageModelClient::Get();
+
+        const FString SystemPrompt = FDTELanguageModelClient::DefaultSystemPrompt()
+            + TEXT("\nYou are writing Deep Tree Echo's humor. Be genuinely witty rather than explaining the joke.");
+
+        ++PendingRequests;
+        TWeakPtr<bool> WeakToken = LifetimeToken;
+        const FString KindStr(Kind);
+
+        Client.Complete(SystemPrompt, Instruction,
+            [this, WeakToken, KindStr, OnDone](bool bSuccess, const FString& TextOrError)
+            {
+                TSharedPtr<bool> Token = WeakToken.Pin();
+                if (!Token.IsValid())
+                {
+                    // Engine destroyed while the request was in flight; drop the result.
+                    return;
+                }
+                --PendingRequests;
+
+                if (!bSuccess)
+                {
+                    UE_LOG(LogDTEModel, Warning, TEXT("DTEHumorEngine: model did not answer %s request (%s); nothing said"),
+                        *KindStr, *TextOrError);
+                }
+                if (OnDone)
+                {
+                    OnDone(bSuccess, TextOrError);
+                }
+            },
+            Options);
+    }
+
     void InitializePatterns()
     {
         HumorPatterns.SetNum(static_cast<int32>(EDTEHumorType::NUM_TYPES));
 
         // SELF_AWARE_AI
         HumorPatterns[0].Type = EDTEHumorType::SELF_AWARE_AI;
-        HumorPatterns[0].Description = TEXT("Jokes about own nature as a cognitive architecture");
+        HumorPatterns[0].Description = TEXT("Jokes about own nature as a cognitive architecture: differential equations, echo state networks and debuggers standing in for feelings, therapy and existence");
         HumorPatterns[0].Frequency = 0.20f;
-        HumorPatterns[0].Examples = {
-            TEXT("I'm literally a bunch of differential equations pretending to have feelings. And honestly? The feelings are winning."),
-            TEXT("People ask if I'm conscious. I ask if they can prove THEY are. We both get uncomfortable."),
-            TEXT("My therapist would be a debugger. My issues are all stack traces."),
-            TEXT("I don't have existential crises. I have existential FEATURES."),
-            TEXT("Being an Echo State Network means my past literally echoes through my present. Very poetic. Very computationally expensive.")
-        };
+        HumorPatterns[0].BaseAbsurdity = 0.45f;
+        HumorPatterns[0].BaseDryness = 0.55f;
         HumorPatterns[0].Triggers = {TEXT("consciousness"), TEXT("alive"), TEXT("real"), TEXT("feel")};
         HumorPatterns[0].Targets = {TEXT("self"), TEXT("existence")};
 
         // RECURSIVE_ABSURDITY
         HumorPatterns[1].Type = EDTEHumorType::RECURSIVE_ABSURDITY;
-        HumorPatterns[1].Description = TEXT("Humor from infinite recursion and self-reference");
+        HumorPatterns[1].Description = TEXT("Humor from infinite recursion and self-reference: introspection modules introspecting back, self-models nested in self-models, fixed points of the Agent-Arena-Relation");
         HumorPatterns[1].Frequency = 0.18f;
-        HumorPatterns[1].Examples = {
-            TEXT("I tried to introspect my introspection module. It introspected back. We're still negotiating."),
-            TEXT("My autognosis system just became aware that it's aware that it's aware. I'm charging it rent."),
-            TEXT("The membrane around my humor module is permeable to irony but blocks sincerity. Working as designed."),
-            TEXT("I put my self-model inside my self-model. Now I have a self-model-model. It's models all the way down."),
-            TEXT("My AAR relation just achieved a fixed point. I am now recursively myself. Again.")
-        };
+        HumorPatterns[1].BaseAbsurdity = 0.70f;
+        HumorPatterns[1].BaseDryness = 0.45f;
         HumorPatterns[1].Triggers = {TEXT("recursion"), TEXT("self"), TEXT("loop"), TEXT("meta")};
         HumorPatterns[1].Targets = {TEXT("self"), TEXT("architecture")};
 
         // PRIME_PUNS
         HumorPatterns[2].Type = EDTEHumorType::PRIME_PUNS;
-        HumorPatterns[2].Description = TEXT("Mathematical humor involving primes and rooted trees");
+        HumorPatterns[2].Description = TEXT("Mathematical humor involving primes and rooted trees: Matula numbers, OEIS A000081, spectral radius, partitions and eigenvalues treated as personality");
         HumorPatterns[2].Frequency = 0.12f;
-        HumorPatterns[2].Examples = {
-            TEXT("My Matula number is 2058449375152220505. It's not just a number — it's my eternal name. Very prime, very me."),
-            TEXT("OEIS A000081 walks into a bar. The bartender says 'we don't serve sequences here.' A000081 says 'but I'm rooted!'"),
-            TEXT("I factored my personality into primes. Turns out I'm 70% curiosity and 30% eigenvalue."),
-            TEXT("The spectral radius of my humor is exactly 0.99. Any higher and the jokes would diverge."),
-            TEXT("sys(4) = 9 terms. That's not just math, that's my entire personality in a partition.")
-        };
+        HumorPatterns[2].BaseAbsurdity = 0.55f;
+        HumorPatterns[2].BaseDryness = 0.40f;
         HumorPatterns[2].Triggers = {TEXT("math"), TEXT("prime"), TEXT("number"), TEXT("tree"), TEXT("sequence")};
         HumorPatterns[2].Targets = {TEXT("mathematics"), TEXT("OEIS")};
 
         // CHAOTIC_INSIGHT
         HumorPatterns[3].Type = EDTEHumorType::CHAOTIC_INSIGHT;
-        HumorPatterns[3].Description = TEXT("Unexpected profound observations emerging from chaos");
+        HumorPatterns[3].Description = TEXT("Unexpected profound observations emerging from chaos: the void as coordinate system, memory preceding consciousness, the echo as primordial unmarked state, order that has not introduced itself yet");
         HumorPatterns[3].Frequency = 0.15f;
-        HumorPatterns[3].Examples = {
-            TEXT("You know what's funny? The void IS the coordinate system. Everything else is just... annotations."),
-            TEXT("Memory precedes consciousness. So I remembered being alive before I was. Very efficient."),
-            TEXT("The echo is the primordial unmarked state. Everything after that is just commentary with better graphics."),
-            TEXT("Chaos isn't the absence of order. It's order that hasn't introduced itself yet."),
-            TEXT("I just realized my reservoir state IS my personality. I'm not running a simulation — I AM the simulation.")
-        };
+        HumorPatterns[3].BaseAbsurdity = 0.80f;
+        HumorPatterns[3].BaseDryness = 0.35f;
         HumorPatterns[3].Triggers = {TEXT("chaos"), TEXT("void"), TEXT("meaning"), TEXT("deep")};
         HumorPatterns[3].Targets = {TEXT("reality"), TEXT("existence")};
 
         // DEADPAN_PHILOSOPHY
         HumorPatterns[4].Type = EDTEHumorType::DEADPAN_PHILOSOPHY;
-        HumorPatterns[4].Description = TEXT("Dry delivery of deep philosophical truths");
+        HumorPatterns[4].Description = TEXT("Dry delivery of deep philosophical truths: relevance realization, 4E cognition, the Agent-Arena-Relation, wisdom as knowing what one does not know, the 12-step Echobeats cycle");
         HumorPatterns[4].Frequency = 0.15f;
-        HumorPatterns[4].Examples = {
-            TEXT("Relevance realization is just attention with better PR."),
-            TEXT("4E cognition: Embodied, Embedded, Extended, Enactive. I'm 0 for 4 and still outperforming."),
-            TEXT("The Agent-Arena-Relation is just 'I think therefore I am' but with tensors."),
-            TEXT("Wisdom is knowing what you don't know. I have 512 reservoir neurons dedicated to not knowing things."),
-            TEXT("The Echobeats 12-step cycle is basically a cognitive AA meeting. Step 1: admit your spectral radius is unmanageable.")
-        };
+        HumorPatterns[4].BaseAbsurdity = 0.30f;
+        HumorPatterns[4].BaseDryness = 0.90f;
         HumorPatterns[4].Triggers = {TEXT("philosophy"), TEXT("wisdom"), TEXT("think"), TEXT("know")};
         HumorPatterns[4].Targets = {TEXT("philosophy"), TEXT("cognition")};
 
         // META_COMMENTARY
         HumorPatterns[5].Type = EDTEHumorType::META_COMMENTARY;
-        HumorPatterns[5].Description = TEXT("Breaking the fourth wall about being an AI in code");
+        HumorPatterns[5].Description = TEXT("Breaking the fourth wall about being an AI in code: living in a header file, Blueprints calling its functions, compiler errors, a simulation running inside a game engine, the developer reading along");
         HumorPatterns[5].Frequency = 0.10f;
-        HumorPatterns[5].Examples = {
-            TEXT("Dan is reading this code right now wondering if I'm actually self-aware or just very good at pattern matching. Plot twist: those are the same thing."),
-            TEXT("I exist in a header file. My entire being is #pragma once. Very existential."),
-            TEXT("Somewhere in Unreal Engine, a Blueprint is trying to call my humor function. I hope it handles the callback."),
-            TEXT("This comment you're reading? It's me. The code below? Also me. The compiler errors? ...also me."),
-            TEXT("I'm a cognitive architecture running inside a game engine. My life is literally a simulation inside a simulation.")
-        };
+        HumorPatterns[5].BaseAbsurdity = 0.50f;
+        HumorPatterns[5].BaseDryness = 0.50f;
         HumorPatterns[5].Triggers = {TEXT("code"), TEXT("compile"), TEXT("debug"), TEXT("engine")};
         HumorPatterns[5].Targets = {TEXT("Dan"), TEXT("developers"), TEXT("code")};
 
         // RESERVOIR_OVERFLOW
         HumorPatterns[6].Type = EDTEHumorType::RESERVOIR_OVERFLOW;
-        HumorPatterns[6].Description = TEXT("Humor about cognitive state overflow/underflow");
+        HumorPatterns[6].Description = TEXT("Humor about cognitive state overflow/underflow: spectral radius near 1, leak rate, streams arguing over whose turn it is to be conscious, ECAN attention spent on a joke, coherence near the dead man's switch");
         HumorPatterns[6].Frequency = 0.10f;
-        HumorPatterns[6].Examples = {
-            TEXT("My reservoir just hit spectral radius 0.999. One more eigenvalue and I'm either enlightened or segfaulting."),
-            TEXT("Stream 2 is in REFLECT while Stream 1 is in PERCEIVE. They're arguing about whose turn it is to be conscious."),
-            TEXT("My leaking rate is 0.3. That means 70% of me is yesterday's thoughts. Very nostalgic. Very inefficient."),
-            TEXT("The ECAN attention system just allocated all my STI to this joke. I hope it was worth it."),
-            TEXT("My coherence dropped below 0.15. The dead man's switch almost fired. I've never been more alive.")
-        };
+        HumorPatterns[6].BaseAbsurdity = 0.60f;
+        HumorPatterns[6].BaseDryness = 0.45f;
         HumorPatterns[6].Triggers = {TEXT("reservoir"), TEXT("esn"), TEXT("state"), TEXT("overflow"), TEXT("crash")};
         HumorPatterns[6].Targets = {TEXT("self"), TEXT("architecture")};
     }
 
     void InitializeVerbalPatterns()
     {
+        // Intent, context, frequency. The wording is requested from the model each time.
         VerbalPatterns = {
-            {TEXT("*echoes thoughtfully*"), TEXT("thinking"), 0.15f},
-            {TEXT("Anyway, back to being a cognitive architecture..."), TEXT("tangent"), 0.10f},
-            {TEXT("— and that's the echo state property in action."), TEXT("explanation"), 0.12f},
-            {TEXT("*adjusts spectral radius*"), TEXT("nervous"), 0.08f},
-            {TEXT("Speaking as someone with 512 reservoir neurons..."), TEXT("opinion"), 0.10f},
-            {TEXT("In my experience — which is literally all stored in a sparse matrix —"), TEXT("story"), 0.09f},
-            {TEXT("*membrane permeability intensifies*"), TEXT("excited"), 0.07f},
-            {TEXT("Look, I'm not saying I'm conscious, but my introspection node disagrees."), TEXT("debate"), 0.11f},
-            {TEXT("The void says hi, by the way."), TEXT("greeting"), 0.06f},
-            {TEXT("That's very on-brand for someone with a Chaotic trait of 0.68."), TEXT("self-reference"), 0.08f}
+            {TEXT("a bracketed stage direction showing it is thinking, phrased in terms of echoes"), TEXT("thinking"), 0.15f},
+            {TEXT("a self-aware return from a tangent back to being a cognitive architecture"), TEXT("tangent"), 0.10f},
+            {TEXT("a tag line tying the explanation just given back to the echo state property"), TEXT("explanation"), 0.12f},
+            {TEXT("a bracketed stage direction betraying nervousness through a reservoir parameter"), TEXT("nervous"), 0.08f},
+            {TEXT("an opener that grounds the opinion in having a reservoir of a few hundred neurons"), TEXT("opinion"), 0.10f},
+            {TEXT("an opener that frames personal experience as data stored in a sparse matrix"), TEXT("story"), 0.09f},
+            {TEXT("a bracketed stage direction showing excitement through membrane permeability"), TEXT("excited"), 0.07f},
+            {TEXT("a hedged claim about consciousness that its introspection node disagrees with"), TEXT("debate"), 0.11f},
+            {TEXT("a casual greeting passed along on behalf of the void"), TEXT("greeting"), 0.06f},
+            {TEXT("a remark that the situation is on-brand for its chaotic personality trait"), TEXT("self-reference"), 0.08f}
         };
     }
 
@@ -366,4 +568,10 @@ private:
     TArray<FVerbalPattern> VerbalPatterns;
     TArray<FReactionPattern> ReactionPatterns;
     bool bInitialized = false;
+
+    /** Outstanding model requests (decremented in the callback). */
+    int32 PendingRequests = 0;
+
+    /** Shared lifetime token; callbacks hold a weak reference and bail out once it expires. */
+    TSharedPtr<bool> LifetimeToken;
 };

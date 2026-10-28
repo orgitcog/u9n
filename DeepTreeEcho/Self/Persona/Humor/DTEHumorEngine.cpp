@@ -8,6 +8,10 @@
 //   - Zero-overhead benign violation scoring via Eigen dot products
 //   - Compile-time joke archetype switch for pattern classification
 //
+// The engine holds no joke text. It selects a humor style numerically and
+// requests every utterance from FDTELanguageModelClient; when the model does
+// not answer, nothing is said and LogDTEModel carries the reason.
+//
 // Feature:  F1.2.2 — DTE Humour Engine
 // Phase:    1.2 — Persona Layer
 // Epic:     E1 — Foundation & Core Integration

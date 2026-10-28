@@ -18,11 +18,17 @@
 //   - Echobeats 3-stream concurrent processing
 //   - Introspective self-monitoring with autonomous goal generation
 //   - Humor-modulated social interaction
+//
+// Every word the avatar says is requested from the language model through
+// FDTELanguageModelClient; replies arrive asynchronously and are delivered
+// through the reply handler and the next FDTEAction's SpeechText. When the
+// model does not answer, the avatar says nothing and LogDTEModel records why.
 // ═══════════════════════════════════════════════════════════════════════════
 #include "CoreMinimal.h"
 #include "Agents/MLAdapterAgent.h"
 #include "DeepTreeEcho/Core/AutonomyPipeline.h"
 #include "DeepTreeEcho/Core/CoreSelfEngine.h"
+#include "DTELanguageModelBridge.h"
 #include <Eigen/Dense>
 
 /** Vision processing mode */
@@ -190,7 +196,7 @@ struct FDTEAction
     /** Discrete action triggers (one-hot or multi-hot) */
     TArray<bool> DiscreteActions;
 
-    /** Speech output (if any) */
+    /** Speech output (if any). Always model-generated; empty when there is nothing to say. */
     FString SpeechText;
 
     /** MetaHuman FACS control values (52 blend shapes) */
@@ -212,6 +218,9 @@ struct FDTEAction
         return Action;
     }
 };
+
+/** Receives a model-generated reply: the text spoken and the sender it answers. */
+using FDTEAvatarReplyHandler = TFunction<void(const FString& ReplyText, const FString& Sender)>;
 
 /**
  * DTEAvatarAgent — The embodied interface of Deep Tree Echo.
@@ -254,7 +263,20 @@ struct FDTEAction
 class FDTEAvatarAgent
 {
 public:
-    FDTEAvatarAgent() = default;
+    FDTEAvatarAgent()
+        : LifetimeToken(MakeShared<bool>(true))
+    {
+    }
+
+    /** Not copyable: model replies in flight are bound to this instance's lifetime token. */
+    FDTEAvatarAgent(const FDTEAvatarAgent&) = delete;
+    FDTEAvatarAgent& operator=(const FDTEAvatarAgent&) = delete;
+
+    ~FDTEAvatarAgent()
+    {
+        // Replies still in flight see an expired weak token and are dropped.
+        LifetimeToken.Reset();
+    }
 
     /**
      * Initialize the avatar agent with configuration.
@@ -322,7 +344,17 @@ public:
             Action.FacialControls = ComputeFacialControls();
         }
 
+        // === SPEECH ===
+        // Model-generated replies queued by ReceiveMessage leave through the action,
+        // one per processed frame. Skipped frames replay LastAction without speech.
+        if (Config.bSpeechOutput && PendingSpeech.Num() > 0)
+        {
+            Action.SpeechText = PendingSpeech[0];
+            PendingSpeech.RemoveAt(0);
+        }
+
         LastAction = Action;
+        LastAction.SpeechText.Empty();
         return Action;
     }
 
@@ -345,30 +377,112 @@ public:
     }
 
     /**
-     * Receive a text message (from another player or NPC).
+     * Set the handler that receives model-generated replies as they arrive.
+     * Replies are also queued into the next processed frame's FDTEAction::SpeechText.
      */
-    FString ReceiveMessage(const FString& Message, const FString& Sender)
+    void SetReplyHandler(FDTEAvatarReplyHandler InHandler)
+    {
+        ReplyHandler = MoveTemp(InHandler);
+    }
+
+    /**
+     * Receive a text message (from another player or NPC).
+     *
+     * The message is recorded in the identity hypergraph and a reply is
+     * requested from the language model with the sender, the message and the
+     * agent's current state as context. The reply arrives asynchronously via
+     * the reply handler and the next FDTEAction::SpeechText; nothing is said
+     * when the model does not answer.
+     *
+     * @return true when a reply request was issued, false when none could be.
+     */
+    bool ReceiveMessage(const FString& Message, const FString& Sender)
     {
         // Add to identity hypergraph
         Pipeline.GetCoreSelf().AddIdentityTuple(Sender, TEXT("said"), Message);
 
-        // Generate response via humor engine if appropriate
-        if (Pipeline.GetHumorEngine().IsInitialized())
+        if (!bInitialized)
         {
-            float Valence = Pipeline.GetTelemetry().EmotionalValence;
-            if (Valence > 0.3f)
-            {
-                // In a good mood — might respond with humor
-                FDTEHumorResponse HumorResp = Pipeline.GetHumorEngine().GenerateHumor(
-                    Valence, 0.5f, Message);
-                if (HumorResp.Confidence > 0.6f)
-                    return HumorResp.Response;
-            }
+            UE_LOG(LogDTEModel, Warning, TEXT("DTEAvatarAgent: message from %s received before Initialize(); no reply requested"), *Sender);
+            return false;
         }
 
-        // Default: acknowledge
-        return FString::Printf(TEXT("I hear you, %s."), *Sender);
+        const FPipelineTelemetry& T = Pipeline.GetTelemetry();
+        const Eigen::VectorXf& Emotion = Pipeline.GetSomaticEngine().GetCurrentEmotion();
+        const float Valence = T.EmotionalValence;
+        const float Arousal = Emotion.size() > 0 ? FMath::Clamp(static_cast<float>(Emotion.norm()), 0.0f, 1.0f) : 0.5f;
+        const Eigen::VectorXf Personality = Pipeline.GetIdentityMLP().GetPersonality().ToEigen();
+
+        // Build the reply instruction: intent plus live context.
+        FString Instruction;
+        Instruction += FString::Printf(TEXT("%s just said to you: \"%s\"\n"), *Sender, *Message);
+        Instruction += TEXT("Reply to them in your own voice, in one to three sentences.\n");
+        Instruction += FString::Printf(
+            TEXT("Your current state: emotional valence %.2f (-1 negative .. 1 positive), arousal %.2f, autonomy level %d, autognosis level %d, echobeat step %d of 12, AAR coherence %.2f, reservoir activation %.2f.\n"),
+            Valence, Arousal, static_cast<int32>(T.AutonomyLevel), static_cast<int32>(T.AutognosisLevel),
+            T.EchobeatStep, T.AARCoherence, T.ReservoirActivation);
+        if (Personality.size() == 5)
+        {
+            Instruction += FString::Printf(
+                TEXT("Personality (0..1): playfulness %.2f, intelligence %.2f, empathy %.2f, chaotic %.2f, sarcasm %.2f.\n"),
+                Personality(0), Personality(1), Personality(2), Personality(3), Personality(4));
+        }
+
+        // Numeric humor decision: a good mood lets the humor engine shape the reply's style.
+        FDTEHumorEngine& Humor = Pipeline.GetHumorEngine();
+        if (Humor.IsInitialized() && Valence > 0.3f)
+        {
+            const EDTEHumorType Type = Humor.SelectHumorType(Valence, Arousal, Message);
+            const FDTEHumorStyle Style = Humor.ComputeStyle(Type, Valence, Arousal);
+            Instruction += FString::Printf(
+                TEXT("You are in a good mood, so let the reply be humorous in the %s style (absurdity %.2f of 1, dryness %.2f of 1, brevity %.2f of 1) while still answering what was said.\n"),
+                *FDTEHumorEngine::HumorTypeName(Type), Style.Absurdity, Style.Dryness, Style.Brevity);
+        }
+        else
+        {
+            Instruction += TEXT("Answer sincerely and attentively; humor is optional and should stay light.\n");
+        }
+        Instruction += TEXT("Output only what you say aloud, with no preface, labels or quotation marks.");
+
+        FDTEModelRequestOptions Options;
+        Options.Temperature = 0.8f;
+        Options.MaxTokens = 160;
+
+        TWeakPtr<bool> WeakToken = LifetimeToken;
+        const FString SenderCopy = Sender;
+        FDTELanguageModelClient::Get().Complete(
+            FDTELanguageModelClient::DefaultSystemPrompt(), Instruction,
+            [this, WeakToken, SenderCopy](bool bSuccess, const FString& TextOrError)
+            {
+                TSharedPtr<bool> Token = WeakToken.Pin();
+                if (!Token.IsValid())
+                {
+                    // Agent destroyed while the request was in flight; drop the reply.
+                    return;
+                }
+
+                if (!bSuccess)
+                {
+                    UE_LOG(LogDTEModel, Warning, TEXT("DTEAvatarAgent: model did not answer message from %s (%s); nothing said"),
+                        *SenderCopy, *TextOrError);
+                    return;
+                }
+
+                // Side effects that depend on the text happen only here.
+                Pipeline.GetCoreSelf().AddIdentityTuple(TEXT("DTE"), TEXT("replied-to"), SenderCopy);
+                PendingSpeech.Add(TextOrError);
+                if (ReplyHandler)
+                {
+                    ReplyHandler(TextOrError, SenderCopy);
+                }
+            },
+            Options);
+
+        return true;
     }
+
+    /** Number of model replies waiting to leave through the next processed frames. */
+    int32 GetPendingSpeechCount() const { return PendingSpeech.Num(); }
 
     /** Get the autonomy pipeline */
     FAutonomyPipeline& GetPipeline() { return Pipeline; }
@@ -430,4 +544,13 @@ private:
     FDTEAction LastAction;
     int64 FrameCounter = 0;
     bool bInitialized = false;
+
+    /** Optional sink for model-generated replies as they arrive. */
+    FDTEAvatarReplyHandler ReplyHandler;
+
+    /** Model-generated replies not yet emitted through ProcessFrame. */
+    TArray<FString> PendingSpeech;
+
+    /** Shared lifetime token; reply callbacks hold a weak reference and bail out once it expires. */
+    TSharedPtr<bool> LifetimeToken;
 };
