@@ -410,14 +410,13 @@ void UEchobeatsCognitiveInterface::ReceiveListeningUpdate(bool bIsListening)
         ProceduralAnim->SetListeningState(bIsListening);
     }
 
-    if (bIsListening && StateMachine)
-    {
-        StateMachine->PlaySequence(TEXT("Listening"));
-    }
-    else if (!bIsListening && StateMachine)
+    // Listening is shown through the real attention/affect state, not a
+    // fixed "Listening" choreography.
+    if (!bIsListening && StateMachine)
     {
         StateMachine->StopSequence();
     }
+    ReevaluateAffectForStep();
 }
 
 void UEchobeatsCognitiveInterface::ReceiveThinkingUpdate(bool bIsThinking, float Intensity)
@@ -430,12 +429,11 @@ void UEchobeatsCognitiveInterface::ReceiveThinkingUpdate(bool bIsThinking, float
         ProceduralAnim->SetThinkingState(bIsThinking);
     }
 
-    if (bIsThinking && StateMachine)
-    {
-        StateMachine->PlayThinkingSequence();
-    }
-    else if (!bIsThinking && StateMachine)
+    // Thinking is shown through the real attention/affect state, not a
+    // fixed "Thinking" choreography.
+    if (!bIsThinking && StateMachine)
     {
         StateMachine->StopSequence();
     }
+    ReevaluateAffectForStep();
 }
