@@ -1,4 +1,5 @@
 #include "DialogicalPracticeFramework.h"
+#include "DTELanguageModelBridge.h"
 
 UDialogicalPracticeFramework::UDialogicalPracticeFramework()
 {
@@ -9,6 +10,16 @@ UDialogicalPracticeFramework::UDialogicalPracticeFramework()
 void UDialogicalPracticeFramework::BeginPlay()
 {
     Super::BeginPlay();
+    ModelBridge = UDTELanguageModelBridge::FindOrAdd(GetOwner());
+}
+
+UDTELanguageModelBridge* UDialogicalPracticeFramework::GetModelBridge()
+{
+    if (!ModelBridge)
+    {
+        ModelBridge = UDTELanguageModelBridge::FindOrAdd(GetOwner());
+    }
+    return ModelBridge;
 }
 
 void UDialogicalPracticeFramework::TickComponent(float DeltaTime, ELevelTick TickType,
@@ -136,26 +147,145 @@ FDialogueSession UDialogicalPracticeFramework::CloseSession()
 // SOCRATIC TOOLS
 // ========================================
 
-FString UDialogicalPracticeFramework::GenerateClarifyingQuestion(
-    const FString& CurrentTopic) const
+void UDialogicalPracticeFramework::RequestClarifyingQuestion(const FString& CurrentTopic)
 {
-    return FString::Printf(
-        TEXT("What exactly do you mean when you say '%s'? Can we agree on a precise definition?"),
+    const FString Instruction = FString::Printf(
+        TEXT("Ask one clarifying question, in your own voice, that seeks a precise shared definition of '%s' ")
+        TEXT("so that both of you mean the same thing by it. Ask only the question."),
         *CurrentTopic);
+    RequestSocraticQuestion(ESocraticQuestionKind::Clarifying, Instruction,
+        FString::Printf(TEXT("Term to clarify: %s"), *CurrentTopic));
 }
 
-FString UDialogicalPracticeFramework::GenerateAssumptionProbe(const FString& Claim) const
+void UDialogicalPracticeFramework::RequestAssumptionProbe(const FString& Claim)
 {
-    return FString::Printf(
-        TEXT("What assumption is '%s' relying on? Is that assumption always valid?"),
+    const FString Instruction = FString::Printf(
+        TEXT("Ask one question, in your own voice, that brings to light the assumption the claim '%s' relies on ")
+        TEXT("and invites your partner to examine whether that assumption always holds. Ask only the question."),
         *Claim);
+    RequestSocraticQuestion(ESocraticQuestionKind::AssumptionProbe, Instruction,
+        FString::Printf(TEXT("Claim under examination: %s"), *Claim));
 }
 
-FString UDialogicalPracticeFramework::GenerateImplicationTest(const FString& Claim) const
+void UDialogicalPracticeFramework::RequestImplicationTest(const FString& Claim)
 {
-    return FString::Printf(
-        TEXT("If '%s' is true, what must necessarily follow? Does that consequence seem acceptable?"),
+    const FString Instruction = FString::Printf(
+        TEXT("Ask one question, in your own voice, that tests what must necessarily follow if '%s' is true ")
+        TEXT("and whether your partner finds that consequence acceptable. Ask only the question."),
         *Claim);
+    RequestSocraticQuestion(ESocraticQuestionKind::ImplicationTest, Instruction,
+        FString::Printf(TEXT("Claim under examination: %s"), *Claim));
+}
+
+void UDialogicalPracticeFramework::RequestSocraticQuestion(ESocraticQuestionKind Kind,
+    const FString& Instruction, const FString& Focus)
+{
+    UDTELanguageModelBridge* Bridge = GetModelBridge();
+    if (!Bridge)
+    {
+        UE_LOG(LogDTEModel, Warning,
+            TEXT("DialogicalPracticeFramework: no language model bridge on owner; Socratic question not generated"));
+        return;
+    }
+
+    FString Context = BuildSessionContext();
+    Context += TEXT("\n");
+    Context += Focus;
+
+    ++PendingQuestionCount;
+
+    TWeakObjectPtr<UDialogicalPracticeFramework> WeakThis(this);
+    Bridge->RequestText(Instruction, Context, [WeakThis, Kind](bool bSuccess, const FString& TextOrError)
+    {
+        if (!WeakThis.IsValid())
+        {
+            return;
+        }
+        UDialogicalPracticeFramework* Self = WeakThis.Get();
+        Self->PendingQuestionCount = FMath::Max(0, Self->PendingQuestionCount - 1);
+
+        if (!bSuccess)
+        {
+            UE_LOG(LogDTEModel, Warning,
+                TEXT("DialogicalPracticeFramework: model did not answer for Socratic question (%s); nothing asked"),
+                *TextOrError);
+            return;
+        }
+
+        const FString Question = TextOrError.TrimStartAndEnd();
+        switch (Kind)
+        {
+        case ESocraticQuestionKind::Clarifying:       Self->LastClarifyingQuestion = Question; break;
+        case ESocraticQuestionKind::AssumptionProbe:  Self->LastAssumptionProbe = Question; break;
+        case ESocraticQuestionKind::ImplicationTest:  Self->LastImplicationTest = Question; break;
+        default: break;
+        }
+
+        Self->OnSocraticQuestionGenerated.Broadcast(Kind, Question);
+    });
+}
+
+FString UDialogicalPracticeFramework::BuildSessionContext() const
+{
+    FString Context = TEXT("You are taking part in a Socratic dialogue aimed at shared understanding, ")
+                      TEXT("listening deeply and speaking authentically rather than performing.");
+
+    if (!bSessionActive)
+    {
+        Context += TEXT("\nNo dialogue session is active yet.");
+        return Context;
+    }
+
+    Context += FString::Printf(TEXT("\nDialogue partner: %s"), *ActiveSession.PartnerId);
+    Context += FString::Printf(TEXT("\nTopic under investigation: %s"), *ActiveSession.Topic);
+    Context += FString::Printf(TEXT("\nCurrent phase: %s"), *DescribePhase(ActiveSession.Phase));
+    Context += FString::Printf(TEXT("\nTurns so far: %d, overall quality %.2f, mutual transformation %.2f"),
+        ActiveSession.Turns.Num(), ActiveSession.OverallQuality, ActiveSession.MutualTransformationDegree);
+
+    const int32 TurnCount = ActiveSession.Turns.Num();
+    const int32 FirstTurn = FMath::Max(0, TurnCount - 6);
+    if (TurnCount > 0)
+    {
+        Context += TEXT("\nRecent turns (speaker: content summary):");
+        for (int32 i = FirstTurn; i < TurnCount; ++i)
+        {
+            const FDialogueTurn& Turn = ActiveSession.Turns[i];
+            Context += FString::Printf(TEXT("\n- %s: %s"), *Turn.SpeakerId, *Turn.ContentTag);
+        }
+    }
+
+    const int32 InsightCount = ActiveSession.Insights.Num();
+    if (InsightCount > 0)
+    {
+        Context += TEXT("\nInsights that have emerged:");
+        const int32 FirstInsight = FMath::Max(0, InsightCount - 4);
+        for (int32 i = FirstInsight; i < InsightCount; ++i)
+        {
+            Context += FString::Printf(TEXT("\n- %s"), *ActiveSession.Insights[i].Content);
+        }
+    }
+
+    if (DetectAporia())
+    {
+        Context += TEXT("\nThe dialogue has reached a point of productive not-knowing (aporia).");
+    }
+
+    return Context;
+}
+
+FString UDialogicalPracticeFramework::DescribePhase(ESocraticPhase Phase) const
+{
+    switch (Phase)
+    {
+    case ESocraticPhase::OpeningExchange:          return TEXT("opening exchange, establishing shared vocabulary");
+    case ESocraticPhase::Clarification:            return TEXT("clarification of definitions and scope");
+    case ESocraticPhase::AssumptionExamination:    return TEXT("examination of assumptions (elenchus)");
+    case ESocraticPhase::AporiaRecognition:        return TEXT("recognition of contradiction or aporia");
+    case ESocraticPhase::CollaborativeExploration: return TEXT("collaborative exploration (dialogos)");
+    case ESocraticPhase::EmergentSynthesis:        return TEXT("emergent synthesis of shared meaning");
+    case ESocraticPhase::MutualTransformation:     return TEXT("acknowledged mutual transformation");
+    default:                                       return TEXT("unknown phase");
+    }
 }
 
 bool UDialogicalPracticeFramework::DetectAporia() const
