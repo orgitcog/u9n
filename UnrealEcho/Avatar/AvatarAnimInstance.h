@@ -258,6 +258,19 @@ protected:
     float ChaosTimer;
     float NextChaoticEventTime;
 
+    /**
+     * Show the current affect under chaos. Chaos scales how strongly the real
+     * valence/arousal is expressed (glitch, excited gesture); it never invents
+     * an emotion or picks a reaction at random.
+     */
+    void TriggerChaoticEvent();
+
+    // Trait levels at the last gesture evaluation; personality gestures fire
+    // when a trait rises past its threshold, once per change.
+    float LastGestureConfidence = 0.0f;
+    float LastGestureFlirtiness = 0.0f;
+    float LastGesturePlayfulness = 0.0f;
+
     // Breathing state
     float BreathingTime;
 
