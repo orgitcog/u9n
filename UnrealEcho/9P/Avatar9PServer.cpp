@@ -789,23 +789,52 @@ FString UAvatar9PServer::ReadEmotionalState()
 
 FString UAvatar9PServer::ReadDiaryEntry(const FString& EntryId)
 {
-    // Return diary entry as JSON
-    // This would query the NarrativeSystem if available
-    return FString::Printf(TEXT("{\"id\":\"%s\",\"content\":\"Diary entry placeholder\",\"timestamp\":\"%s\"}"),
-        *EntryId, *FDateTime::Now().ToString());
+    // Only entries the narrative system actually holds (model-written) are
+    // served; there is no placeholder content.
+    if (NarrativeSystem)
+    {
+        for (const FNarrativeDiaryEntry& Entry : NarrativeSystem->GetRecentDiaryEntries(MAX_int32))
+        {
+            if (Entry.EntryID.ToString() == EntryId || Entry.EntryID.ToString(EGuidFormats::DigitsWithHyphens) == EntryId)
+            {
+                return FString::Printf(TEXT("{\"id\":\"%s\",\"content\":\"%s\",\"timestamp\":%.3f}"),
+                    *Entry.EntryID.ToString(), *Entry.Content.ReplaceCharWithEscapedChar(), Entry.Timestamp);
+            }
+        }
+        return FString::Printf(TEXT("{\"id\":\"%s\",\"error\":\"no such diary entry\"}"), *EntryId);
+    }
+    return FString::Printf(TEXT("{\"id\":\"%s\",\"error\":\"narrative system not available\"}"), *EntryId);
 }
 
 TArray<FString> UAvatar9PServer::ListDiaryEntries()
 {
     TArray<FString> Entries;
-    // List diary entries from NarrativeSystem
+    if (NarrativeSystem)
+    {
+        for (const FNarrativeDiaryEntry& Entry : NarrativeSystem->GetRecentDiaryEntries(MAX_int32))
+        {
+            Entries.Add(Entry.EntryID.ToString());
+        }
+    }
     return Entries;
 }
 
 FString UAvatar9PServer::ReadInsight(const FString& InsightId)
 {
-    return FString::Printf(TEXT("{\"id\":\"%s\",\"insight\":\"Insight placeholder\",\"confidence\":0.8}"),
-        *InsightId);
+    if (NarrativeSystem)
+    {
+        for (const FNarrativeInsight& Insight : NarrativeSystem->GetRecentInsights(MAX_int32))
+        {
+            if (Insight.InsightID.ToString() == InsightId || Insight.InsightID.ToString(EGuidFormats::DigitsWithHyphens) == InsightId)
+            {
+                return FString::Printf(TEXT("{\"id\":\"%s\",\"title\":\"%s\",\"insight\":\"%s\",\"category\":\"%s\",\"significance\":%.3f}"),
+                    *Insight.InsightID.ToString(), *Insight.Title.ReplaceCharWithEscapedChar(),
+                    *Insight.Content.ReplaceCharWithEscapedChar(), *Insight.Category.ReplaceCharWithEscapedChar(), Insight.Significance);
+            }
+        }
+        return FString::Printf(TEXT("{\"id\":\"%s\",\"error\":\"no such insight\"}"), *InsightId);
+    }
+    return FString::Printf(TEXT("{\"id\":\"%s\",\"error\":\"narrative system not available\"}"), *InsightId);
 }
 
 // ===== Visual Namespace Handlers =====
