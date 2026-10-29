@@ -12,6 +12,8 @@
 class UCognitiveCycleManager;
 class UMemorySystems;
 class UEmotionalSystem;
+class UDTELanguageModelBridge;
+struct FDTEChatMessage;
 
 /**
  * Speech act type
@@ -160,34 +162,12 @@ struct FDialogueContext
 };
 
 /**
- * Response template
- */
-USTRUCT(BlueprintType)
-struct FResponseTemplate
-{
-    GENERATED_BODY()
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    FString TemplateID;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    ESpeechAct ResponseType = ESpeechAct::Assertion;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    FString TemplateText;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    TArray<FString> RequiredSlots;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    float EmotionalTone = 0.0f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    float Formality = 0.5f;
-};
-
-/**
- * Generated response
+ * Generated response.
+ *
+ * Text is always produced by the language model. A struct returned
+ * synchronously from the Generate* functions is a pending placeholder
+ * (bIsPending = true, empty Text); the completed response with the same
+ * ResponseID arrives through ULanguageSystem::OnResponseGenerated.
  */
 USTRUCT(BlueprintType)
 struct FGeneratedResponse
@@ -197,8 +177,13 @@ struct FGeneratedResponse
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString ResponseID;
 
+    /** Model-generated utterance. Empty while pending or when the model did not answer. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString Text;
+
+    /** True when the model request is still in flight and Text has not been produced yet. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bIsPending = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     ESpeechAct SpeechAct = ESpeechAct::Assertion;
@@ -214,7 +199,12 @@ struct FGeneratedResponse
 };
 
 /**
- * Narrative element
+ * Narrative element.
+ *
+ * Content is always produced by the language model. A struct returned
+ * synchronously from the Generate* functions is a pending placeholder
+ * (bIsPending = true, empty Content); the completed narrative with the same
+ * ElementID arrives through ULanguageSystem::OnNarrativeGenerated.
  */
 USTRUCT(BlueprintType)
 struct FNarrativeElement
@@ -224,8 +214,13 @@ struct FNarrativeElement
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString ElementID;
 
+    /** Model-generated narrative text. Empty while pending or when the model did not answer. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString Content;
+
+    /** True when the model request is still in flight and Content has not been produced yet. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bIsPending = false;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString NarrativeType;
@@ -251,7 +246,17 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnNarrativeGenerated, const FNarrat
 
 /**
  * Language System Component
- * Implements natural language processing and generation
+ * Implements natural language processing and generation.
+ *
+ * Parsing (speech-act detection, entity/keyword extraction, sentiment) is
+ * local analysis. Every utterance the agent produces is requested from the
+ * language model through UDTELanguageModelBridge: the kind of utterance
+ * wanted (greeting, answer, acknowledgment, narrative, ...) becomes the
+ * instruction and the dialogue context (recent turns, topic, recipient,
+ * emotional tone, formality) becomes the prompt context. Generated text is
+ * delivered asynchronously through OnResponseGenerated / OnNarrativeGenerated.
+ * When the model does not answer, nothing is said and an operator-facing
+ * warning is logged.
  */
 UCLASS(ClassGroup=(DeepTreeEcho), meta=(BlueprintSpawnableComponent))
 class DEEPTREEECHO_API ULanguageSystem : public UActorComponent
@@ -283,6 +288,14 @@ public:
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Configuration")
     FString AgentName = TEXT("Echo");
+
+    /** How many recent dialogue turns are sent to the model as conversation context */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Configuration", meta = (ClampMin = "0"))
+    int32 RecentTurnsInPrompt = 8;
+
+    /** Number of model requests currently in flight for this component */
+    UPROPERTY(BlueprintReadOnly, Category = "Configuration")
+    int32 PendingRequestCount = 0;
 
     // ========================================
     // EVENTS
@@ -335,7 +348,14 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Dialogue")
     void StartConversation(const FString& InitialTopic);
 
-    /** Process incoming utterance */
+    /**
+     * Process incoming utterance: parse it, record the speaker's turn and ask
+     * the model for the agent's reply. The returned struct is a pending
+     * placeholder (bIsPending = true, empty Text). When the model answers, the
+     * agent's turn is added to the history and OnResponseGenerated fires with
+     * the same ResponseID. When the model does not answer, no agent turn is
+     * recorded and nothing is broadcast.
+     */
     UFUNCTION(BlueprintCallable, Category = "Dialogue")
     FGeneratedResponse ProcessUtterance(const FString& Speaker, const FString& Text);
 
@@ -370,44 +390,90 @@ public:
     // ========================================
     // RESPONSE GENERATION
     // ========================================
+    //
+    // Request* functions ask the model and return the ResponseID that the
+    // eventual OnResponseGenerated broadcast will carry. The Generate*
+    // functions are kept for API compatibility: they dispatch the same request
+    // and return a pending placeholder (bIsPending = true, empty Text). No
+    // path fills Text without the model.
 
-    /** Generate response to parsed utterance */
+    /** Ask the model to respond to a parsed utterance using the current emotional state. Returns the ResponseID. */
+    UFUNCTION(BlueprintCallable, Category = "Generation")
+    FString RequestResponse(const FParsedUtterance& Input);
+
+    /** Ask the model to respond to a parsed utterance with an explicit emotional tone (-1..1). Returns the ResponseID. */
+    UFUNCTION(BlueprintCallable, Category = "Generation")
+    FString RequestEmotionalResponse(const FParsedUtterance& Input, float EmotionalTone);
+
+    /** Ask the model for a clarification question about an unclear aspect. Returns the ResponseID. */
+    UFUNCTION(BlueprintCallable, Category = "Generation")
+    FString RequestClarification(const FString& UnclearAspect);
+
+    /** Ask the model for a brief acknowledgment of the last thing said. Returns the ResponseID. */
+    UFUNCTION(BlueprintCallable, Category = "Generation")
+    FString RequestAcknowledgment();
+
+    /** Ask the model to greet the recipient (empty name: whoever last spoke). Returns the ResponseID. */
+    UFUNCTION(BlueprintCallable, Category = "Generation")
+    FString RequestGreeting(const FString& RecipientName);
+
+    /** Ask the model to close the conversation. Returns the ResponseID. */
+    UFUNCTION(BlueprintCallable, Category = "Generation")
+    FString RequestFarewell();
+
+    /** Compatibility wrapper for RequestResponse. Returns a pending placeholder; text arrives via OnResponseGenerated. */
     UFUNCTION(BlueprintCallable, Category = "Generation")
     FGeneratedResponse GenerateResponse(const FParsedUtterance& Input);
 
-    /** Generate response with emotional tone */
+    /** Compatibility wrapper for RequestEmotionalResponse. Returns a pending placeholder; text arrives via OnResponseGenerated. */
     UFUNCTION(BlueprintCallable, Category = "Generation")
     FGeneratedResponse GenerateEmotionalResponse(const FParsedUtterance& Input, float EmotionalTone);
 
-    /** Generate clarification question */
+    /** Compatibility wrapper for RequestClarification. Returns a pending placeholder; text arrives via OnResponseGenerated. */
     UFUNCTION(BlueprintCallable, Category = "Generation")
     FGeneratedResponse GenerateClarification(const FString& UnclearAspect);
 
-    /** Generate acknowledgment */
+    /** Compatibility wrapper for RequestAcknowledgment. Returns a pending placeholder; text arrives via OnResponseGenerated. */
     UFUNCTION(BlueprintCallable, Category = "Generation")
     FGeneratedResponse GenerateAcknowledgment();
 
-    /** Generate greeting */
+    /** Compatibility wrapper for RequestGreeting. Returns a pending placeholder; text arrives via OnResponseGenerated. */
     UFUNCTION(BlueprintCallable, Category = "Generation")
     FGeneratedResponse GenerateGreeting(const FString& RecipientName);
 
-    /** Generate farewell */
+    /** Compatibility wrapper for RequestFarewell. Returns a pending placeholder; text arrives via OnResponseGenerated. */
     UFUNCTION(BlueprintCallable, Category = "Generation")
     FGeneratedResponse GenerateFarewell();
 
     // ========================================
     // NARRATIVE GENERATION
     // ========================================
+    //
+    // Request* functions ask the model and return the ElementID that the
+    // eventual OnNarrativeGenerated broadcast will carry. The Generate*
+    // functions dispatch the same request and return a pending placeholder.
 
-    /** Generate narrative description */
+    /** Ask the model to narrate what Subject experienced across Events. Returns the ElementID. */
+    UFUNCTION(BlueprintCallable, Category = "Narrative")
+    FString RequestNarrative(const FString& Subject, const TArray<FString>& Events);
+
+    /** Ask the model for the agent's first-person self-description. Returns the ElementID. */
+    UFUNCTION(BlueprintCallable, Category = "Narrative")
+    FString RequestSelfNarrative();
+
+    /** Ask the model for a first-person summary of recent experience. Returns the ElementID. */
+    UFUNCTION(BlueprintCallable, Category = "Narrative")
+    FString RequestExperienceSummary(float TimeSpan);
+
+    /** Compatibility wrapper for RequestNarrative. Returns a pending placeholder; text arrives via OnNarrativeGenerated. */
     UFUNCTION(BlueprintCallable, Category = "Narrative")
     FNarrativeElement GenerateNarrative(const FString& Subject, const TArray<FString>& Events);
 
-    /** Generate self-description */
+    /** Compatibility wrapper for RequestSelfNarrative. Returns a pending placeholder; text arrives via OnNarrativeGenerated. */
     UFUNCTION(BlueprintCallable, Category = "Narrative")
     FNarrativeElement GenerateSelfNarrative();
 
-    /** Generate experience summary */
+    /** Compatibility wrapper for RequestExperienceSummary. Returns a pending placeholder; text arrives via OnNarrativeGenerated. */
     UFUNCTION(BlueprintCallable, Category = "Narrative")
     FNarrativeElement GenerateExperienceSummary(float TimeSpan);
 
@@ -422,9 +488,12 @@ protected:
     UPROPERTY()
     UEmotionalSystem* EmotionalComponent;
 
+    /** The model bridge every utterance is requested from */
+    UPROPERTY()
+    UDTELanguageModelBridge* ModelBridge;
+
     // Internal state
     FDialogueContext DialogueContext;
-    TArray<FResponseTemplate> ResponseTemplates;
 
     int32 UtteranceIDCounter = 0;
     int32 TurnIDCounter = 0;
@@ -435,14 +504,52 @@ protected:
     // Internal methods
     void FindComponentReferences();
     void InitializeLanguageSystem();
-    void InitializeResponseTemplates();
+
+    /** The cached bridge, resolving it on the owner when not yet cached */
+    UDTELanguageModelBridge* GetModelBridge();
 
     void UpdateDialogueState(float DeltaTime);
     void AddTurnToHistory(const FDialogueTurn& Turn);
 
-    FString SelectResponseTemplate(ESpeechAct InputAct, float EmotionalTone) const;
-    FString FillTemplateSlots(const FString& Template, const FParsedUtterance& Input) const;
-    FString ApplyEmotionalModulation(const FString& Text, float EmotionalTone) const;
+    /** Current emotional valence from the emotional component (0 when absent) */
+    float GetCurrentEmotionalTone() const;
+
+    /** Name of the most recent non-agent speaker, or empty */
+    FString GetLastSpeaker() const;
+
+    /**
+     * Compose the instruction for a reply to Input and dispatch the model
+     * request. bRecordAgentTurn adds the reply to the turn history on success.
+     */
+    FString DispatchReplyRequest(const FParsedUtterance& Input, float EmotionalTone, bool bRecordAgentTurn);
+
+    /**
+     * Ask the model for one utterance. Instruction says what kind of utterance
+     * is wanted; Situation adds facts beyond the shared dialogue context.
+     * On success an FGeneratedResponse is built and OnResponseGenerated fires;
+     * on failure a warning is logged and nothing is broadcast.
+     */
+    FString DispatchSpeechRequest(ESpeechAct ResponseAct, const FString& Instruction, const FString& Situation,
+                                  float EmotionalTone, float Confidence, bool bRecordAgentTurn,
+                                  EDialogueState StateOnSuccess);
+
+    /**
+     * Ask the model for a narrative passage. On success an FNarrativeElement is
+     * built and OnNarrativeGenerated fires; on failure nothing is broadcast.
+     */
+    FString DispatchNarrativeRequest(const FString& NarrativeType, const FString& Instruction, const FString& Situation,
+                                     const TArray<FString>& Characters, const FString& Setting, float EmotionalArc);
+
+    /** Shared situational prompt: identity, topic, recipient, emotional tone, formality */
+    FString BuildSituationPrompt(float EmotionalTone, const FString& Recipient) const;
+
+    /** Recent dialogue turns as chat messages (user/assistant) */
+    void AppendRecentTurns(TArray<FDTEChatMessage>& Messages) const;
+
+    /** Model-facing descriptions of scalar state (prompt context, not character text) */
+    FString DescribeEmotionalTone(float EmotionalTone) const;
+    FString DescribeFormality(float Formality) const;
+    FString DescribeSpeechAct(ESpeechAct Act) const;
 
     bool IsQuestion(const FString& Text) const;
     bool IsCommand(const FString& Text) const;

@@ -7,19 +7,24 @@
 #include "ProceduralAnimationComponent.h"
 #include "EchobeatsCognitiveInterface.generated.h"
 
+class UNeurochemicalSimulationComponent;
+
 /**
  * Echobeats Cognitive Interface
- * 
+ *
  * Bridges the Deep-Tree-Echo cognitive architecture with the avatar expression system.
  * Implements the 12-step cognitive loop with 3 concurrent streams phased 4 steps apart.
- * 
+ *
  * Cognitive Loop Structure:
  * - Steps {1,5,9}: Pivotal Relevance Realization (Stream 1)
  * - Steps {2,6,10}: Affordance Interaction (Stream 2)
  * - Steps {3,7,11}: Salience Processing (Stream 3)
  * - Steps {4,8,12}: Integration/Transition
- * 
- * Each step maps to expression hints that visualize the cognitive process.
+ *
+ * Each step is a moment at which the face is re-derived from the character's real affect
+ * (UDeepTreeEchoExpressionSystem::RefreshExpressionFromAffect). The step itself names no
+ * expression; the rhythm gates when affect is read, never what is shown. Insight and
+ * relevance events move the affect source and may ask the model what the face does.
  */
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnCognitiveStepChanged, int32, StepNumber, FString, PhaseName);
@@ -73,6 +78,9 @@ struct FCognitiveStreamState
 
 /**
  * Cognitive step configuration
+ *
+ * Names the phase and mode of a step and how brightly the bioluminescent markings show the
+ * cycle. It carries no expression or microexpression: those come from affect or the model.
  */
 USTRUCT(BlueprintType)
 struct FCognitiveStepConfig
@@ -88,17 +96,9 @@ struct FCognitiveStepConfig
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Step")
     ECognitiveMode Mode = ECognitiveMode::Expressive;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Step")
-    EExpressionState ExpressionHint;
-
+    /** Emissive (tech marking) level while this step is active; a cycle indicator, not a facial reaction. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Step")
     float EmissiveMultiplier = 1.0f;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Step")
-    bool bTriggerMicroExpression = false;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Step")
-    EMicroExpression MicroExpressionType = EMicroExpression::None;
 };
 
 /**
@@ -164,11 +164,14 @@ public:
 
     // ========== Relevance Realization ==========
 
-    /** Signal a relevance realization event (triggers expression response) */
+    /** Signal a relevance realization event (feeds attention; insight events reach the affect source and the model) */
     UFUNCTION(BlueprintCallable, Category = "Cognitive")
     void SignalRelevanceRealization(const FRelevanceRealizationEvent& Event);
 
-    /** Signal an insight moment (triggers Wonder-to-Joy) */
+    /**
+     * Signal an insight moment. Moves the neurochemical affect source (reward response) and asks the
+     * model what the face does; with neither, the face follows whatever affect is present.
+     */
     UFUNCTION(BlueprintCallable, Category = "Cognitive")
     void SignalInsight(float Intensity = 1.0f);
 
@@ -192,7 +195,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Integration")
     void ReceiveCognitiveUpdate(ECognitiveState NewState, float Confidence);
 
-    /** Receive speech state update */
+    /** Receive speech state update from whoever is playing real speech audio (amplitude is forwarded each call) */
     UFUNCTION(BlueprintCallable, Category = "Integration")
     void ReceiveSpeechUpdate(bool bIsSpeaking, float Amplitude);
 
@@ -243,8 +246,8 @@ protected:
     /** Update streams based on current step */
     void UpdateStreams();
 
-    /** Apply expression for current step */
-    void ApplyStepExpression();
+    /** Re-derive the face from affect for the current step and apply the step's emissive level */
+    void ReevaluateAffectForStep();
 
     /** Get step configuration */
     const FCognitiveStepConfig* GetStepConfig(int32 StepNumber) const;
@@ -259,6 +262,10 @@ private:
 
     UPROPERTY()
     UProceduralAnimationComponent* ProceduralAnim;
+
+    /** Real affect source on the owner; insight events move it. */
+    UPROPERTY()
+    UNeurochemicalSimulationComponent* Neurochemistry;
 
     // Loop state
     bool bLoopRunning;

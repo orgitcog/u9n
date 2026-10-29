@@ -23,7 +23,7 @@ class UNREALENGINE_API UAnimNotify_TriggerAudioCue : public UAnimNotify
 public:
     UAnimNotify_TriggerAudioCue();
 
-    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
+    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
     USoundBase* AudioCue;
@@ -53,7 +53,7 @@ class UNREALENGINE_API UAnimNotify_TriggerParticleEffect : public UAnimNotify
 public:
     UAnimNotify_TriggerParticleEffect();
 
-    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
+    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Particle")
     UNiagaraSystem* ParticleSystem;
@@ -87,7 +87,7 @@ class UNREALENGINE_API UAnimNotify_TriggerMaterialEffect : public UAnimNotify
 public:
     UAnimNotify_TriggerMaterialEffect();
 
-    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
+    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Material")
     FName ParameterName;
@@ -117,7 +117,7 @@ class UNREALENGINE_API UAnimNotify_TriggerGestureSound : public UAnimNotify
 public:
     UAnimNotify_TriggerGestureSound();
 
-    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
+    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Gesture")
     FName GestureName;
@@ -135,9 +135,9 @@ class UNREALENGINE_API UAnimNotifyState_MaterialEffectOverTime : public UAnimNot
 public:
     UAnimNotifyState_MaterialEffectOverTime();
 
-    virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration) override;
-    virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime) override;
-    virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
+    virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
+    virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
+    virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Material")
     FName ParameterName;
@@ -171,9 +171,9 @@ class UNREALENGINE_API UAnimNotifyState_ParticleEffectOverTime : public UAnimNot
 public:
     UAnimNotifyState_ParticleEffectOverTime();
 
-    virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration) override;
-    virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime) override;
-    virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
+    virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
+    virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
+    virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Particle")
     UNiagaraSystem* ParticleSystem;
@@ -194,7 +194,8 @@ private:
 
 /**
  * Animation Notify: Trigger Echo Resonance
- * Triggers the echo resonance effect (visual + audio)
+ * Pulses the echo resonance effect (cognitive visualization + sound) in time with the animation.
+ * A timing cue for an ambient effect; it selects no expression or gesture.
  */
 UCLASS()
 class UNREALENGINE_API UAnimNotify_TriggerEchoResonance : public UAnimNotify
@@ -204,15 +205,21 @@ class UNREALENGINE_API UAnimNotify_TriggerEchoResonance : public UAnimNotify
 public:
     UAnimNotify_TriggerEchoResonance();
 
-    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
+    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo", meta = (ClampMin = "0.0", ClampMax = "1.0"))
     float Intensity;
+
+    /** Length of the resonance pulse in seconds. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Echo", meta = (ClampMin = "0.05"))
+    float Duration;
 };
 
 /**
- * Animation Notify: Trigger Cognitive Load Effect
- * Triggers cognitive load visualization
+ * Animation Notify: Cognitive Effort
+ * Marks a moment of the animation as mentally demanding. The load is applied to the owner's
+ * neurochemical simulation (SimulateCognitiveTask) so the character's measured state changes;
+ * the cognitive visualization then follows from that state rather than from this asset.
  */
 UCLASS()
 class UNREALENGINE_API UAnimNotify_TriggerCognitiveLoad : public UAnimNotify
@@ -222,8 +229,13 @@ class UNREALENGINE_API UAnimNotify_TriggerCognitiveLoad : public UAnimNotify
 public:
     UAnimNotify_TriggerCognitiveLoad();
 
-    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
+    virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
+    /** Difficulty of the task this moment represents (0-1). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cognitive", meta = (ClampMin = "0.0", ClampMax = "1.0"))
     float LoadIntensity;
+
+    /** How long the task lasts, in seconds. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Cognitive", meta = (ClampMin = "0.05"))
+    float Duration;
 };

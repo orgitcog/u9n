@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "DTELanguageModelBridge.h"
 #include "AvatarCommunicationManager.generated.h"
 
 // Forward declarations
@@ -152,6 +153,10 @@ struct FDovecotEmail
 
 /**
  * Generated Response structure
+ *
+ * Content is always written by the language model. A response whose text has
+ * not arrived yet has empty Content and bIsPending = true; nothing is ever
+ * sent, logged or broadcast for it until the model answers.
  */
 USTRUCT(BlueprintType)
 struct FGeneratedResponse
@@ -161,6 +166,7 @@ struct FGeneratedResponse
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString ResponseId;
 
+    /** Reply text as written by the model. Empty while bIsPending. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FString Content;
 
@@ -182,11 +188,16 @@ struct FGeneratedResponse
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     bool bRequiresConfirmation;
 
+    /** True while the model request that will fill Content is still in flight. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    bool bIsPending;
+
     FGeneratedResponse()
         : Confidence(0.8f)
         , EmotionalValence(0.5f)
         , EmotionalArousal(0.5f)
         , bRequiresConfirmation(false)
+        , bIsPending(false)
     {}
 };
 
@@ -213,8 +224,13 @@ struct FConversationContext
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     EConversationState State;
 
+    /** Messages received from the participant, oldest first. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     TArray<FString> MessageHistory;
+
+    /** Replies actually sent to the participant, oldest first. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TArray<FString> ReplyHistory;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     FDateTime StartedAt;
@@ -250,6 +266,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnResponseGenerated, const FString
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnConversationStateChanged, const FString&, ConversationId, EConversationState, NewState);
 
 /**
+ * Completion callback for the Request... functions. bSuccess is false when the
+ * model did not answer; Response.Content is then empty and must not be sent.
+ */
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FOnCommunicationResponseReady, bool, bSuccess, const FGeneratedResponse&, Response);
+
+/** C++ counterpart of FOnCommunicationResponseReady. */
+using FCommunicationResponseCallback = TFunction<void(bool bSuccess, const FGeneratedResponse& Response)>;
+
+/**
  * Avatar Communication Manager Component
  * Handles messaging integration with DeltaChat and Dovecot for AGI-OS
  *
@@ -263,10 +288,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnConversationStateChanged, const 
  * Narrative System (add to diary, generate insight)
  *     |
  *     v
- * Response Generation (craft reply)
+ * Language Model Bridge (writes the reply; personality, tone, history and
+ *                        detected intent are supplied as prompt context)
  *     |
  *     v
  * DeltaChat/Dovecot <- 9P Interface <- Avatar Communication Manager
+ *
+ * Every reply is written by the model. When the model does not answer, the
+ * incoming message is left unanswered and recorded in UnansweredMessageIds so
+ * an operator can see it; no substitute text is ever sent.
  */
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class UNREALENGINE_API UAvatarCommunicationManager : public UActorComponent
@@ -313,15 +343,48 @@ public:
     void ProcessPendingMessages();
 
     // ===== Response Generation =====
+    //
+    // All reply text comes from the language model and arrives asynchronously.
 
+    /**
+     * Ask the model to reply to Input within Context. OnDone fires once with the
+     * finished response, or with bSuccess = false and empty Content when the
+     * model did not answer.
+     */
     UFUNCTION(BlueprintCallable, Category = "Communication|Response")
+    void RequestResponse(const FString& Input, const FConversationContext& Context, FOnCommunicationResponseReady OnDone);
+
+    /** Ask the model to reply to a DeltaChat message. Broadcasts OnResponseGenerated(MessageId) on success, then OnDone. */
+    UFUNCTION(BlueprintCallable, Category = "Communication|Response")
+    void RequestDeltaChatResponse(const FDeltaChatMessage& Message, FOnCommunicationResponseReady OnDone);
+
+    /** Ask the model to reply to an email. Broadcasts OnResponseGenerated(EmailId) on success, then OnDone. */
+    UFUNCTION(BlueprintCallable, Category = "Communication|Response")
+    void RequestEmailResponse(const FDovecotEmail& Email, FOnCommunicationResponseReady OnDone);
+
+    /**
+     * Compatibility wrapper around RequestResponse. Dispatches the model request
+     * and returns an empty response with bIsPending = true; the written reply
+     * arrives through OnResponseGenerated, keyed by the returned ResponseId.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Communication|Response", meta = (DeprecatedFunction, DeprecationMessage = "Use RequestResponse; replies arrive asynchronously."))
     FGeneratedResponse GenerateResponse(const FString& Input, const FConversationContext& Context);
 
-    UFUNCTION(BlueprintCallable, Category = "Communication|Response")
+    /** Compatibility wrapper around RequestDeltaChatResponse; see GenerateResponse. Keyed by Message.MessageId. */
+    UFUNCTION(BlueprintCallable, Category = "Communication|Response", meta = (DeprecatedFunction, DeprecationMessage = "Use RequestDeltaChatResponse; replies arrive asynchronously."))
     FGeneratedResponse GenerateDeltaChatResponse(const FDeltaChatMessage& Message);
 
-    UFUNCTION(BlueprintCallable, Category = "Communication|Response")
+    /** Compatibility wrapper around RequestEmailResponse; see GenerateResponse. Keyed by Email.EmailId. */
+    UFUNCTION(BlueprintCallable, Category = "Communication|Response", meta = (DeprecatedFunction, DeprecationMessage = "Use RequestEmailResponse; replies arrive asynchronously."))
     FGeneratedResponse GenerateEmailResponse(const FDovecotEmail& Email);
+
+    /** Messages the model did not answer (dropped from the queue, nothing sent). Operator-facing. */
+    UFUNCTION(BlueprintPure, Category = "Communication|Response")
+    TArray<FString> GetUnansweredMessageIds() const { return UnansweredMessageIds; }
+
+    /** Number of model requests currently in flight for this component. */
+    UFUNCTION(BlueprintPure, Category = "Communication|Response")
+    int32 GetInFlightRequestCount() const { return InFlightRequests; }
 
     UFUNCTION(BlueprintCallable, Category = "Communication|Response")
     void SendDeltaChatResponse(const FString& ChatId, const FGeneratedResponse& Response);
@@ -362,12 +425,15 @@ public:
 
     // ===== Narrative Integration =====
 
+    /** Records the exchange (incoming text and the reply the model wrote). Only called once a reply exists. */
     UFUNCTION(BlueprintCallable, Category = "Communication|Narrative")
     void LogToNarrativeSystem(const FDeltaChatMessage& Message, const FGeneratedResponse& Response);
 
+    /** Records the exchange (incoming email and the reply the model wrote). Only called once a reply exists. */
     UFUNCTION(BlueprintCallable, Category = "Communication|Narrative")
     void LogEmailToNarrativeSystem(const FDovecotEmail& Email, const FGeneratedResponse& Response);
 
+    /** Asks the model to reflect on the conversation; the insight is stored only when it answers. */
     UFUNCTION(BlueprintCallable, Category = "Communication|Narrative")
     void ExtractInsightsFromConversation(const FConversationContext& Context);
 
@@ -412,12 +478,39 @@ protected:
 
     void ProcessDeltaChatQueue();
     void ProcessEmailQueue();
-    FString GenerateResponseText(const FString& Input, const FConversationContext& Context);
+
+    /** C++ core of RequestResponse. ResponseId is assigned to the finished response. */
+    void RequestResponseInternal(const FString& Input, const FConversationContext& Context,
+                                 const FString& ResponseId, FCommunicationResponseCallback OnDone);
+    void RequestDeltaChatResponseInternal(const FDeltaChatMessage& Message, const FString& ResponseId,
+                                          FCommunicationResponseCallback OnDone);
+    void RequestEmailResponseInternal(const FDovecotEmail& Email, const FString& ResponseId,
+                                      FCommunicationResponseCallback OnDone);
+
+    /** Builds the system/style message for a reply request from context, tone, intent and personality. */
+    FString BuildReplyInstruction(const FConversationContext& Context, const FString& Intent,
+                                  const FString& Tone, int32 TargetLength, bool bUseEmoji) const;
+    /** Builds the transcript (history plus the new message) the model replies to. */
+    TArray<FDTEChatMessage> BuildReplyTranscript(const FString& Input, const FConversationContext& Context,
+                                                 const FString& Instruction) const;
+    /** Personality traits and current emotional chemistry as prompt context. */
+    FString DescribePersonalityForPrompt() const;
+
+    /** Response metadata only (tone, valence, arousal, confidence). Never touches Content. */
     void ApplyPersonalityToResponse(FGeneratedResponse& Response);
+    void FillEmotionalMetadata(FGeneratedResponse& Response, const FConversationContext& Context) const;
+    FGeneratedResponse MakePendingResponse(const FConversationContext& Context) const;
+
+    void RecordReply(const FString& ParticipantId, const FString& Content);
+    void MarkUnanswered(const FString& MessageId, const FString& Source, const FString& Reason);
     void UpdateEmotionalStateFromInteraction(const FString& MessageContent, bool bIsIncoming);
 
 private:
     // ===== Component References =====
+
+    /** Writes every reply. Resolved in BeginPlay via UDTELanguageModelBridge::FindOrAdd(GetOwner()). */
+    UPROPERTY()
+    UDTELanguageModelBridge* ModelBridge;
 
     UPROPERTY()
     UPersonalityTraitSystem* PersonalitySystem;
@@ -461,6 +554,13 @@ private:
 
     UPROPERTY()
     TArray<FGeneratedResponse> PendingResponses;
+
+    /** Ids of messages/emails the model did not answer. Readable at /mnt/avatar/communication/unanswered. */
+    UPROPERTY(VisibleAnywhere, Category = "Communication|Status")
+    TArray<FString> UnansweredMessageIds;
+
+    UPROPERTY(VisibleAnywhere, Category = "Communication|Status")
+    int32 InFlightRequests;
 
     // ===== Conversation State =====
 

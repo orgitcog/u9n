@@ -1,4 +1,5 @@
 #include "AvatarCognitionBridge.h"
+#include "../Neurochemical/NeurochemicalSimulationComponent.h"
 
 UAvatarCognitionBridge::UAvatarCognitionBridge()
 {
@@ -10,6 +11,7 @@ UAvatarCognitionBridge::UAvatarCognitionBridge()
     Reservoir = nullptr;
     ReservoirCognition = nullptr;
     EmbodiedCognition = nullptr;
+    Neurochemistry = nullptr;
 
     LastEchobeatStep = 0;
     EmbodimentCoherence = 1.0f;
@@ -40,6 +42,12 @@ void UAvatarCognitionBridge::TickComponent(float DeltaTime, ELevelTick TickType,
         UpdateFromReservoirState();
     }
 
+    // The face is decided by the expression system (affect / model); the bridge mirrors it
+    if (ExpressionSystem)
+    {
+        TargetEmbodiment.Expression = ExpressionSystem->GetTargetExpressionState();
+    }
+
     // Smooth transition to target embodiment
     SmoothEmbodimentTransition(DeltaTime);
 
@@ -61,11 +69,13 @@ void UAvatarCognitionBridge::FindComponentReferences()
     Reservoir = Owner->FindComponentByClass<UDeepTreeEchoReservoir>();
     ReservoirCognition = Owner->FindComponentByClass<UReservoirCognitiveIntegration>();
     EmbodiedCognition = Owner->FindComponentByClass<UEmbodiedCognitionComponent>();
+    Neurochemistry = Owner->FindComponentByClass<UNeurochemicalSimulationComponent>();
 
-    UE_LOG(LogTemp, Log, TEXT("AvatarCognitionBridge found components: Expression=%s, Echobeats=%s, Reservoir=%s"),
+    UE_LOG(LogTemp, Log, TEXT("AvatarCognitionBridge found components: Expression=%s, Echobeats=%s, Reservoir=%s, Affect=%s"),
         ExpressionSystem ? TEXT("Yes") : TEXT("No"),
         EchobeatsInterface ? TEXT("Yes") : TEXT("No"),
-        Reservoir ? TEXT("Yes") : TEXT("No"));
+        Reservoir ? TEXT("Yes") : TEXT("No"),
+        Neurochemistry ? TEXT("Yes") : TEXT("No"));
 }
 
 void UAvatarCognitionBridge::BindCognitiveEvents()
@@ -87,222 +97,53 @@ void UAvatarCognitionBridge::InitializeBridge()
 
 void UAvatarCognitionBridge::SetupDefaultMappings()
 {
+    // Cognitive states modulate autonomic rates and the tech glow only. None of them names an
+    // expression: the face is derived from affect, or chosen by the model for an utterance.
     CognitiveExpressionMappings.Empty();
 
-    // Idle -> Neutral
+    auto AddMapping = [this](ECognitiveState State, float Emissive, float Breathing, float Blink)
     {
         FCognitiveExpressionMapping Mapping;
-        Mapping.CognitiveState = ECognitiveState::Idle;
-        Mapping.PrimaryExpression = EExpressionState::Neutral;
-        Mapping.EmissiveModifier = 0.8f;
-        Mapping.BreathingModifier = 0.8f;
+        Mapping.CognitiveState = State;
+        Mapping.EmissiveModifier = Emissive;
+        Mapping.BreathingModifier = Breathing;
+        Mapping.BlinkModifier = Blink;
         CognitiveExpressionMappings.Add(Mapping);
-    }
+    };
 
-    // Listening -> Alert Gaze
-    {
-        FCognitiveExpressionMapping Mapping;
-        Mapping.CognitiveState = ECognitiveState::Listening;
-        Mapping.PrimaryExpression = EExpressionState::AlertGaze;
-        Mapping.SecondaryExpression = EExpressionState::CuriousGaze;
-        Mapping.SecondaryBlendWeight = 0.3f;
-        Mapping.EmissiveModifier = 1.1f;
-        Mapping.BlinkModifier = 0.7f;
-        CognitiveExpressionMappings.Add(Mapping);
-    }
+    AddMapping(ECognitiveState::Idle,          0.8f, 0.8f, 1.0f);
+    AddMapping(ECognitiveState::Listening,     1.1f, 1.0f, 0.7f);
+    AddMapping(ECognitiveState::Processing,    1.2f, 0.9f, 0.8f);
+    AddMapping(ECognitiveState::Reasoning,     1.3f, 0.7f, 0.6f);
+    AddMapping(ECognitiveState::Insight,       1.5f, 1.3f, 1.2f);
+    AddMapping(ECognitiveState::Communicating, 1.0f, 1.2f, 1.0f);
+    AddMapping(ECognitiveState::Reflecting,    0.9f, 0.8f, 0.8f);
+    AddMapping(ECognitiveState::Engaging,      1.2f, 1.0f, 0.9f);
 
-    // Processing -> Contemplative
-    {
-        FCognitiveExpressionMapping Mapping;
-        Mapping.CognitiveState = ECognitiveState::Processing;
-        Mapping.PrimaryExpression = EExpressionState::Contemplative;
-        Mapping.EmissiveModifier = 1.2f;
-        Mapping.BreathingModifier = 0.9f;
-        Mapping.BlinkModifier = 0.8f;
-        CognitiveExpressionMappings.Add(Mapping);
-    }
-
-    // Speaking -> Speaking Vowel
-    {
-        FCognitiveExpressionMapping Mapping;
-        Mapping.CognitiveState = ECognitiveState::Speaking;
-        Mapping.PrimaryExpression = EExpressionState::SpeakingVowel;
-        Mapping.EmissiveModifier = 1.0f;
-        Mapping.BreathingModifier = 1.2f;
-        CognitiveExpressionMappings.Add(Mapping);
-    }
-
-    // Thinking -> Contemplative with upward gaze
-    {
-        FCognitiveExpressionMapping Mapping;
-        Mapping.CognitiveState = ECognitiveState::Thinking;
-        Mapping.PrimaryExpression = EExpressionState::Contemplative;
-        Mapping.SecondaryExpression = EExpressionState::UpwardGaze;
-        Mapping.SecondaryBlendWeight = 0.4f;
-        Mapping.EmissiveModifier = 1.3f;
-        Mapping.BreathingModifier = 0.7f;
-        Mapping.BlinkModifier = 0.6f;
-        CognitiveExpressionMappings.Add(Mapping);
-    }
-
-    // Excited -> Broad Smile
-    {
-        FCognitiveExpressionMapping Mapping;
-        Mapping.CognitiveState = ECognitiveState::Excited;
-        Mapping.PrimaryExpression = EExpressionState::BroadSmile;
-        Mapping.SecondaryExpression = EExpressionState::Laughing;
-        Mapping.SecondaryBlendWeight = 0.2f;
-        Mapping.EmissiveModifier = 1.5f;
-        Mapping.BreathingModifier = 1.3f;
-        Mapping.BlinkModifier = 1.2f;
-        CognitiveExpressionMappings.Add(Mapping);
-    }
-
-    // Curious -> Curious Gaze
-    {
-        FCognitiveExpressionMapping Mapping;
-        Mapping.CognitiveState = ECognitiveState::Curious;
-        Mapping.PrimaryExpression = EExpressionState::CuriousGaze;
-        Mapping.SecondaryExpression = EExpressionState::AlertGaze;
-        Mapping.SecondaryBlendWeight = 0.2f;
-        Mapping.EmissiveModifier = 1.2f;
-        Mapping.BlinkModifier = 0.9f;
-        CognitiveExpressionMappings.Add(Mapping);
-    }
-
-    // Confused -> Contemplative with concern blend
-    {
-        FCognitiveExpressionMapping Mapping;
-        Mapping.CognitiveState = ECognitiveState::Confused;
-        Mapping.PrimaryExpression = EExpressionState::Contemplative;
-        Mapping.EmissiveModifier = 0.9f;
-        Mapping.BreathingModifier = 1.1f;
-        CognitiveExpressionMappings.Add(Mapping);
-    }
-
-    UE_LOG(LogTemp, Log, TEXT("Setup %d default cognitive-expression mappings"), CognitiveExpressionMappings.Num());
+    UE_LOG(LogTemp, Log, TEXT("Setup %d default cognitive modulation mappings"), CognitiveExpressionMappings.Num());
 }
 
 void UAvatarCognitionBridge::InitializeDefaultEchobeatsProfiles()
 {
+    // Per-step timing for the affect re-evaluation, plus a glow pulse on the pivotal steps
+    // {1,5,9} that open each triad. No step names an expression.
     EchobeatsProfiles.Empty();
     EchobeatsProfiles.Reserve(12);
 
-    // Step 1: Pivotal-Perception - Alert
+    for (int32 Step = 1; Step <= 12; ++Step)
     {
         FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 1;
-        Profile.TargetExpression = EExpressionState::AlertGaze;
-        Profile.TransitionDuration = 0.3f;
-        Profile.bPulseOnEntry = true;
-        Profile.MicroExpression = EMicroExpression::UnilateralBrowRaise;
+        Profile.StepNumber = Step;
+
+        const bool bPivotal = (Step % 4) == 1;         // 1, 5, 9
+        const bool bIntegration = (Step % 4) == 0;     // 4, 8, 12
+        Profile.TransitionDuration = bPivotal ? 0.3f : (bIntegration ? 0.5f : 0.4f);
+        Profile.bPulseOnEntry = bPivotal;
+
         EchobeatsProfiles.Add(Profile);
     }
 
-    // Step 2: Affordance-Perception - Curious
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 2;
-        Profile.TargetExpression = EExpressionState::CuriousGaze;
-        Profile.TransitionDuration = 0.4f;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    // Step 3: Salience-Perception - Awe
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 3;
-        Profile.TargetExpression = EExpressionState::Awe;
-        Profile.TransitionDuration = 0.4f;
-        Profile.bPulseOnEntry = true;
-        Profile.MicroExpression = EMicroExpression::EyelidFlutter;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    // Step 4: Integration-1 - Gentle Smile
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 4;
-        Profile.TargetExpression = EExpressionState::GentleSmile;
-        Profile.TransitionDuration = 0.5f;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    // Step 5: Pivotal-Action - Gentle Smile
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 5;
-        Profile.TargetExpression = EExpressionState::GentleSmile;
-        Profile.TransitionDuration = 0.4f;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    // Step 6: Affordance-Action - Speaking
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 6;
-        Profile.TargetExpression = EExpressionState::SpeakingVowel;
-        Profile.TransitionDuration = 0.3f;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    // Step 7: Salience-Action - Broad Smile
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 7;
-        Profile.TargetExpression = EExpressionState::BroadSmile;
-        Profile.TransitionDuration = 0.4f;
-        Profile.bPulseOnEntry = true;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    // Step 8: Integration-2 - Neutral (rest)
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 8;
-        Profile.TargetExpression = EExpressionState::Neutral;
-        Profile.TransitionDuration = 0.5f;
-        Profile.MicroExpression = EMicroExpression::Blink;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    // Step 9: Pivotal-Simulation - Contemplative
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 9;
-        Profile.TargetExpression = EExpressionState::Contemplative;
-        Profile.TransitionDuration = 0.4f;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    // Step 10: Affordance-Simulation - Contemplative
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 10;
-        Profile.TargetExpression = EExpressionState::Contemplative;
-        Profile.TransitionDuration = 0.4f;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    // Step 11: Salience-Simulation - Blissful
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 11;
-        Profile.TargetExpression = EExpressionState::Blissful;
-        Profile.TransitionDuration = 0.5f;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    // Step 12: Integration-3 - Contemplative (cycle end)
-    {
-        FEchobeatsExpressionProfile Profile;
-        Profile.StepNumber = 12;
-        Profile.TargetExpression = EExpressionState::Contemplative;
-        Profile.TransitionDuration = 0.5f;
-        EchobeatsProfiles.Add(Profile);
-    }
-
-    UE_LOG(LogTemp, Log, TEXT("Initialized %d echobeats expression profiles"), EchobeatsProfiles.Num());
+    UE_LOG(LogTemp, Log, TEXT("Initialized %d echobeats profiles"), EchobeatsProfiles.Num());
 }
 
 // ========================================
@@ -313,14 +154,13 @@ void UAvatarCognitionBridge::UpdateFromCognitiveState(ECognitiveState NewState)
 {
     FCognitiveExpressionMapping Mapping = GetMappingForCognitiveState(NewState);
 
-    TargetEmbodiment.Expression = Mapping.PrimaryExpression;
-    TargetEmbodiment.ExpressionIntensity = 1.0f - Mapping.SecondaryBlendWeight;
     TargetEmbodiment.EmissiveIntensity = Mapping.EmissiveModifier;
     TargetEmbodiment.BreathingRate = Mapping.BreathingModifier;
     TargetEmbodiment.BlinkRate = Mapping.BlinkModifier;
 
     if (ExpressionSystem)
     {
+        // Records the state and re-derives the face from affect
         ExpressionSystem->SetCognitiveState(NewState);
     }
 }
@@ -330,15 +170,22 @@ void UAvatarCognitionBridge::ProcessRelevanceRealization(float Salience, bool bI
     if (bIsInsight)
     {
         OnInsightTriggered(Salience);
+        return;
     }
-    else if (Salience > 0.7f)
+
+    // Salience is real attention; the expression system maps it onto gaze deterministically
+    if (ExpressionSystem)
     {
-        // High salience triggers alert expression
-        TargetEmbodiment.Expression = EExpressionState::AlertGaze;
+        ExpressionSystem->SetAttentionLevel(Salience);
+    }
+
+    if (Salience > 0.7f)
+    {
         TargetEmbodiment.EmissiveIntensity = 1.0f + Salience * 0.5f;
 
         if (ExpressionSystem)
         {
+            ExpressionSystem->RefreshExpressionFromAffect(0.3f);
             ExpressionSystem->PulseEmissives(0.3f, 1.5f + Salience);
         }
     }
@@ -370,7 +217,7 @@ void UAvatarCognitionBridge::UpdateFromReservoirState()
 
     FReservoirCognitiveState CogState = ReservoirCognition->GetCognitiveState();
 
-    // Map salience to expression
+    // Salience becomes attention
     MapSalienceToExpression(CogState.SalienceMap);
 
     // Map affordances to posture
@@ -398,15 +245,20 @@ void UAvatarCognitionBridge::MapSalienceToExpression(const TMap<FString, float>&
         }
     }
 
-    // High salience triggers more alert expression
+    // Peak salience is the character's real attention level; the expression system folds it
+    // into the affect mapping on the next re-evaluation (gaze sharpens with attention).
+    if (ExpressionSystem)
+    {
+        ExpressionSystem->SetAttentionLevel(MaxSalience);
+    }
+
+    // The tech glow brightens with salience
     if (MaxSalience > 0.8f)
     {
-        TargetEmbodiment.Expression = EExpressionState::AlertGaze;
         TargetEmbodiment.EmissiveIntensity = 1.2f + MaxSalience * 0.3f;
     }
     else if (MaxSalience > 0.5f)
     {
-        TargetEmbodiment.Expression = EExpressionState::CuriousGaze;
         TargetEmbodiment.EmissiveIntensity = 1.0f + MaxSalience * 0.2f;
     }
 }
@@ -440,33 +292,28 @@ void UAvatarCognitionBridge::OnEchobeatStepChanged(int32 NewStep, const FString&
 
     FEchobeatsExpressionProfile Profile = GetProfileForStep(NewStep);
 
-    TargetEmbodiment.Expression = Profile.TargetExpression;
-
-    if (Profile.bPulseOnEntry && ExpressionSystem)
+    if (ExpressionSystem)
     {
-        ExpressionSystem->PulseEmissives(0.2f, 1.5f);
-    }
+        // The step is when affect is re-read; it does not say what the face shows
+        ExpressionSystem->RefreshExpressionFromAffect(Profile.TransitionDuration);
 
-    if (Profile.MicroExpression != EMicroExpression::None && ExpressionSystem)
-    {
-        ExpressionSystem->TriggerMicroExpression(Profile.MicroExpression, 0.2f);
+        if (Profile.bPulseOnEntry)
+        {
+            ExpressionSystem->PulseEmissives(0.2f, 1.5f);
+        }
+
+        TargetEmbodiment.Expression = ExpressionSystem->GetTargetExpressionState();
     }
 
     LastEchobeatStep = NewStep;
 
-    UE_LOG(LogTemp, Verbose, TEXT("Echobeat step %d (%s): Expression -> %d"),
-        NewStep, *PhaseName, (int32)Profile.TargetExpression);
+    UE_LOG(LogTemp, Verbose, TEXT("Echobeat step %d (%s): affect re-evaluated -> expression %d"),
+        NewStep, *PhaseName, (int32)TargetEmbodiment.Expression);
 }
 
 void UAvatarCognitionBridge::OnCognitiveCycleComplete(int32 CycleCount)
 {
-    // Trigger a satisfied expression at cycle completion
-    if (ExpressionSystem)
-    {
-        ExpressionSystem->TriggerMicroExpression(EMicroExpression::Blink, 0.3f);
-    }
-
-    // Subtle emissive pulse to mark cycle boundary
+    // Subtle emissive pulse marks the cycle boundary; the face is not touched
     if (ExpressionSystem)
     {
         ExpressionSystem->PulseEmissives(0.5f, 1.2f);
@@ -477,14 +324,30 @@ void UAvatarCognitionBridge::OnCognitiveCycleComplete(int32 CycleCount)
 
 void UAvatarCognitionBridge::OnInsightTriggered(float Intensity)
 {
-    // Insight triggers Wonder-to-Joy transition
+    Intensity = FMath::Clamp(Intensity, 0.0f, 1.0f);
+
+    // An insight is a real event: it rewards the affect source, and the face follows affect
+    if (Neurochemistry)
+    {
+        Neurochemistry->TriggerRewardResponse(Intensity);
+    }
+
     if (ExpressionSystem)
     {
-        ExpressionSystem->TriggerWonderToJoyTransition(1.5f * (2.0f - Intensity));
+        ExpressionSystem->RefreshExpressionFromAffect(0.3f);
+
+        // The model decides what, if anything, the face does for this moment
+        const FString Event = FString::Printf(
+            TEXT("An insight just landed (intensity %.2f of 1): something the character had been reasoning about resolved into a clear pattern."),
+            Intensity);
+        if (!ExpressionSystem->RequestExpressionForEvent(Event))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("AvatarCognitionBridge: insight expression not requested, no model bridge; face follows affect only"));
+        }
+
         ExpressionSystem->PulseEmissives(0.5f, 2.0f + Intensity);
     }
 
-    TargetEmbodiment.Expression = EExpressionState::BroadSmile;
     TargetEmbodiment.EmissiveIntensity = 1.5f + Intensity * 0.5f;
 
     UE_LOG(LogTemp, Log, TEXT("Insight triggered with intensity %.2f"), Intensity);
@@ -533,8 +396,7 @@ void UAvatarCognitionBridge::ApplyEmbodimentToExpression()
     if (!ExpressionSystem)
         return;
 
-    // Apply current embodiment state to expression system
-    ExpressionSystem->SetExpressionState(CurrentEmbodiment.Expression, GlobalSmoothing);
+    // Only the tech glow is pushed; the expression itself belongs to the expression system
     ExpressionSystem->SetEmissiveIntensity(CurrentEmbodiment.EmissiveIntensity);
 }
 
@@ -569,10 +431,9 @@ FCognitiveExpressionMapping UAvatarCognitionBridge::GetMappingForCognitiveState(
         }
     }
 
-    // Default mapping
+    // Default mapping: no modulation
     FCognitiveExpressionMapping Default;
     Default.CognitiveState = State;
-    Default.PrimaryExpression = EExpressionState::Neutral;
     return Default;
 }
 
@@ -589,7 +450,6 @@ FEchobeatsExpressionProfile UAvatarCognitionBridge::GetProfileForStep(int32 Step
     // Default profile
     FEchobeatsExpressionProfile Default;
     Default.StepNumber = Step;
-    Default.TargetExpression = EExpressionState::Neutral;
     return Default;
 }
 

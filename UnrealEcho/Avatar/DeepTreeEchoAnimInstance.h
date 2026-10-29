@@ -2,14 +2,22 @@
 
 #include "CoreMinimal.h"
 #include "Animation/AnimInstance.h"
+#include "Animation/AnimNotifies/AnimNotify.h"
+#include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "DeepTreeEchoExpressionSystem.h"
 #include "DeepTreeEchoAnimInstance.generated.h"
 
+class UAudioManagerComponent;
+
 /**
  * Deep-Tree-Echo Animation Instance
- * 
+ *
  * Animation Blueprint base class for the Deep-Tree-Echo avatar
  * Integrates with the expression system for facial animation and procedural movement
+ *
+ * Speaking state is read from real speech playback (UAudioManagerComponent::IsSpeaking on the
+ * owner, or an explicit mouth amplitude fed to the expression system by whoever plays audio).
+ * No talking animation runs while nothing is being heard.
  */
 UCLASS()
 class DEEPTREECHO_API UDeepTreeEchoAnimInstance : public UAnimInstance
@@ -67,11 +75,11 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Procedural")
     FVector2D HeadSwayOffset;
 
-    /** Is currently speaking */
+    /** True only while speech audio is actually playing (or an explicit mouth amplitude is live). */
     UPROPERTY(BlueprintReadOnly, Category = "Speech")
     bool bIsSpeaking;
 
-    /** Speaking amplitude (0-1) */
+    /** Mouth-open amplitude (0-1) while speaking; 0 otherwise. */
     UPROPERTY(BlueprintReadOnly, Category = "Speech")
     float SpeakingAmplitude;
 
@@ -81,7 +89,7 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "State")
     bool bIsIdle;
 
-    /** Is in talking state */
+    /** Is in talking state: identical to bIsSpeaking, never derived from a cognitive phase alone. */
     UPROPERTY(BlueprintReadOnly, Category = "State")
     bool bIsTalking;
 
@@ -116,10 +124,17 @@ protected:
     /** Update state machine variables */
     void UpdateStateVariables();
 
+    /** Resolve the owner's expression system and audio manager when they are not cached yet. */
+    void ResolveOwnerComponents();
+
 private:
     /** Cached owner character */
     UPROPERTY()
     class ACharacter* OwnerCharacter;
+
+    /** Speech playback source on the owner; the only thing that makes the avatar "speak". */
+    UPROPERTY()
+    UAudioManagerComponent* AudioManager;
 
     /** Breathing phase accumulator */
     float BreathingPhase;
@@ -132,17 +147,25 @@ private:
 };
 
 /**
- * Animation Notify for expression triggers
+ * Animation Notify: refresh the face at a beat of the animation.
+ *
+ * The notify decides when the face is re-evaluated, never what it shows. With an
+ * EventDescription the language model is asked which expression fits the event this
+ * moment of the animation represents (UDeepTreeEchoExpressionSystem::RequestExpressionForEvent);
+ * otherwise, or when no model bridge is available, the face is re-derived from the owner's
+ * measured affect (RefreshExpressionFromAffect).
  */
-UCLASS()
-class DEEPTREECHO_API UAnimNotify_TriggerExpression : public UAnimNotify
+UCLASS(meta = (DisplayName = "DTE Refresh Expression"))
+class DEEPTREECHO_API UAnimNotify_RefreshExpression : public UAnimNotify
 {
     GENERATED_BODY()
 
 public:
+    /** What this moment of the animation represents (e.g. "notices the visitor"). Empty: affect only. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Expression")
-    EExpressionState TargetExpression;
+    FString EventDescription;
 
+    /** Transition time used when the face is re-derived from affect. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Expression")
     float TransitionTime = 0.3f;
 
@@ -150,32 +173,61 @@ public:
 };
 
 /**
- * Animation Notify for microexpression triggers
+ * Animation Notify: blink on a beat of the animation.
+ *
+ * Blinking is autonomic timing, not a reaction, so synchronising it with an animation is
+ * allowed. No other microexpression can be placed from an animation asset: which one fits
+ * is chosen by the model or derived from affect.
  */
-UCLASS()
-class DEEPTREECHO_API UAnimNotify_TriggerMicroExpression : public UAnimNotify
+UCLASS(meta = (DisplayName = "DTE Blink"))
+class DEEPTREECHO_API UAnimNotify_Blink : public UAnimNotify
 {
     GENERATED_BODY()
 
 public:
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Microexpression")
-    EMicroExpression MicroExpressionType;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Microexpression")
-    float Duration = 0.2f;
-
     virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 };
 
 /**
- * Animation Notify State for Wonder-to-Joy transition
+ * Animation Notify State: the face follows an event for the span of the notify.
+ *
+ * On begin the model is asked which expression fits EventDescription (falling back to an
+ * affect refresh when no bridge is available); on end the face returns to the measured
+ * affect. Replaces fixed choreographies such as the former wonder-to-joy sequence.
  */
-UCLASS()
-class DEEPTREECHO_API UAnimNotifyState_WonderToJoy : public UAnimNotifyState
+UCLASS(meta = (DisplayName = "DTE Expression For Event"))
+class DEEPTREECHO_API UAnimNotifyState_ExpressionForEvent : public UAnimNotifyState
 {
     GENERATED_BODY()
 
 public:
+    /** The event this span of the animation represents (e.g. "a realisation dawns"). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Expression")
+    FString EventDescription;
+
+    /** Transition time back to the affect-derived face when the span ends. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Expression")
+    float ReturnTransitionTime = 0.5f;
+
     virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
     virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+};
+
+/**
+ * Animation Notify State: mouth-open span of a speech animation.
+ *
+ * Feeds the expression system a speaking amplitude for the span, but only while the owner's
+ * UAudioManagerComponent is actually playing speech. With no audio the mouth stays closed.
+ */
+UCLASS(meta = (DisplayName = "DTE Speech Mouth Sync"))
+class DEEPTREECHO_API UAnimNotifyState_SpeechMouthSync : public UAnimNotifyState
+{
+    GENERATED_BODY()
+
+public:
+    /** Mouth-open amplitude (0-1) to hold while speech audio plays during this span. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Speech", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+    float Amplitude = 0.6f;
+
+    virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
 };

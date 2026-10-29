@@ -228,6 +228,7 @@ Comprehensive architectural documentation for the E1 Foundation layer.
 | Component | Location | Files | Purpose |
 |-----------|----------|-------|---------|
 | Cognitive Core | DeepTreeEcho/Core/ | 2 | Central orchestrator |
+| Language Model Bridge | DeepTreeEcho/Core/ | 2 | Model client behind all character text (`docs/LANGUAGE_MODEL_BRIDGE.md`) |
 | Reservoir Integration | DeepTreeEcho/Reservoir/ | 2 | ESN wrapper |
 | 4E Cognition | DeepTreeEcho/4ECognition/ | 2 | Embodied cognition |
 | Avatar Evolution | DeepTreeEcho/Avatar/ | 2 | Evolution system |

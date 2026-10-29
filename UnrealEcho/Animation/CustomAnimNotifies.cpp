@@ -4,6 +4,8 @@
 #include "Audio/AudioManagerComponent.h"
 #include "Avatar/AvatarMaterialManager.h"
 #include "Avatar/Avatar3DComponent.h"
+#include "Avatar/CognitiveVisualizationComponent.h"
+#include "Neurochemical/NeurochemicalSimulationComponent.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "TimerManager.h"
@@ -17,7 +19,7 @@ UAnimNotify_TriggerAudioCue::UAnimNotify_TriggerAudioCue()
     bAttachToSocket = false;
 }
 
-void UAnimNotify_TriggerAudioCue::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+void UAnimNotify_TriggerAudioCue::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
     if (!AudioCue || !MeshComp)
     {
@@ -65,7 +67,7 @@ UAnimNotify_TriggerParticleEffect::UAnimNotify_TriggerParticleEffect()
     bAttachToSocket = true;
 }
 
-void UAnimNotify_TriggerParticleEffect::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+void UAnimNotify_TriggerParticleEffect::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
     if (!ParticleSystem || !MeshComp)
     {
@@ -110,7 +112,7 @@ UAnimNotify_TriggerMaterialEffect::UAnimNotify_TriggerMaterialEffect()
     MaterialSlot = EAvatarMaterialSlot::Skin;
 }
 
-void UAnimNotify_TriggerMaterialEffect::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+void UAnimNotify_TriggerMaterialEffect::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
     if (!MeshComp || ParameterName == NAME_None)
     {
@@ -197,7 +199,7 @@ UAnimNotify_TriggerGestureSound::UAnimNotify_TriggerGestureSound()
 {
 }
 
-void UAnimNotify_TriggerGestureSound::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+void UAnimNotify_TriggerGestureSound::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
     if (!MeshComp || GestureName == NAME_None)
     {
@@ -229,7 +231,7 @@ UAnimNotifyState_MaterialEffectOverTime::UAnimNotifyState_MaterialEffectOverTime
     NotifyDuration = 0.0f;
 }
 
-void UAnimNotifyState_MaterialEffectOverTime::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration)
+void UAnimNotifyState_MaterialEffectOverTime::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
     CurrentTime = 0.0f;
     NotifyDuration = TotalDuration;
@@ -252,7 +254,7 @@ void UAnimNotifyState_MaterialEffectOverTime::NotifyBegin(USkeletalMeshComponent
     }
 }
 
-void UAnimNotifyState_MaterialEffectOverTime::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime)
+void UAnimNotifyState_MaterialEffectOverTime::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
     CurrentTime += FrameDeltaTime;
 
@@ -296,7 +298,7 @@ void UAnimNotifyState_MaterialEffectOverTime::NotifyTick(USkeletalMeshComponent*
     MaterialManager->SetScalarParameter(EAvatarMaterialSlot::Skin, ParameterName, CurrentValue);
 }
 
-void UAnimNotifyState_MaterialEffectOverTime::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+void UAnimNotifyState_MaterialEffectOverTime::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
     if (!MeshComp || ParameterName == NAME_None)
     {
@@ -325,7 +327,7 @@ UAnimNotifyState_ParticleEffectOverTime::UAnimNotifyState_ParticleEffectOverTime
     SpawnedParticleComponent = nullptr;
 }
 
-void UAnimNotifyState_ParticleEffectOverTime::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration)
+void UAnimNotifyState_ParticleEffectOverTime::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
     if (!ParticleSystem || !MeshComp)
     {
@@ -344,13 +346,13 @@ void UAnimNotifyState_ParticleEffectOverTime::NotifyBegin(USkeletalMeshComponent
     );
 }
 
-void UAnimNotifyState_ParticleEffectOverTime::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime)
+void UAnimNotifyState_ParticleEffectOverTime::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
     // Particle system continues to play
     // Could add dynamic parameter updates here if needed
 }
 
-void UAnimNotifyState_ParticleEffectOverTime::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+void UAnimNotifyState_ParticleEffectOverTime::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
     if (SpawnedParticleComponent)
     {
@@ -364,9 +366,10 @@ void UAnimNotifyState_ParticleEffectOverTime::NotifyEnd(USkeletalMeshComponent* 
 UAnimNotify_TriggerEchoResonance::UAnimNotify_TriggerEchoResonance()
 {
     Intensity = 0.5f;
+    Duration = 0.5f;
 }
 
-void UAnimNotify_TriggerEchoResonance::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+void UAnimNotify_TriggerEchoResonance::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
     if (!MeshComp)
     {
@@ -386,11 +389,18 @@ void UAnimNotify_TriggerEchoResonance::Notify(USkeletalMeshComponent* MeshComp, 
         AudioManager->PlayEchoResonanceSound(Intensity);
     }
 
-    // Trigger visual effect
-    UAvatar3DComponent* Avatar3D = Owner->FindComponentByClass<UAvatar3DComponent>();
-    if (Avatar3D)
+    // Trigger visual effect: the resonance pulse lives on the avatar's cognitive visualization
+    UCognitiveVisualizationComponent* CognitiveViz = Owner->FindComponentByClass<UCognitiveVisualizationComponent>();
+    if (!CognitiveViz)
     {
-        Avatar3D->TriggerEchoResonance(Intensity);
+        if (UAvatar3DComponent* Avatar3D = Owner->FindComponentByClass<UAvatar3DComponent>())
+        {
+            CognitiveViz = Avatar3D->CognitiveViz;
+        }
+    }
+    if (CognitiveViz)
+    {
+        CognitiveViz->TriggerResonanceEffect(Intensity, Duration);
     }
 }
 
@@ -399,9 +409,10 @@ void UAnimNotify_TriggerEchoResonance::Notify(USkeletalMeshComponent* MeshComp, 
 UAnimNotify_TriggerCognitiveLoad::UAnimNotify_TriggerCognitiveLoad()
 {
     LoadIntensity = 0.5f;
+    Duration = 1.0f;
 }
 
-void UAnimNotify_TriggerCognitiveLoad::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+void UAnimNotify_TriggerCognitiveLoad::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
     if (!MeshComp)
     {
@@ -414,17 +425,23 @@ void UAnimNotify_TriggerCognitiveLoad::Notify(USkeletalMeshComponent* MeshComp, 
         return;
     }
 
-    // Trigger audio
+    // Apply the effort to the real state; the visualization is derived from that state by the
+    // character (not set here, so the asset never displays a load the character does not have).
+    UNeurochemicalSimulationComponent* Neurochemistry = Owner->FindComponentByClass<UNeurochemicalSimulationComponent>();
+    if (Neurochemistry)
+    {
+        Neurochemistry->SimulateCognitiveTask(LoadIntensity, Duration);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Verbose, TEXT("AnimNotify_TriggerCognitiveLoad: %s has no neurochemical simulation; nothing to load"), *Owner->GetName());
+        return;
+    }
+
+    // Processing sound cue (a non-speech effect asset) in time with the animation
     UAudioManagerComponent* AudioManager = Owner->FindComponentByClass<UAudioManagerComponent>();
     if (AudioManager)
     {
         AudioManager->PlayCognitiveSound(LoadIntensity);
-    }
-
-    // Trigger visual effect
-    UAvatar3DComponent* Avatar3D = Owner->FindComponentByClass<UAvatar3DComponent>();
-    if (Avatar3D)
-    {
-        Avatar3D->UpdateCognitiveLoadVisualization(LoadIntensity);
     }
 }

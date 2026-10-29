@@ -4,6 +4,11 @@
 #include "Components/ActorComponent.h"
 #include "PersonalityTraitSystem.generated.h"
 
+class UDTELanguageModelBridge;
+
+/** Fired when a chaotic event has been chosen (by the model or from state) and dispatched. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnChaoticEventChosen, FName, EventName, float, Intensity);
+
 /**
  * Personality trait types for the Deep Tree Echo avatar
  */
@@ -214,8 +219,22 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Personality|HyperChaotic")
     void SetHyperChaoticParameters(float Unpredictability, float Volatility, float Impulsivity);
 
+    /**
+     * Lets one chaotic event happen. Which event, and how strongly, is chosen by
+     * the language model from the event menu with the live trait and
+     * neurochemical state as context; without a model the event whose governing
+     * parameter currently dominates is taken. The result arrives asynchronously
+     * through OnChaoticEventChosen. Never picks at random.
+     */
     UFUNCTION(BlueprintCallable, Category = "Personality|HyperChaotic")
     void TriggerChaoticEvent();
+
+    /** True while the model is deciding which chaotic event fits. */
+    UFUNCTION(BlueprintPure, Category = "Personality|HyperChaotic")
+    bool IsChaoticEventPending() const { return bChaoticEventPending; }
+
+    UPROPERTY(BlueprintAssignable, Category = "Personality|HyperChaotic")
+    FOnChaoticEventChosen OnChaoticEventChosen;
 
     UFUNCTION(BlueprintCallable, Category = "Personality|HyperChaotic")
     void TriggerEmotionalSpike(float Intensity);
@@ -254,7 +273,21 @@ protected:
     void UpdateChaoticBehavior(float DeltaTime);
     void UpdateSuperHotGirlBehavior(float DeltaTime);
 
+    /** Runs the chosen chaotic event against this component and the avatar on the owner. */
+    void DispatchChaoticEvent(FName EventName, float Intensity);
+
+    /** Deterministic choice: the event whose governing chaos parameter is largest. */
+    FName ChooseChaoticEventFromState(float& OutIntensity) const;
+
+    /** Trait vector, chaos parameters and neurochemical readings as model context. */
+    FString DescribeStateForModel() const;
+
 private:
+    UPROPERTY(Transient)
+    UDTELanguageModelBridge* ModelBridge;
+
+    bool bChaoticEventPending;
+
     // ===== Core Traits =====
 
     UPROPERTY(EditAnywhere, Category = "Personality")

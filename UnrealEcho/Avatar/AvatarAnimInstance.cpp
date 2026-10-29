@@ -178,23 +178,30 @@ void UAvatarAnimInstance::UpdateGestureState(float DeltaTime)
         }
     }
     
-    // Personality-driven automatic gestures
-    if (CurrentGesture == EGestureState::None && FMath::FRand() < 0.01f) // 1% chance per frame
+    // Personality-driven gestures fire when a trait rises past its threshold,
+    // once per change. Nothing here is chosen by chance.
+    if (CurrentGesture == EGestureState::None)
     {
-        // Choose gesture based on personality
-        if (ConfidenceLevel > 0.7f && FMath::FRand() < 0.5f)
+        const bool bConfidenceRose = ConfidenceLevel > 0.7f && LastGestureConfidence <= 0.7f;
+        const bool bFlirtinessRose = FlirtinessLevel > 0.6f && LastGestureFlirtiness <= 0.6f;
+        const bool bPlayfulnessRose = PlayfulnessLevel > 0.6f && LastGesturePlayfulness <= 0.6f;
+
+        if (bConfidenceRose)
         {
             TriggerGesture(EGestureState::Confident, 2.0f);
         }
-        else if (FlirtinessLevel > 0.6f && FMath::FRand() < 0.5f)
+        else if (bFlirtinessRose)
         {
             TriggerGesture(EGestureState::Flirty, 2.5f);
         }
-        else if (PlayfulnessLevel > 0.6f && FMath::FRand() < 0.5f)
+        else if (bPlayfulnessRose)
         {
             TriggerGesture(EGestureState::Excited, 1.5f);
         }
     }
+    LastGestureConfidence = ConfidenceLevel;
+    LastGestureFlirtiness = FlirtinessLevel;
+    LastGesturePlayfulness = PlayfulnessLevel;
 }
 
 void UAvatarAnimInstance::UpdateFacialAnimation(float DeltaTime)
@@ -253,7 +260,7 @@ void UAvatarAnimInstance::UpdateChaoticBehavior(float DeltaTime)
     
     if (ChaosTimer >= NextChaoticEventTime)
     {
-        TriggerRandomChaoticEvent();
+        TriggerChaoticEvent();
         ChaosTimer = 0.0f;
         NextChaoticEventTime = FMath::FRandRange(1.0f / ChaosFactor, 5.0f / ChaosFactor);
     }
@@ -389,15 +396,24 @@ FFacialBlendShapes UAvatarAnimInstance::CalculateEmotionalBlendShapes(EAvatarEmo
             break;
 
         case EAvatarEmotionalState::Chaotic:
-            // Random blend shapes for chaotic expression
-            Shapes.BrowInnerUp = FMath::FRand();
-            Shapes.BrowOuterUp = FMath::FRand();
-            Shapes.BrowDown = FMath::FRand() * 0.5f;
-            Shapes.EyeWide = FMath::FRand();
-            Shapes.EyeSquint = FMath::FRand() * 0.5f;
-            Shapes.MouthSmile = FMath::FRand();
-            Shapes.MouthFrown = FMath::FRand() * 0.5f;
-            Shapes.MouthOpen = FMath::FRand() * 0.7f;
+        {
+            // Chaotic expression is the real valence/arousal shown with
+            // chaos-scaled oscillation, not random blend shapes.
+            const float Arousal = FMath::Clamp(EmotionalArousal, 0.0f, 1.0f);
+            const float Positive = FMath::Clamp(EmotionalValence, 0.0f, 1.0f);
+            const float Negative = FMath::Clamp(-EmotionalValence, 0.0f, 1.0f);
+            const float Phase = ChaosTimer * (2.0f + 4.0f * ChaosFactor);
+            const float Wobble = 0.5f + 0.5f * FMath::Sin(Phase);
+            const float Wobble2 = 0.5f + 0.5f * FMath::Sin(Phase * 1.31f + 1.0f);
+            Shapes.BrowInnerUp = Arousal * Wobble;
+            Shapes.BrowOuterUp = ChaosFactor * 0.5f * Wobble2;
+            Shapes.BrowDown = Negative * 0.5f;
+            Shapes.EyeWide = Arousal;
+            Shapes.EyeSquint = Negative * 0.5f;
+            Shapes.MouthSmile = Positive;
+            Shapes.MouthFrown = Negative * 0.5f;
+            Shapes.MouthOpen = Arousal * 0.7f * Wobble;
+        }
             break;
 
         default: // Neutral
@@ -437,33 +453,25 @@ float UAvatarAnimInstance::CalculateBreathingRate() const
     return FMath::Clamp(BaseRate + ArousalModifier + ChaosModifier, 10.0f, 30.0f);
 }
 
-void UAvatarAnimInstance::TriggerRandomChaoticEvent()
+void UAvatarAnimInstance::TriggerChaoticEvent()
 {
-    // Random chaotic behaviors
-    int32 EventType = FMath::RandRange(0, 3);
-    
-    switch (EventType)
+    // Chaos only scales how the real affect is expressed. The emotion itself
+    // comes from UpdateEmotionalState (the emotional system); nothing is
+    // invented or drawn at random here.
+    const float Drive = FMath::Clamp(ChaosFactor * EmotionalArousal, 0.0f, 1.0f);
+    if (Drive < 0.25f)
     {
-        case 0: // Random gesture
-            {
-                EGestureState RandomGesture = static_cast<EGestureState>(FMath::RandRange(1, 6));
-                TriggerGesture(RandomGesture, FMath::FRandRange(0.5f, 1.5f));
-            }
-            break;
-            
-        case 1: // Sudden emotion change
-            {
-                EAvatarEmotionalState RandomEmotion = static_cast<EAvatarEmotionalState>(FMath::RandRange(0, 9));
-                UpdateEmotionalState(RandomEmotion, FMath::FRandRange(0.3f, 0.8f));
-            }
-            break;
-            
-        case 2: // Glitch effect
-            GlitchIntensity = FMath::FRandRange(0.5f, 1.0f);
-            break;
-            
-        case 3: // Random head movement (would be implemented in animation blueprint)
-            // This would trigger a custom animation node
-            break;
+        return; // calm: nothing to show
+    }
+
+    if (EmotionalValence < -0.2f)
+    {
+        // Negative, aroused and chaotic: strain shows as a glitch.
+        GlitchIntensity = FMath::Max(GlitchIntensity, Drive);
+    }
+    else if (CurrentGesture == EGestureState::None && PlayfulnessLevel > 0.5f)
+    {
+        // Positive, aroused and playful: an excited gesture.
+        TriggerGesture(EGestureState::Excited, 1.0f + Drive);
     }
 }

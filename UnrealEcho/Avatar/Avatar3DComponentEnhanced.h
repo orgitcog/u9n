@@ -5,6 +5,8 @@
 #include "Animation/AnimInstance.h"
 #include "Avatar3DComponentEnhanced.generated.h"
 
+class UDTELanguageModelBridge;
+
 /**
  * Enhanced 3D Avatar Component for Deep Tree Echo
  * Implements super-hot-girl aesthetic and hyper-chaotic behavior patterns
@@ -162,8 +164,25 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Avatar|Personality")
     void SetHyperChaoticBehavior(float ChaosFactor);
 
+    /**
+     * Briefly shows the emotion implied by the current affect dimensions at
+     * raised arousal, then returns to the current emotion. Derived from state;
+     * never a random pick.
+     */
     UFUNCTION(BlueprintCallable, Category = "Avatar|Personality")
     void TriggerChaoticMicroExpression();
+
+    /** Briefly shows Flash, then returns to the emotion that was showing before. */
+    UFUNCTION(BlueprintCallable, Category = "Avatar|Emotion")
+    void FlashMicroExpression(EAvatarEmotionalState Flash);
+
+    /** Deterministic mapping from valence/arousal/dominance to a discrete emotion. */
+    UFUNCTION(BlueprintPure, Category = "Avatar|Emotion")
+    static EAvatarEmotionalState EmotionFromDimensions(float Valence, float Arousal, float Dominance);
+
+    /** True while the model is deciding which chaotic event to show. */
+    UFUNCTION(BlueprintPure, Category = "Avatar|Personality")
+    bool IsChaoticChoicePending() const { return bChaoticChoicePending; }
 
     UFUNCTION(BlueprintCallable, Category = "Avatar|Personality")
     void SetConfidenceLevel(float Confidence);
@@ -287,6 +306,23 @@ protected:
     UPROPERTY()
     float NextChaoticEventTime;
 
+    UPROPERTY(Transient)
+    UDTELanguageModelBridge* ModelBridge;
+
+    UPROPERTY()
+    bool bChaoticChoicePending;
+
+    // ===== Micro-Expression State =====
+
+    UPROPERTY()
+    bool bMicroExpressionActive;
+
+    UPROPERTY()
+    EAvatarEmotionalState MicroExpressionReturnEmotion;
+
+    UPROPERTY()
+    float MicroExpressionReturnTimer;
+
     // ===== Visual Effects State =====
 
     UPROPERTY()
@@ -311,7 +347,20 @@ protected:
     void UpdateMaterialParameters();
     void InitializeDynamicMaterials();
     void ApplyEmotionToFacialAnimation();
-    void TriggerRandomChaoticEvent();
+
+    /**
+     * Lets one chaotic event happen. The model chooses it from the event menu
+     * with the affect dimensions and personality as context; without a model
+     * the event follows deterministically from the affect dimensions.
+     */
+    void TriggerChaoticEvent();
+
+    /** Runs a chosen chaotic event. bHasExpression says whether Expression was supplied. */
+    void ApplyChaoticEvent(const FString& EventName, bool bHasExpression, EAvatarEmotionalState Expression, float Intensity);
+
+    /** Affect dimensions, current emotion, chaos factor and traits as model context. */
+    FString DescribeStateForModel() const;
+
     FVector CalculateGazeDirection() const;
     FRotator CalculateHeadRotation() const;
 };

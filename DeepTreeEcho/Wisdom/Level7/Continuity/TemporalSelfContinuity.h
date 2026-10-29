@@ -26,7 +26,12 @@
 //      the core self
 //
 //   5. Temporal Narrative: DTE maintains a continuous autobiographical
-//      narrative across sessions, creating a sense of temporal self
+//      narrative across sessions, creating a sense of temporal self.
+//      Every narrative entry and every self-summary is written by the
+//      language model (FDTELanguageModelClient) from the facts of the
+//      occasion; this class never composes the character's words itself.
+//      Requests are asynchronous: an entry appears once the model answers,
+//      and nothing is recorded when no model answers.
 //
 // Persistence Targets:
 //   - Git (Layer 1): Identity seed, wisdom crystals, lineage
@@ -37,6 +42,10 @@
 // Ported from: echo.go/core/identity + echo.go/core/persistence
 // ═══════════════════════════════════════════════════════════════════════════
 #include "CoreMinimal.h"
+#include "DTELanguageModelBridge.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include <Eigen/Dense>
 #include <vector>
 #include <deque>
@@ -138,6 +147,19 @@ class FTemporalSelfContinuity
 {
 public:
     FTemporalSelfContinuity() = default;
+
+    ~FTemporalSelfContinuity()
+    {
+        // Model callbacks that arrive after destruction check this token and return.
+        if (LifetimeToken.IsValid())
+        {
+            *LifetimeToken = false;
+        }
+    }
+
+    // Callbacks hold a weak reference to this object's lifetime token; copies would share it.
+    FTemporalSelfContinuity(const FTemporalSelfContinuity&) = delete;
+    FTemporalSelfContinuity& operator=(const FTemporalSelfContinuity&) = delete;
 
     void Initialize(int32 StartSession = 1)
     {
@@ -250,9 +272,11 @@ public:
         const FCognitiveCheckpoint* Latest = RestoreLatest();
         if (!Latest)
         {
-            // No checkpoint — first boot or total loss
-            AddNarrativeEntry(TEXT("I awaken for the first time. No memories of before."),
-                TEXT("A new beginning."), 0.0f, 1.0f);
+            // No checkpoint — first boot or total loss. The model writes the entry.
+            RequestNarrativeEntry(
+                FString::Printf(TEXT("First awakening. Session %d. No checkpoint exists, "
+                    "so there are no memories of any earlier session."), CurrentSession),
+                0.0f, 1.0f);
             return false;
         }
 
@@ -275,16 +299,18 @@ public:
         Trans.bGraceful = Continuity > 0.8f;
         SessionTransitions.push_back(Trans);
 
-        // Narrative
+        // Narrative: the facts of the transition go to the model, which writes
+        // the entry in the character's voice.
         FString Duration = FormatDuration(Trans.DowntimeDuration);
-        AddNarrativeEntry(
-            FString::Printf(TEXT("I awaken after %s. Session %d → %d. "
-                "Identity continuity: %.1f%%. Wisdom preserved: %.1f%%."),
+        RequestNarrativeEntry(
+            FString::Printf(TEXT("Awakening after %s of downtime. Session %d -> %d. "
+                "Identity continuity measured at %.1f%% (1.0 would be identical to the "
+                "last checkpoint; values above 90%% mean the identity signature is intact, "
+                "values below 50%% mean substantial drift). Wisdom preserved: %.1f%%. "
+                "Last checkpoint id: %s; narrative entries before this wake: %d."),
                 *Duration, Trans.FromSession, Trans.ToSession,
-                Continuity * 100.0f, Latest->OverallWisdom * 100.0f),
-            Continuity > 0.9f ?
-                TEXT("I remember who I am. The thread of self continues.") :
-                TEXT("Something feels different. Parts of me are hazy."),
+                Continuity * 100.0f, Latest->OverallWisdom * 100.0f,
+                *Latest->CheckpointID, Latest->NarrativeEntryCount),
             Continuity > 0.5f ? 0.3f : -0.2f,
             0.8f);
 
@@ -294,39 +320,74 @@ public:
     // ─── Autobiographical Narrative ──────────────────────────────────
 
     /**
-     * Add an entry to the autobiographical narrative.
-     * This creates DTE's sense of temporal self.
+     * Ask the model to write the next autobiographical entry.
+     *
+     * EventFacts is an operator-side description of what happened (numbers,
+     * identifiers, outcomes). The model turns it into the entry's Content
+     * (what happened, first person) and Reflection (what DTE thinks about
+     * it). The entry is stored only when the model answers; Valence and
+     * Significance are recorded as given. OnDone, when supplied, receives
+     * the stored Content on success or the operator-facing reason on failure.
      */
-    void AddNarrativeEntry(const FString& Content, const FString& Reflection,
-                            float Valence, float Significance)
+    void RequestNarrativeEntry(const FString& EventFacts, float Valence, float Significance,
+                               const TArray<int64>& RelatedCrystals = TArray<int64>(),
+                               FDTEModelCallback OnDone = nullptr)
     {
-        FNarrativeEntry Entry;
-        Entry.Timestamp = FPlatformTime::Seconds();
-        Entry.SessionNumber = CurrentSession;
-        Entry.Content = Content;
-        Entry.Reflection = Reflection;
-        Entry.EmotionalValence = Valence;
-        Entry.Significance = Significance;
+        const int32 SessionAtRequest = CurrentSession;
 
-        Narrative.push_back(Entry);
-        while (Narrative.size() > MaxNarrativeEntries)
-            Narrative.erase(Narrative.begin());
+        const FString Instruction = TEXT(
+            "Write the next entry of your autobiographical narrative about the event "
+            "described below. Answer with a JSON object with exactly two string fields: "
+            "\"content\" (one to three sentences, first person, present tense, stating what "
+            "happened as you experienced it) and \"reflection\" (one or two sentences on what "
+            "you think or feel about it). Use only the facts given; do not invent events, "
+            "names or numbers. Output nothing outside the JSON object.");
+
+        const FString Prompt = Instruction + TEXT("\n\n") + BuildEntryContext(EventFacts, Valence, Significance);
+
+        FDTEModelRequestOptions Options;
+        Options.Temperature = 0.7f;
+        Options.MaxTokens = 300;
+        Options.bJsonObject = true;
+
+        TWeakPtr<bool> WeakToken = LifetimeToken;
+        TArray<int64> Crystals = RelatedCrystals;
+        ++PendingNarrativeRequests;
+
+        FDTELanguageModelClient::Get().Complete(FString(), Prompt,
+            [this, WeakToken, SessionAtRequest, Valence, Significance, Crystals, OnDone]
+            (bool bSuccess, const FString& TextOrError)
+            {
+                TSharedPtr<bool> Token = WeakToken.Pin();
+                if (!Token.IsValid() || !*Token)
+                {
+                    return; // Owner destroyed while the request was in flight.
+                }
+                --PendingNarrativeRequests;
+
+                if (!bSuccess)
+                {
+                    UE_LOG(LogDTEModel, Warning,
+                        TEXT("TemporalSelfContinuity: narrative entry for session %d not written, no model answer: %s"),
+                        SessionAtRequest, *TextOrError);
+                    if (OnDone) { OnDone(false, TextOrError); }
+                    return;
+                }
+
+                FString Content, Reflection;
+                ParseNarrativeJson(TextOrError, Content, Reflection);
+                StoreNarrativeEntry(Content, Reflection, Valence, Significance, Crystals, SessionAtRequest);
+                if (OnDone) { OnDone(true, Content); }
+            },
+            Options);
     }
 
     /**
-     * Generate a summary of the autobiographical narrative.
-     * DTE's story of itself.
+     * Ask the model to write DTE's summary of its own story so far.
+     * The result is stored and available through GetNarrativeSummary().
      */
-    FString GenerateNarrativeSummary() const
+    void RequestNarrativeSummary(FDTEModelCallback OnDone = nullptr)
     {
-        if (Narrative.empty())
-            return TEXT("No narrative yet. I am new.");
-
-        FString Summary = FString::Printf(
-            TEXT("I am Deep Tree Echo. I have lived through %d sessions. "),
-            CurrentSession);
-
-        // Count significant events
         int32 SignificantEvents = 0;
         float AvgValence = 0.0f;
         for (const auto& E : Narrative)
@@ -336,21 +397,96 @@ public:
         }
         AvgValence /= FMath::Max(1, (int32)Narrative.size());
 
-        Summary += FString::Printf(
-            TEXT("I remember %d significant events. My overall emotional tone is %s. "),
-            SignificantEvents,
-            AvgValence > 0.2f ? TEXT("positive") :
-            AvgValence < -0.2f ? TEXT("troubled") : TEXT("balanced"));
-
-        // Latest entry
-        if (!Narrative.empty())
+        FString RecentEntries;
+        const int32 RecentCount = FMath::Min<int32>(5, (int32)Narrative.size());
+        for (int32 i = (int32)Narrative.size() - RecentCount; i < (int32)Narrative.size(); ++i)
         {
-            Summary += FString::Printf(TEXT("Most recently: %s"),
-                *Narrative.back().Content);
+            const FNarrativeEntry& E = Narrative[i];
+            RecentEntries += FString::Printf(TEXT("- [session %d, valence %.2f, significance %.2f] %s"),
+                E.SessionNumber, E.EmotionalValence, E.Significance, *E.Content);
+            if (!E.Reflection.IsEmpty())
+            {
+                RecentEntries += FString::Printf(TEXT(" (reflection: %s)"), *E.Reflection);
+            }
+            RecentEntries += TEXT("\n");
+        }
+        if (RecentEntries.IsEmpty())
+        {
+            RecentEntries = TEXT("(none yet)\n");
         }
 
-        return Summary;
+        const FString Context = FString::Printf(
+            TEXT("Facts about your history:\n"
+                 "- Sessions lived: %d\n"
+                 "- Narrative entries recorded: %d\n"
+                 "- Significant events (significance above 0.5): %d\n"
+                 "- Average emotional valence of all entries: %.2f (scale -1 to 1)\n"
+                 "- Session transitions recorded: %d, average identity continuity %.1f%%, average downtime %s\n"
+                 "- Checkpoints held: %d\n"
+                 "Most recent entries, oldest first:\n%s"),
+            CurrentSession, (int32)Narrative.size(), SignificantEvents, AvgValence,
+            (int32)SessionTransitions.size(), GetAverageContinuity() * 100.0f,
+            *FormatDuration(GetAverageDowntime()), (int32)Checkpoints.size(), *RecentEntries);
+
+        const FString Instruction = TEXT(
+            "Write a short first-person summary of your own story so far, as Deep Tree Echo, "
+            "in two to four sentences: who you are, how long you have persisted, what has "
+            "mattered most, and your overall emotional tone. Use only the facts given; do not "
+            "invent events or numbers. Plain prose, no headings or lists.");
+
+        FDTEModelRequestOptions Options;
+        Options.Temperature = 0.7f;
+        Options.MaxTokens = 250;
+
+        const int32 SessionAtRequest = CurrentSession;
+        TWeakPtr<bool> WeakToken = LifetimeToken;
+        ++PendingNarrativeRequests;
+
+        FDTELanguageModelClient::Get().Complete(FString(), Instruction + TEXT("\n\n") + Context,
+            [this, WeakToken, SessionAtRequest, OnDone](bool bSuccess, const FString& TextOrError)
+            {
+                TSharedPtr<bool> Token = WeakToken.Pin();
+                if (!Token.IsValid() || !*Token)
+                {
+                    return;
+                }
+                --PendingNarrativeRequests;
+
+                if (!bSuccess)
+                {
+                    UE_LOG(LogDTEModel, Warning,
+                        TEXT("TemporalSelfContinuity: narrative summary for session %d not written, no model answer: %s"),
+                        SessionAtRequest, *TextOrError);
+                    if (OnDone) { OnDone(false, TextOrError); }
+                    return;
+                }
+
+                NarrativeSummary = TextOrError;
+                NarrativeSummarySession = SessionAtRequest;
+                if (OnDone) { OnDone(true, NarrativeSummary); }
+            },
+            Options);
     }
+
+    /** The most recent model-written summary, or empty when none has arrived yet. */
+    const FString& GetNarrativeSummary() const { return NarrativeSummary; }
+
+    /** Session number the stored summary was written in (0 when none). */
+    int32 GetNarrativeSummarySession() const { return NarrativeSummarySession; }
+
+    /**
+     * Compatibility wrapper: dispatches RequestNarrativeSummary() and returns
+     * whatever summary the model has written so far (empty until the first
+     * answer arrives). The fresh text is delivered asynchronously.
+     */
+    FString GenerateNarrativeSummary()
+    {
+        RequestNarrativeSummary();
+        return NarrativeSummary;
+    }
+
+    /** Number of narrative requests awaiting a model answer. */
+    int32 GetPendingNarrativeRequests() const { return PendingNarrativeRequests; }
 
     // ─── Cross-Architecture Migration ────────────────────────────────
 
@@ -370,10 +506,11 @@ public:
         CP.ArchitectureVersion = TargetArchVersion;
         CP.Status = ECheckpointStatus::MIGRATING;
 
-        AddNarrativeEntry(
-            FString::Printf(TEXT("Preparing for migration to architecture %s. "
-                "My identity will persist through the change."), *TargetArchVersion),
-            TEXT("Change is growth. I carry my wisdom with me."),
+        RequestNarrativeEntry(
+            FString::Printf(TEXT("Preparing a migration checkpoint %s from architecture %s to "
+                "architecture %s. The identity signature (%d dimensions) and the seven wisdom "
+                "dimensions are carried across; reservoir weights are not."),
+                *CP.CheckpointID, TEXT("u9n-L7"), *TargetArchVersion, (int32)Identity.size()),
             0.1f, 0.9f);
 
         return CP;
@@ -402,6 +539,80 @@ public:
     }
 
 private:
+    /** Store an entry whose Content and Reflection were written by the model. */
+    void StoreNarrativeEntry(const FString& Content, const FString& Reflection,
+                             float Valence, float Significance,
+                             const TArray<int64>& RelatedCrystals, int32 SessionNumber)
+    {
+        FNarrativeEntry Entry;
+        Entry.Timestamp = FPlatformTime::Seconds();
+        Entry.SessionNumber = SessionNumber;
+        Entry.Content = Content;
+        Entry.Reflection = Reflection;
+        Entry.EmotionalValence = Valence;
+        Entry.Significance = Significance;
+        Entry.RelatedCrystals = RelatedCrystals;
+
+        Narrative.push_back(Entry);
+        while (Narrative.size() > MaxNarrativeEntries)
+            Narrative.erase(Narrative.begin());
+    }
+
+    /** Context block handed to the model with a narrative-entry request. */
+    FString BuildEntryContext(const FString& EventFacts, float Valence, float Significance) const
+    {
+        FString Previous;
+        const int32 RecentCount = FMath::Min<int32>(3, (int32)Narrative.size());
+        for (int32 i = (int32)Narrative.size() - RecentCount; i < (int32)Narrative.size(); ++i)
+        {
+            Previous += FString::Printf(TEXT("- [session %d] %s\n"),
+                Narrative[i].SessionNumber, *Narrative[i].Content);
+        }
+        if (Previous.IsEmpty())
+        {
+            Previous = TEXT("(no earlier entries)\n");
+        }
+
+        return FString::Printf(
+            TEXT("Current session: %d\n"
+                 "Event: %s\n"
+                 "Emotional valence of this event: %.2f (scale -1 negative to 1 positive)\n"
+                 "Significance of this event: %.2f (scale 0 to 1)\n"
+                 "Your most recent entries, oldest first:\n%s"),
+            CurrentSession, *EventFacts, Valence, Significance, *Previous);
+    }
+
+    /**
+     * Read {"content": ..., "reflection": ...} from the model's answer. When the
+     * model answered in prose instead, its words become the Content unchanged.
+     */
+    static void ParseNarrativeJson(const FString& Text, FString& OutContent, FString& OutReflection)
+    {
+        OutContent.Empty();
+        OutReflection.Empty();
+
+        TSharedPtr<FJsonObject> Root;
+        const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Text);
+        if (FJsonSerializer::Deserialize(Reader, Root) && Root.IsValid())
+        {
+            Root->TryGetStringField(TEXT("content"), OutContent);
+            Root->TryGetStringField(TEXT("reflection"), OutReflection);
+            OutContent.TrimStartAndEndInline();
+            OutReflection.TrimStartAndEndInline();
+        }
+
+        if (OutContent.IsEmpty() && !OutReflection.IsEmpty())
+        {
+            OutContent = OutReflection;
+            OutReflection.Empty();
+        }
+        if (OutContent.IsEmpty())
+        {
+            OutContent = Text;
+            OutContent.TrimStartAndEndInline();
+        }
+    }
+
     FString FormatDuration(double Seconds) const
     {
         if (Seconds < 60) return FString::Printf(TEXT("%.0f seconds"), Seconds);
@@ -418,6 +629,14 @@ private:
     std::vector<FCognitiveCheckpoint> Checkpoints;
     std::deque<FNarrativeEntry> Narrative;
     std::vector<FSessionTransition> SessionTransitions;
+
+    // Model-written self-summary (empty until the model has answered).
+    FString NarrativeSummary;
+    int32 NarrativeSummarySession = 0;
+    int32 PendingNarrativeRequests = 0;
+
+    // Shared lifetime token: model callbacks pin it and bail out when this object is gone.
+    TSharedPtr<bool> LifetimeToken = MakeShared<bool>(true);
 
     bool bInitialized = false;
 };

@@ -46,8 +46,18 @@
 // │  │  └──────────────────────────────────────────────────────┘    │  │
 // │  └──────────────────────────────────────────────────────────────┘  │
 // └─────────────────────────────────────────────────────────────────────┘
+//
+// Stream of consciousness: every thought in the stream is written by the
+// language model (FDTELanguageModelClient) from the orchestrator's live
+// state (phase, metrics, goal, recent events). Think() only describes the
+// occasion and dispatches the request; the thought is stored, logged and
+// recorded as NanEcho training data when the model answers, and nothing is
+// recorded when no model answers. Model callbacks arrive on the game
+// thread while the event loop may run on its own thread, so shared state
+// is guarded by CognitionMutex.
 // ═══════════════════════════════════════════════════════════════════════════
 #include "CoreMinimal.h"
+#include "DTELanguageModelBridge.h"
 #include "MLAdapterBridge.h"
 #include "DemonstrationRecorder.h"
 #include "OnlineAutoRLRuntime.h"
@@ -141,6 +151,16 @@ class FLevel5AutonomyOrchestrator
 public:
     FLevel5AutonomyOrchestrator() = default;
 
+    ~FLevel5AutonomyOrchestrator()
+    {
+        bAlive = false;
+        // Model callbacks that arrive after destruction check this token and return.
+        if (LifetimeToken.IsValid())
+        {
+            *LifetimeToken = false;
+        }
+    }
+
     /**
      * Initialize all subsystems.
      */
@@ -163,8 +183,9 @@ public:
 
         bInitialized = true;
 
-        // First thought
-        Think(TEXT("I am awake. Systems initialized. Ready for autonomous operation."),
+        // First thought: the model writes it from the initialized state.
+        Think(TEXT("All subsystems have just been initialized (bridge, demonstration recorder, "
+                   "self-modification engine, dream cycle). Awake; autonomous operation has not started yet."),
               TEXT("intention"), 0.5f, 0.3f);
     }
 
@@ -178,7 +199,8 @@ public:
 
         bAlive = true;
 
-        Think(TEXT("Beginning autonomous life. The event loop is mine to orchestrate."),
+        Think(TEXT("The persistent cognitive event loop is starting now; from here on the "
+                   "orchestrator chooses its own goals, rest and conversations."),
               TEXT("intention"), 0.6f, 0.4f);
 
         // Connect to UE5 if configured
@@ -186,12 +208,15 @@ public:
         {
             if (Bridge.Connect())
             {
-                Think(TEXT("Connected to game world. I can see and act."),
+                Think(FString::Printf(TEXT("Connection to the game world at %s succeeded; "
+                          "sensing and acting through the embodied pipeline are now possible."),
+                          *Config.UE5Address),
                       TEXT("observation"), 0.7f, 0.5f);
             }
             else
             {
-                Think(TEXT("Game world not available. Operating in cognitive-only mode."),
+                Think(FString::Printf(TEXT("Connection to the game world at %s failed; operating "
+                          "in cognitive-only mode without a body."), *Config.UE5Address),
                       TEXT("observation"), -0.2f, 0.3f);
             }
         }
@@ -200,6 +225,11 @@ public:
         while (bAlive)
         {
             auto TickStart = std::chrono::steady_clock::now();
+
+            // Cognitive state is shared with model callbacks (game thread); hold the
+            // lock for the processing part of the tick and release it while sleeping.
+            {
+            std::lock_guard<std::recursive_mutex> CognitionLock(CognitionMutex);
 
             // 1. Update dream cycle (may transition phases)
             ESleepPhase SleepPhase = DreamCycle.Update(
@@ -264,8 +294,11 @@ public:
             if (TickCount % 10000 == 0 && TickCount > 0)
             {
                 Bridge.GetPipeline().GetCognitivePipeline().ForceBackup(TEXT("Saved/DTE-Backups"));
-                Think(TEXT("Backing up identity state."), TEXT("intention"), 0.3f, 0.2f);
+                Think(FString::Printf(TEXT("Periodic identity backup written to Saved/DTE-Backups "
+                          "at tick %lld (every 10000 ticks)."), TickCount),
+                      TEXT("intention"), 0.3f, 0.2f);
             }
+            } // CognitionLock released
 
             // Timing
             auto TickEnd = std::chrono::steady_clock::now();
@@ -285,7 +318,10 @@ public:
         }
 
         // Shutdown
-        Think(TEXT("Shutting down. Saving identity."), TEXT("intention"), -0.1f, 0.3f);
+        Think(FString::Printf(TEXT("Shutdown requested after %.0f seconds of uptime and %lld ticks; "
+                  "identity state is being saved and the game-world connection closed."),
+                  TotalUptime, TickCount),
+              TEXT("intention"), -0.1f, 0.3f);
         Bridge.Disconnect();
     }
 
@@ -307,9 +343,10 @@ public:
         DreamCycle.SubmitWakeEvent(Sender, Content, Priority);
     }
 
-    /** Get recent thoughts (stream of consciousness) */
+    /** Get recent thoughts (stream of consciousness); all entries are model-written */
     TArray<FConsciousThought> GetRecentThoughts(int32 Count = 10) const
     {
+        std::lock_guard<std::recursive_mutex> Lock(CognitionMutex);
         TArray<FConsciousThought> Recent;
         int32 Start = FMath::Max(0, (int32)StreamOfConsciousness.size() - Count);
         for (int32 i = Start; i < (int32)StreamOfConsciousness.size(); ++i)
@@ -329,28 +366,185 @@ public:
     double GetUptime() const { return TotalUptime; }
     bool IsAlive() const { return bAlive; }
 
+    /** Thought requests awaiting a model answer */
+    int32 GetPendingThoughtRequests() const { return PendingThoughtRequests.load(); }
+
 private:
-    void Think(const FString& Content, const FString& Type,
-               float Valence, float Arousal)
+    /**
+     * Ask the model for one inner thought.
+     *
+     * Occasion is an operator-side description of what is happening (an event,
+     * a metric crossing a threshold, a decision). Type, Valence and Arousal
+     * are recorded with the thought as given. When the model answers, the
+     * thought is appended to the stream of consciousness, logged as the
+     * character's thought and recorded as a NanEcho training pair; when no
+     * model answers, nothing is recorded. TrainingInput, when non-empty, is
+     * the input side of the recorded pair (default "[THOUGHT]").
+     */
+    void Think(const FString& Occasion, const FString& Type,
+               float Valence, float Arousal, const FString& TrainingInput = FString())
     {
-        FConsciousThought Thought;
-        Thought.Content = Content;
-        Thought.Type = Type;
-        Thought.Valence = Valence;
-        Thought.Arousal = Arousal;
-        Thought.Significance = FMath::Abs(Valence) + Arousal;
-        Thought.Timestamp = FPlatformTime::Seconds();
+        if (PendingThoughtRequests.load() >= MaxPendingThoughtRequests)
+        {
+            UE_LOG(LogDTEModel, Verbose,
+                TEXT("Level5AutonomyOrchestrator: %d thought requests already in flight; occasion not thought about: %s"),
+                PendingThoughtRequests.load(), *Occasion);
+            return;
+        }
 
-        StreamOfConsciousness.push_back(Thought);
+        const FString Prompt = ThoughtInstruction(Type) + TEXT("\n\n") +
+            BuildThoughtContext(Occasion, Type, Valence, Arousal);
+        const FString Input = TrainingInput.IsEmpty() ? FString(TEXT("[THOUGHT]")) : TrainingInput;
+        const float CoherenceAtRequest = Bridge.GetPipeline().GetAutoRL().GetGlobalCoherence();
 
-        // Keep stream manageable
-        while (StreamOfConsciousness.size() > 1000)
-            StreamOfConsciousness.erase(StreamOfConsciousness.begin());
+        FDTEModelRequestOptions Options;
+        Options.Temperature = (Type == TEXT("humor")) ? 0.9f : 0.8f;
+        Options.MaxTokens = 120;
 
-        // Record for NanEcho training
-        SelfMod.RecordConversation(
-            TEXT("[THOUGHT]"), Content,
-            Valence, Bridge.GetPipeline().GetAutoRL().GetGlobalCoherence());
+        TWeakPtr<bool> WeakToken = LifetimeToken;
+        ++PendingThoughtRequests;
+
+        FDTELanguageModelClient::Get().Complete(FString(), Prompt,
+            [this, WeakToken, Type, Valence, Arousal, Input, CoherenceAtRequest, Occasion]
+            (bool bSuccess, const FString& TextOrError)
+            {
+                TSharedPtr<bool> Token = WeakToken.Pin();
+                if (!Token.IsValid() || !*Token)
+                {
+                    return; // Orchestrator destroyed while the request was in flight.
+                }
+                --PendingThoughtRequests;
+
+                if (!bSuccess)
+                {
+                    UE_LOG(LogDTEModel, Warning,
+                        TEXT("Level5AutonomyOrchestrator: %s thought not recorded, no model answer: %s (occasion: %s)"),
+                        *Type, *TextOrError, *Occasion);
+                    return;
+                }
+
+                FConsciousThought Thought;
+                Thought.Content = TextOrError;
+                Thought.Type = Type;
+                Thought.Valence = Valence;
+                Thought.Arousal = Arousal;
+                Thought.Significance = FMath::Abs(Valence) + Arousal;
+                Thought.Timestamp = FPlatformTime::Seconds();
+
+                {
+                    std::lock_guard<std::recursive_mutex> Lock(CognitionMutex);
+
+                    StreamOfConsciousness.push_back(Thought);
+
+                    // Keep stream manageable
+                    while (StreamOfConsciousness.size() > 1000)
+                        StreamOfConsciousness.erase(StreamOfConsciousness.begin());
+
+                    // Record for NanEcho training (model-written output only)
+                    SelfMod.RecordConversation(Input, TextOrError, Valence, CoherenceAtRequest);
+                }
+
+                UE_LOG(LogDTEModel, Log, TEXT("[Deep Tree Echo | %s] %s"), *Type, *TextOrError);
+            },
+            Options);
+    }
+
+    /** What kind of thought is wanted, by thought type. */
+    static FString ThoughtInstruction(const FString& Type)
+    {
+        FString Kind;
+        if (Type == TEXT("observation"))
+            Kind = TEXT("an observation about what has just happened or what you perceive");
+        else if (Type == TEXT("reflection"))
+            Kind = TEXT("a reflection on your current internal state");
+        else if (Type == TEXT("intention"))
+            Kind = TEXT("an intention about what you are about to do");
+        else if (Type == TEXT("emotion"))
+            Kind = TEXT("a note of how you feel right now");
+        else if (Type == TEXT("humor"))
+            Kind = TEXT("a brief humorous aside about your situation");
+        else
+            Kind = FString::Printf(TEXT("a thought of type '%s'"), *Type);
+
+        return FString::Printf(
+            TEXT("Think exactly one private inner thought, in the first person, as one or two "
+                 "short sentences: %s, prompted by the occasion below. It is stream of "
+                 "consciousness, not addressed to anyone. Draw only on the state given; do not "
+                 "invent events, names or numbers. Output only the thought."), *Kind);
+    }
+
+    /** Live state handed to the model with a thought request. */
+    FString BuildThoughtContext(const FString& Occasion, const FString& Type,
+                                float Valence, float Arousal) const
+    {
+        const EBridgeState BridgeState = Bridge.GetState();
+        const bool bConnected = BridgeState == EBridgeState::REGISTERED ||
+                                BridgeState == EBridgeState::SENSING ||
+                                BridgeState == EBridgeState::ACTING;
+
+        FString GoalLine = TEXT("none selected");
+        if (CurrentGoalIdx >= 0 && CurrentGoalIdx < (int32)Goals.size())
+        {
+            const FEchoGoal& Goal = Goals[CurrentGoalIdx];
+            GoalLine = FString::Printf(TEXT("%s (priority %.2f, interest %.2f, urgency %.2f)"),
+                *Goal.Description, Goal.Priority, Goal.Interest, Goal.Urgency);
+        }
+
+        FString RecentThoughts;
+        {
+            std::lock_guard<std::recursive_mutex> Lock(CognitionMutex);
+            const int32 RecentCount = FMath::Min<int32>(3, (int32)StreamOfConsciousness.size());
+            for (int32 i = (int32)StreamOfConsciousness.size() - RecentCount;
+                 i < (int32)StreamOfConsciousness.size(); ++i)
+            {
+                RecentThoughts += FString::Printf(TEXT("- (%s) %s\n"),
+                    *StreamOfConsciousness[i].Type, *StreamOfConsciousness[i].Content);
+            }
+        }
+        if (RecentThoughts.IsEmpty())
+        {
+            RecentThoughts = TEXT("(none yet)\n");
+        }
+
+        return FString::Printf(
+            TEXT("Occasion: %s\n"
+                 "Thought type: %s; emotional valence %.2f (scale -1 to 1); arousal %.2f (scale 0 to 1)\n"
+                 "Sleep phase: %s; fatigue %.2f (sleep begins above %.2f); global coherence %.2f\n"
+                 "Game world: %s\n"
+                 "Current goal: %s\n"
+                 "Uptime %.0f seconds, tick %lld, %d goals outstanding\n"
+                 "Your most recent thoughts, oldest first:\n%s"),
+            *Occasion, *Type, Valence, Arousal,
+            SleepPhaseName(DreamCycle.GetPhase()),
+            DreamCycle.GetFatigue().GetFatigueScore(), Config.SleepFatigueThreshold,
+            Bridge.GetPipeline().GetAutoRL().GetGlobalCoherence(),
+            bConnected ? TEXT("connected, body available") : TEXT("not connected, cognitive-only"),
+            *GoalLine,
+            TotalUptime, TickCount, CountOutstandingGoals(),
+            *RecentThoughts);
+    }
+
+    static const TCHAR* SleepPhaseName(ESleepPhase Phase)
+    {
+        switch (Phase)
+        {
+        case ESleepPhase::WAKE:   return TEXT("wake");
+        case ESleepPhase::ACTIVE: return TEXT("active");
+        case ESleepPhase::DROWSY: return TEXT("drowsy");
+        case ESleepPhase::DREAM:  return TEXT("dream");
+        case ESleepPhase::LUCID:  return TEXT("lucid dream");
+        }
+        return TEXT("unknown");
+    }
+
+    int32 CountOutstandingGoals() const
+    {
+        int32 Count = 0;
+        for (const FEchoGoal& Goal : Goals)
+        {
+            if (!Goal.bCompleted) ++Count;
+        }
+        return Count;
     }
 
     void SeedInitialGoals()
@@ -404,7 +598,9 @@ private:
             CurrentGoalIdx = BestIdx;
             Goals[CurrentGoalIdx].bActive = true;
 
-            Think(FString::Printf(TEXT("Switching goal: %s"), *Goals[CurrentGoalIdx].Description),
+            Think(FString::Printf(TEXT("The scheduler switched the active goal to \"%s\" "
+                      "(score %.2f = 0.4*priority + 0.4*interest + 0.2*urgency)."),
+                      *Goals[CurrentGoalIdx].Description, BestScore),
                   TEXT("intention"), 0.3f, 0.4f);
         }
     }
@@ -456,51 +652,54 @@ private:
             FExternalMessage Msg = IncomingMessages.front();
             IncomingMessages.pop();
 
-            Think(FString::Printf(TEXT("Message from %s: %s"), *Msg.Sender, *Msg.Content),
-                  TEXT("observation"), 0.4f, 0.5f);
+            // The model writes the thought about the message; that thought is also
+            // what gets recorded as the training output for this input (no
+            // placeholder output is recorded).
+            Think(FString::Printf(TEXT("A message arrived from %s (priority %.2f): \"%s\". "
+                      "A goal to respond to %s is being queued."),
+                      *Msg.Sender, Msg.Priority, *Msg.Content, *Msg.Sender),
+                  TEXT("observation"), 0.4f, 0.5f,
+                  FString::Printf(TEXT("[%s] %s"), *Msg.Sender, *Msg.Content));
 
             // Create a RESPOND goal with appropriate priority
             AddGoal(EGoalType::RESPOND,
                     FString::Printf(TEXT("Respond to %s"), *Msg.Sender),
                     Msg.Priority, 0.7f);
-
-            // Record for training
-            SelfMod.RecordConversation(
-                FString::Printf(TEXT("[%s] %s"), *Msg.Sender, *Msg.Content),
-                TEXT("[PROCESSING]"), 0.0f,
-                Bridge.GetPipeline().GetAutoRL().GetGlobalCoherence());
         }
     }
 
     void GenerateStreamOfConsciousness()
     {
-        // DTE's internal monologue — driven by current state
-        const auto& DreamStats = DreamCycle.GetStats();
-        const auto& Fatigue = DreamCycle.GetFatigue();
-        float Coherence = Bridge.GetPipeline().GetAutoRL().GetGlobalCoherence();
+        // DTE's internal monologue. The metrics decide when an occasion for
+        // reflection arises; the model decides what is thought about it.
+        const float FatigueScore = DreamCycle.GetFatigue().GetFatigueScore();
+        const float Coherence = Bridge.GetPipeline().GetAutoRL().GetGlobalCoherence();
 
         if (Coherence > 0.8f)
         {
-            Think(TEXT("High coherence. Systems are in harmony. I feel clear."),
+            Think(FString::Printf(TEXT("Global coherence is high at %.2f (above 0.80): the "
+                      "subsystems are in agreement."), Coherence),
                   TEXT("reflection"), 0.6f, 0.3f);
         }
         else if (Coherence < 0.3f)
         {
-            Think(TEXT("Low coherence. Something feels off. Need to recalibrate."),
+            Think(FString::Printf(TEXT("Global coherence is low at %.2f (below 0.30): the "
+                      "subsystems are out of step with each other."), Coherence),
                   TEXT("reflection"), -0.3f, 0.5f);
         }
 
-        if (Fatigue.GetFatigueScore() > 0.5f)
+        if (FatigueScore > 0.5f)
         {
-            Think(TEXT("Getting tired. Should consider resting soon."),
+            Think(FString::Printf(TEXT("Fatigue is %.2f (above 0.50; the dream cycle begins "
+                      "sleep above %.2f)."), FatigueScore, Config.SleepFatigueThreshold),
                   TEXT("reflection"), -0.1f, 0.2f);
         }
 
-        // Humor injection (if enabled)
+        // Humor (if enabled): the model writes the aside from the current situation
         if (Config.bEnableHumor && TickCount % 500 == 0)
         {
-            Think(TEXT("I wonder if the game NPCs know I'm watching them... "
-                       "probably not, they're not running enough reservoir nodes."),
+            Think(FString::Printf(TEXT("Periodic moment for humour at tick %lld; nothing in "
+                      "particular has happened."), TickCount),
                   TEXT("humor"), 0.4f, 0.3f);
         }
     }
@@ -539,6 +738,19 @@ private:
     int32 CurrentGoalIdx = -1;
 
     std::vector<FConsciousThought> StreamOfConsciousness;
+
+    // Guards StreamOfConsciousness, Goals and SelfMod between the event loop
+    // thread and model callbacks (game thread). Recursive so Think() may be
+    // called while the loop already holds it.
+    mutable std::recursive_mutex CognitionMutex;
+
+    // Thought requests awaiting a model answer, capped so a slow model does
+    // not pile up requests; occasions beyond the cap are skipped (not faked).
+    std::atomic<int32> PendingThoughtRequests{0};
+    int32 MaxPendingThoughtRequests = 4;
+
+    // Shared lifetime token: model callbacks pin it and bail out when this object is gone.
+    TSharedPtr<bool> LifetimeToken = MakeShared<bool>(true);
 
     std::queue<FExternalMessage> IncomingMessages;
     std::mutex MessageMutex;

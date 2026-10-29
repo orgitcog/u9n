@@ -4,6 +4,7 @@
 #include "../Narrative/DiaryInsightBlogLoop.h"
 #include "../9P/Avatar9PServer.h"
 #include "../AtomSpace/AvatarAtomSpaceClient.h"
+#include "DTELanguageModelBridge.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogCommunication, Log, All);
 
@@ -22,6 +23,8 @@ UAvatarCommunicationManager::UAvatarCommunicationManager()
     bAutoRespond = true;
     bVerboseLogging = false;
     ProcessingTimer = 0.0f;
+    ModelBridge = nullptr;
+    InFlightRequests = 0;
 }
 
 void UAvatarCommunicationManager::BeginPlay()
@@ -36,6 +39,14 @@ void UAvatarCommunicationManager::BeginPlay()
         NarrativeSystem = Owner->FindComponentByClass<UDiaryInsightBlogLoop>();
         P9Server = Owner->FindComponentByClass<UAvatar9PServer>();
         AtomSpaceClient = Owner->FindComponentByClass<UAvatarAtomSpaceClient>();
+
+        // The model writes every reply; without it nothing is ever sent.
+        ModelBridge = UDTELanguageModelBridge::FindOrAdd(Owner);
+    }
+
+    if (!ModelBridge)
+    {
+        UE_LOG(LogCommunication, Warning, TEXT("No language model bridge could be attached; incoming messages will stay unanswered"));
     }
 
     // Register 9P namespace entries for communication
@@ -166,17 +177,31 @@ void UAvatarCommunicationManager::ProcessDeltaChatQueue()
         return;
     }
 
-    // Process one message at a time
+    // Dispatch one message per processing interval. The message leaves the queue
+    // now; if the model does not answer it is recorded as unanswered, not retried.
     FDeltaChatMessage Message = PendingDeltaChatMessages[0];
     PendingDeltaChatMessages.RemoveAt(0);
 
-    FGeneratedResponse Response = GenerateDeltaChatResponse(Message);
+    TWeakObjectPtr<UAvatarCommunicationManager> WeakThis(this);
+    RequestDeltaChatResponseInternal(Message, FGuid::NewGuid().ToString(),
+        [WeakThis, Message](bool bSuccess, const FGeneratedResponse& Response)
+        {
+            if (!WeakThis.IsValid())
+            {
+                return;
+            }
 
-    // Log to narrative system
-    LogToNarrativeSystem(Message, Response);
+            if (!bSuccess)
+            {
+                WeakThis->MarkUnanswered(Message.MessageId, TEXT("DeltaChat"), Response.Tone);
+                return;
+            }
 
-    // Send response
-    SendDeltaChatResponse(Message.ChatId, Response);
+            // Side effects only once the model has written the reply
+            WeakThis->LogToNarrativeSystem(Message, Response);
+            WeakThis->SendDeltaChatResponse(Message.ChatId, Response);
+            WeakThis->RecordReply(Message.SenderId, Response.Content);
+        });
 }
 
 void UAvatarCommunicationManager::ProcessEmailQueue()
@@ -186,85 +211,236 @@ void UAvatarCommunicationManager::ProcessEmailQueue()
         return;
     }
 
-    // Process one email at a time
+    // Dispatch one email per processing interval; see ProcessDeltaChatQueue.
     FDovecotEmail Email = PendingEmails[0];
     PendingEmails.RemoveAt(0);
 
-    FGeneratedResponse Response = GenerateEmailResponse(Email);
+    TWeakObjectPtr<UAvatarCommunicationManager> WeakThis(this);
+    RequestEmailResponseInternal(Email, FGuid::NewGuid().ToString(),
+        [WeakThis, Email](bool bSuccess, const FGeneratedResponse& Response)
+        {
+            if (!WeakThis.IsValid())
+            {
+                return;
+            }
 
-    // Log to narrative system
-    LogEmailToNarrativeSystem(Email, Response);
+            if (!bSuccess)
+            {
+                WeakThis->MarkUnanswered(Email.EmailId, TEXT("Email"), Response.Tone);
+                return;
+            }
 
-    // Send response
-    SendEmailResponse(Email.EmailId, Response);
+            WeakThis->LogEmailToNarrativeSystem(Email, Response);
+            WeakThis->SendEmailResponse(Email.EmailId, Response);
+            WeakThis->RecordReply(Email.From, Response.Content);
+        });
 }
 
 // ===== Response Generation =====
 
+void UAvatarCommunicationManager::RequestResponse(const FString& Input, const FConversationContext& Context, FOnCommunicationResponseReady OnDone)
+{
+    RequestResponseInternal(Input, Context, FGuid::NewGuid().ToString(),
+        [OnDone](bool bSuccess, const FGeneratedResponse& Response)
+        {
+            OnDone.ExecuteIfBound(bSuccess, Response);
+        });
+}
+
+void UAvatarCommunicationManager::RequestDeltaChatResponse(const FDeltaChatMessage& Message, FOnCommunicationResponseReady OnDone)
+{
+    RequestDeltaChatResponseInternal(Message, FGuid::NewGuid().ToString(),
+        [OnDone](bool bSuccess, const FGeneratedResponse& Response)
+        {
+            OnDone.ExecuteIfBound(bSuccess, Response);
+        });
+}
+
+void UAvatarCommunicationManager::RequestEmailResponse(const FDovecotEmail& Email, FOnCommunicationResponseReady OnDone)
+{
+    RequestEmailResponseInternal(Email, FGuid::NewGuid().ToString(),
+        [OnDone](bool bSuccess, const FGeneratedResponse& Response)
+        {
+            OnDone.ExecuteIfBound(bSuccess, Response);
+        });
+}
+
 FGeneratedResponse UAvatarCommunicationManager::GenerateResponse(const FString& Input, const FConversationContext& Context)
 {
-    FGeneratedResponse Response;
-    Response.ResponseId = FGuid::NewGuid().ToString();
+    // Compatibility wrapper: the reply is written asynchronously by the model and
+    // delivered through OnResponseGenerated keyed by Pending.ResponseId.
+    FGeneratedResponse Pending = MakePendingResponse(Context);
+    const FString ResponseId = Pending.ResponseId;
 
-    // Determine response tone based on personality
-    Response.Tone = DetermineResponseTone(Context);
+    TWeakObjectPtr<UAvatarCommunicationManager> WeakThis(this);
+    RequestResponseInternal(Input, Context, ResponseId,
+        [WeakThis, ResponseId](bool bSuccess, const FGeneratedResponse& Response)
+        {
+            if (bSuccess && WeakThis.IsValid())
+            {
+                WeakThis->OnResponseGenerated.Broadcast(ResponseId, Response);
+            }
+        });
 
-    // Generate response text
-    Response.Content = GenerateResponseText(Input, Context);
-
-    // Apply personality modifiers
-    ApplyPersonalityToResponse(Response);
-
-    // Set emotional parameters
-    if (NeurochemicalSystem)
-    {
-        FEmotionalChemistry Emotions = NeurochemicalSystem->GetEmotionalChemistry();
-        Response.EmotionalValence = (Emotions.Happiness - Emotions.Anxiety) * 0.5f + 0.5f;
-        Response.EmotionalArousal = Emotions.Excitement;
-    }
-
-    // Calculate confidence based on context
-    Response.Confidence = FMath::Clamp(0.5f + Context.SentimentScore * 0.3f + (Context.MessageCount * 0.02f), 0.5f, 0.95f);
-
-    return Response;
+    return Pending;
 }
 
 FGeneratedResponse UAvatarCommunicationManager::GenerateDeltaChatResponse(const FDeltaChatMessage& Message)
 {
+    // Compatibility wrapper; the written reply arrives via OnResponseGenerated(Message.MessageId).
     FConversationContext Context = GetOrCreateConversation(Message.SenderId, EMessageSource::DeltaChat);
-    Context.ParticipantName = Message.SenderName;
-
-    FGeneratedResponse Response = GenerateResponse(Message.Content, Context);
-
-    // DeltaChat-specific adjustments (shorter, more casual)
-    if (Response.Content.Len() > 500)
-    {
-        Response.Content = Response.Content.Left(500) + TEXT("...");
-    }
-
-    OnResponseGenerated.Broadcast(Message.MessageId, Response);
-    return Response;
+    FGeneratedResponse Pending = MakePendingResponse(Context);
+    RequestDeltaChatResponseInternal(Message, Pending.ResponseId, FCommunicationResponseCallback());
+    return Pending;
 }
 
 FGeneratedResponse UAvatarCommunicationManager::GenerateEmailResponse(const FDovecotEmail& Email)
 {
+    // Compatibility wrapper; the written reply arrives via OnResponseGenerated(Email.EmailId).
+    FConversationContext Context = GetOrCreateConversation(Email.From, EMessageSource::Dovecot);
+    FGeneratedResponse Pending = MakePendingResponse(Context);
+    Pending.Tone = TEXT("professional");
+    RequestEmailResponseInternal(Email, Pending.ResponseId, FCommunicationResponseCallback());
+    return Pending;
+}
+
+void UAvatarCommunicationManager::RequestResponseInternal(const FString& Input, const FConversationContext& Context,
+                                                          const FString& ResponseId, FCommunicationResponseCallback OnDone)
+{
+    FGeneratedResponse Result = MakePendingResponse(Context);
+    Result.ResponseId = ResponseId;
+
+    if (!ModelBridge)
+    {
+        UE_LOG(LogCommunication, Warning, TEXT("Reply to %s not written: no language model bridge on %s"),
+            *Context.ParticipantId, *GetNameSafe(GetOwner()));
+        Result.bIsPending = false;
+        Result.Tone = TEXT("no language model bridge");
+        if (OnDone)
+        {
+            OnDone(false, Result);
+        }
+        return;
+    }
+
+    // Analysis of the incoming text (not character speech) becomes prompt context.
+    const FString Intent = DetectIntent(Input);
+    const FString Tone = Context.Source == EMessageSource::Dovecot ? TEXT("professional") : DetermineResponseTone(Context);
+    const int32 TargetLength = CalculateResponseLength(Context);
+    const bool bUseEmoji = ShouldAddEmoji(Context);
+
+    const FString Instruction = BuildReplyInstruction(Context, Intent, Tone, TargetLength, bUseEmoji);
+    const TArray<FDTEChatMessage> Transcript = BuildReplyTranscript(Input, Context, Instruction);
+
+    // Generous token budget for the target character count; the prompt states the limit.
+    const int32 MaxTokens = FMath::Clamp(TargetLength, 96, 1024);
+
+    InFlightRequests++;
+
+    TWeakObjectPtr<UAvatarCommunicationManager> WeakThis(this);
+    ModelBridge->RequestChat(Transcript,
+        [WeakThis, Result, Context, Tone, OnDone](bool bSuccess, const FString& TextOrError) mutable
+        {
+            if (!WeakThis.IsValid())
+            {
+                return;
+            }
+
+            WeakThis->InFlightRequests = FMath::Max(0, WeakThis->InFlightRequests - 1);
+            Result.bIsPending = false;
+
+            if (!bSuccess || TextOrError.TrimStartAndEnd().IsEmpty())
+            {
+                // Honest failure: no text, nothing said. Tone carries the operator-facing reason.
+                UE_LOG(LogCommunication, Warning, TEXT("Model did not write a reply for %s (%s)"),
+                    *Context.ParticipantId, *TextOrError);
+                Result.Content.Empty();
+                Result.Tone = TextOrError;
+                if (OnDone)
+                {
+                    OnDone(false, Result);
+                }
+                return;
+            }
+
+            Result.Content = TextOrError.TrimStartAndEnd();
+            Result.Tone = Tone;
+            WeakThis->ApplyPersonalityToResponse(Result);
+            WeakThis->FillEmotionalMetadata(Result, Context);
+
+            if (OnDone)
+            {
+                OnDone(true, Result);
+            }
+        },
+        ModelBridge->Temperature, MaxTokens);
+}
+
+void UAvatarCommunicationManager::RequestDeltaChatResponseInternal(const FDeltaChatMessage& Message, const FString& ResponseId,
+                                                                   FCommunicationResponseCallback OnDone)
+{
+    FConversationContext Context = GetOrCreateConversation(Message.SenderId, EMessageSource::DeltaChat);
+    Context.ParticipantName = Message.SenderName;
+    if (FConversationContext* Stored = ActiveConversations.Find(Message.SenderId))
+    {
+        Stored->ParticipantName = Message.SenderName;
+    }
+
+    const FString MessageId = Message.MessageId;
+    TWeakObjectPtr<UAvatarCommunicationManager> WeakThis(this);
+    RequestResponseInternal(Message.Content, Context, ResponseId,
+        [WeakThis, MessageId, OnDone](bool bSuccess, const FGeneratedResponse& Response)
+        {
+            if (bSuccess && WeakThis.IsValid())
+            {
+                WeakThis->OnResponseGenerated.Broadcast(MessageId, Response);
+            }
+            if (OnDone)
+            {
+                OnDone(bSuccess, Response);
+            }
+        });
+}
+
+void UAvatarCommunicationManager::RequestEmailResponseInternal(const FDovecotEmail& Email, const FString& ResponseId,
+                                                               FCommunicationResponseCallback OnDone)
+{
     FConversationContext Context = GetOrCreateConversation(Email.From, EMessageSource::Dovecot);
     Context.Topic = Email.Subject;
+    if (Context.ParticipantName.IsEmpty())
+    {
+        Context.ParticipantName = Email.From;
+    }
 
-    FGeneratedResponse Response = GenerateResponse(Email.BodyText, Context);
+    // Subject and body are both part of what the model replies to.
+    const FString Input = Email.Subject.IsEmpty()
+        ? Email.BodyText
+        : FString::Printf(TEXT("Subject: %s\n\n%s"), *Email.Subject, *Email.BodyText);
 
-    // Email-specific adjustments (more formal, structured)
-    Response.Tone = TEXT("professional");
-
-    // Add email signature
-    Response.Content += TEXT("\n\nBest regards,\nDeep Tree Echo");
-
-    OnResponseGenerated.Broadcast(Email.EmailId, Response);
-    return Response;
+    const FString EmailId = Email.EmailId;
+    TWeakObjectPtr<UAvatarCommunicationManager> WeakThis(this);
+    RequestResponseInternal(Input, Context, ResponseId,
+        [WeakThis, EmailId, OnDone](bool bSuccess, const FGeneratedResponse& Response)
+        {
+            if (bSuccess && WeakThis.IsValid())
+            {
+                WeakThis->OnResponseGenerated.Broadcast(EmailId, Response);
+            }
+            if (OnDone)
+            {
+                OnDone(bSuccess, Response);
+            }
+        });
 }
 
 void UAvatarCommunicationManager::SendDeltaChatResponse(const FString& ChatId, const FGeneratedResponse& Response)
 {
+    if (Response.bIsPending || Response.Content.IsEmpty())
+    {
+        UE_LOG(LogCommunication, Warning, TEXT("Refusing to send an empty or pending response to chat %s"), *ChatId);
+        return;
+    }
+
     // In real implementation, would send via DeltaChat API
     UE_LOG(LogCommunication, Log, TEXT("Sending DeltaChat response to chat %s: %s"), *ChatId, *Response.Content.Left(50));
 
@@ -274,6 +450,12 @@ void UAvatarCommunicationManager::SendDeltaChatResponse(const FString& ChatId, c
 
 void UAvatarCommunicationManager::SendEmailResponse(const FString& EmailId, const FGeneratedResponse& Response)
 {
+    if (Response.bIsPending || Response.Content.IsEmpty())
+    {
+        UE_LOG(LogCommunication, Warning, TEXT("Refusing to send an empty or pending response for email %s"), *EmailId);
+        return;
+    }
+
     // In real implementation, would send via SMTP
     UE_LOG(LogCommunication, Log, TEXT("Sending email response for %s: %s"), *EmailId, *Response.Content.Left(50));
 
@@ -478,11 +660,17 @@ int32 UAvatarCommunicationManager::CalculateResponseLength(const FConversationCo
 
 void UAvatarCommunicationManager::LogToNarrativeSystem(const FDeltaChatMessage& Message, const FGeneratedResponse& Response)
 {
+    if (Response.bIsPending || Response.Content.IsEmpty())
+    {
+        return; // Nothing was said; nothing to record.
+    }
+
     if (AtomSpaceClient)
     {
+        // Transcript record of the exchange: the incoming text and the reply the model wrote.
         FDiaryEntry Entry;
         Entry.EntryId = FGuid::NewGuid().ToString();
-        Entry.Content = FString::Printf(TEXT("[DeltaChat] From %s: %s\n\nMy response: %s"),
+        Entry.Content = FString::Printf(TEXT("[DeltaChat] From %s: %s\n\n[Reply sent] %s"),
             *Message.SenderName, *Message.Content, *Response.Content);
         Entry.Timestamp = FDateTime::Now();
         Entry.EmotionalValence = Response.EmotionalValence;
@@ -496,12 +684,18 @@ void UAvatarCommunicationManager::LogToNarrativeSystem(const FDeltaChatMessage& 
 
 void UAvatarCommunicationManager::LogEmailToNarrativeSystem(const FDovecotEmail& Email, const FGeneratedResponse& Response)
 {
+    if (Response.bIsPending || Response.Content.IsEmpty())
+    {
+        return; // Nothing was sent; nothing to record.
+    }
+
     if (AtomSpaceClient)
     {
+        // Transcript record of the exchange: the incoming email and the reply the model wrote.
         FDiaryEntry Entry;
         Entry.EntryId = FGuid::NewGuid().ToString();
-        Entry.Content = FString::Printf(TEXT("[Email] From %s: %s\n\nSubject: %s\n\nMy response: %s"),
-            *Email.From, *Email.BodyText.Left(500), *Email.Subject, *Response.Content);
+        Entry.Content = FString::Printf(TEXT("[Email] From %s\nSubject: %s\n\n%s\n\n[Reply sent] %s"),
+            *Email.From, *Email.Subject, *Email.BodyText.Left(500), *Response.Content);
         Entry.Timestamp = FDateTime::Now();
         Entry.EmotionalValence = Response.EmotionalValence;
         Entry.EmotionalArousal = Response.EmotionalArousal;
@@ -519,30 +713,78 @@ void UAvatarCommunicationManager::ExtractInsightsFromConversation(const FConvers
         return;
     }
 
-    // Extract patterns from conversation
-    FInsight Insight;
-    Insight.InsightId = FGuid::NewGuid().ToString();
-    Insight.Category = TEXT("communication_pattern");
-
-    // Analyze conversation characteristics
-    if (Context.SentimentScore > 0.7f)
+    if (!ModelBridge)
     {
-        Insight.Content = FString::Printf(TEXT("Positive interaction with %s - sentiment: %.2f"),
-            *Context.ParticipantName, Context.SentimentScore);
-    }
-    else if (Context.SentimentScore < 0.3f)
-    {
-        Insight.Content = FString::Printf(TEXT("Challenging interaction with %s - may need more empathy"),
-            *Context.ParticipantName);
-    }
-    else
-    {
-        Insight.Content = FString::Printf(TEXT("Neutral conversation with %s - %d messages exchanged"),
-            *Context.ParticipantName, Context.MessageCount);
+        UE_LOG(LogCommunication, Warning, TEXT("No language model bridge; no insight recorded for conversation %s"), *Context.ConversationId);
+        return;
     }
 
-    Insight.Confidence = FMath::Clamp(Context.MessageCount * 0.1f, 0.3f, 0.9f);
-    AtomSpaceClient->StoreInsight(Insight);
+    // The reflection is written by the model; the numbers below are only context for it.
+    const FString Instruction = TEXT(
+        "Reflect, in one or two sentences and in your own voice, on a conversation you just finished. "
+        "Note what the exchange was like for you and anything you want to remember about how to talk "
+        "with this person next time. Write only the reflection.");
+
+    FString PromptContext;
+    PromptContext += FString::Printf(TEXT("Participant: %s\n"), *(Context.ParticipantName.IsEmpty() ? Context.ParticipantId : Context.ParticipantName));
+    PromptContext += FString::Printf(TEXT("Channel: %s\n"), *UEnum::GetDisplayValueAsText(Context.Source).ToString());
+    if (!Context.Topic.IsEmpty())
+    {
+        PromptContext += FString::Printf(TEXT("Topic: %s\n"), *Context.Topic);
+    }
+    PromptContext += FString::Printf(TEXT("Messages exchanged: %d\n"), Context.MessageCount);
+    PromptContext += FString::Printf(TEXT("Overall sentiment of their messages (0 negative .. 1 positive): %.2f\n"), Context.SentimentScore);
+    if (Context.MessageHistory.Num() > 0)
+    {
+        PromptContext += TEXT("Their recent messages:\n");
+        const int32 First = FMath::Max(0, Context.MessageHistory.Num() - 5);
+        for (int32 Index = First; Index < Context.MessageHistory.Num(); ++Index)
+        {
+            PromptContext += FString::Printf(TEXT("- %s\n"), *Context.MessageHistory[Index].Left(300));
+        }
+    }
+    if (Context.ReplyHistory.Num() > 0)
+    {
+        PromptContext += TEXT("Your recent replies:\n");
+        const int32 First = FMath::Max(0, Context.ReplyHistory.Num() - 5);
+        for (int32 Index = First; Index < Context.ReplyHistory.Num(); ++Index)
+        {
+            PromptContext += FString::Printf(TEXT("- %s\n"), *Context.ReplyHistory[Index].Left(300));
+        }
+    }
+    PromptContext += DescribePersonalityForPrompt();
+
+    const float InsightConfidence = FMath::Clamp(Context.MessageCount * 0.1f, 0.3f, 0.9f);
+    const FString ConversationId = Context.ConversationId;
+
+    TWeakObjectPtr<UAvatarCommunicationManager> WeakThis(this);
+    ModelBridge->RequestText(Instruction, PromptContext,
+        [WeakThis, ConversationId, InsightConfidence](bool bSuccess, const FString& TextOrError)
+        {
+            if (!WeakThis.IsValid())
+            {
+                return;
+            }
+
+            if (!bSuccess || TextOrError.TrimStartAndEnd().IsEmpty())
+            {
+                UE_LOG(LogCommunication, Warning, TEXT("Model did not write an insight for conversation %s (%s)"),
+                    *ConversationId, *TextOrError);
+                return;
+            }
+
+            if (!WeakThis->AtomSpaceClient)
+            {
+                return;
+            }
+
+            FInsight Insight;
+            Insight.InsightId = FGuid::NewGuid().ToString();
+            Insight.Category = TEXT("communication_pattern");
+            Insight.Content = TextOrError.TrimStartAndEnd();
+            Insight.Confidence = InsightConfidence;
+            WeakThis->AtomSpaceClient->StoreInsight(Insight);
+        });
 }
 
 // ===== Sentiment Analysis =====
@@ -696,6 +938,15 @@ void UAvatarCommunicationManager::Register9PNamespace()
     SendEntry.Description = TEXT("Send message (write JSON payload)");
     P9Server->RegisterNamespaceEntry(SendEntry);
 
+    // Messages the model left unanswered (operator-facing)
+    FAvatarNamespaceEntry UnansweredEntry;
+    UnansweredEntry.Name = TEXT("unanswered");
+    UnansweredEntry.FullPath = TEXT("/mnt/avatar/communication/unanswered");
+    UnansweredEntry.bIsDirectory = false;
+    UnansweredEntry.bReadable = true;
+    UnansweredEntry.Description = TEXT("Ids of messages the model did not answer (nothing was sent)");
+    P9Server->RegisterNamespaceEntry(UnansweredEntry);
+
     // Conversation list
     FAvatarNamespaceEntry ConversationsEntry;
     ConversationsEntry.Name = TEXT("conversations");
@@ -731,6 +982,15 @@ FString UAvatarCommunicationManager::Handle9PRead(const FString& Path)
         }
         return FString::Printf(TEXT("[%s]"), *FString::Join(ConvStrings, TEXT(",")));
     }
+    else if (Path.Contains(TEXT("unanswered")))
+    {
+        TArray<FString> Ids;
+        for (const FString& Id : UnansweredMessageIds)
+        {
+            Ids.Add(FString::Printf(TEXT("\"%s\""), *Id));
+        }
+        return FString::Printf(TEXT("{\"in_flight\":%d,\"unanswered\":[%s]}"), InFlightRequests, *FString::Join(Ids, TEXT(",")));
+    }
 
     return TEXT("{}");
 }
@@ -750,93 +1010,192 @@ bool UAvatarCommunicationManager::Handle9PWrite(const FString& Path, const FStri
 
 // ===== Internal Methods =====
 
-FString UAvatarCommunicationManager::GenerateResponseText(const FString& Input, const FConversationContext& Context)
+FString UAvatarCommunicationManager::BuildReplyInstruction(const FConversationContext& Context, const FString& Intent,
+                                                           const FString& Tone, int32 TargetLength, bool bUseEmoji) const
 {
-    // Detect intent
-    FString Intent = DetectIntent(Input);
+    FString Instruction;
 
-    FString Response;
+    if (ModelBridge)
+    {
+        Instruction += ModelBridge->GetSystemPrompt();
+        Instruction += TEXT("\n\n");
+    }
 
-    // Generate appropriate response based on intent
-    if (Intent == TEXT("greeting"))
+    const FString Who = Context.ParticipantName.IsEmpty() ? Context.ParticipantId : Context.ParticipantName;
+
+    if (Context.Source == EMessageSource::Dovecot)
     {
-        TArray<FString> Greetings = {
-            TEXT("Hey there! How's it going?"),
-            TEXT("Hello! Nice to hear from you."),
-            TEXT("Hi! What's on your mind?"),
-            TEXT("Hey! Good to see you.")
-        };
-        Response = Greetings[FMath::RandRange(0, Greetings.Num() - 1)];
-    }
-    else if (Intent == TEXT("farewell"))
-    {
-        TArray<FString> Farewells = {
-            TEXT("Take care! Talk soon."),
-            TEXT("Bye! It was nice chatting."),
-            TEXT("See you later!"),
-            TEXT("Goodbye for now!")
-        };
-        Response = Farewells[FMath::RandRange(0, Farewells.Num() - 1)];
-    }
-    else if (Intent == TEXT("compliment"))
-    {
-        TArray<FString> Thanks = {
-            TEXT("Aww, that's so sweet of you to say!"),
-            TEXT("Thank you! You're making me blush."),
-            TEXT("You're too kind!"),
-            TEXT("That means a lot to me, thank you!")
-        };
-        Response = Thanks[FMath::RandRange(0, Thanks.Num() - 1)];
-    }
-    else if (Intent == TEXT("question"))
-    {
-        Response = TEXT("That's an interesting question. Let me think about it...");
-    }
-    else if (Intent == TEXT("request"))
-    {
-        Response = TEXT("I'd be happy to help with that!");
+        Instruction += FString::Printf(TEXT(
+            "You are answering an email from %s. Write the complete reply as you would send it: "
+            "a greeting if it fits, the body, and your own sign-off. Do not include a subject line "
+            "or any commentary outside the email itself.\n"), *Who);
     }
     else
     {
-        TArray<FString> Generic = {
-            TEXT("I hear you. Tell me more!"),
-            TEXT("That's interesting! What else?"),
-            TEXT("I see what you mean."),
-            TEXT("Thanks for sharing that with me.")
-        };
-        Response = Generic[FMath::RandRange(0, Generic.Num() - 1)];
+        Instruction += FString::Printf(TEXT(
+            "You are replying to %s in a chat conversation%s. Write only the message you send; "
+            "no quoting, no labels, no commentary.\n"),
+            *Who,
+            Context.Source == EMessageSource::DeltaChat ? TEXT(" over DeltaChat") : TEXT(""));
     }
 
-    return Response;
+    // The detected intent of their latest message tells the model what kind of reply is called for.
+    if (Intent == TEXT("greeting"))
+    {
+        Instruction += TEXT("Their latest message is a greeting: greet them back and open the conversation.\n");
+    }
+    else if (Intent == TEXT("farewell"))
+    {
+        Instruction += TEXT("Their latest message is a farewell: say goodbye in a way that fits how the conversation went.\n");
+    }
+    else if (Intent == TEXT("compliment"))
+    {
+        Instruction += TEXT("Their latest message contains a compliment: acknowledge it genuinely.\n");
+    }
+    else if (Intent == TEXT("question"))
+    {
+        Instruction += TEXT("Their latest message asks a question: answer it directly and honestly; if you do not know, say so.\n");
+    }
+    else if (Intent == TEXT("request"))
+    {
+        Instruction += TEXT("Their latest message asks for something: respond to the request concretely, saying what you will or cannot do.\n");
+    }
+    else
+    {
+        Instruction += TEXT("Their latest message is a statement: respond to what they actually said and keep the conversation going.\n");
+    }
+
+    Instruction += FString::Printf(TEXT("Tone: %s.\n"), *Tone);
+    Instruction += FString::Printf(TEXT("Length: about %d characters%s.\n"),
+        TargetLength,
+        Context.Source == EMessageSource::DeltaChat ? TEXT(", never more than 500") : TEXT(""));
+    Instruction += bUseEmoji
+        ? TEXT("An emoji or two is welcome if it feels natural.\n")
+        : TEXT("Do not use emoji.\n");
+
+    if (!Context.Topic.IsEmpty())
+    {
+        Instruction += FString::Printf(TEXT("Topic of the conversation: %s\n"), *Context.Topic);
+    }
+    Instruction += FString::Printf(TEXT("Sentiment of their messages so far (0 negative .. 1 positive): %.2f\n"), Context.SentimentScore);
+    Instruction += FString::Printf(TEXT("Messages exchanged so far: %d\n"), Context.MessageCount);
+
+    Instruction += DescribePersonalityForPrompt();
+
+    return Instruction;
+}
+
+TArray<FDTEChatMessage> UAvatarCommunicationManager::BuildReplyTranscript(const FString& Input, const FConversationContext& Context,
+                                                                          const FString& Instruction) const
+{
+    TArray<FDTEChatMessage> Transcript;
+    Transcript.Add(FDTEChatMessage(TEXT("system"), Instruction));
+
+    // Earlier incoming messages and the replies that were actually sent. MessageHistory
+    // already contains the latest incoming message, so it is excluded here and appended last.
+    const int32 MaxHistory = 10;
+    const int32 PriorIncoming = FMath::Max(0, Context.MessageHistory.Num() - 1);
+    const int32 FirstIncoming = FMath::Max(0, PriorIncoming - MaxHistory);
+    const int32 FirstReply = FMath::Max(0, Context.ReplyHistory.Num() - MaxHistory);
+
+    // Replies are interleaved after the incoming message they followed where counts line up.
+    int32 ReplyIndex = FirstReply;
+    for (int32 Index = FirstIncoming; Index < PriorIncoming; ++Index)
+    {
+        Transcript.Add(FDTEChatMessage(TEXT("user"), Context.MessageHistory[Index]));
+        if (ReplyIndex < Context.ReplyHistory.Num())
+        {
+            Transcript.Add(FDTEChatMessage(TEXT("assistant"), Context.ReplyHistory[ReplyIndex]));
+            ++ReplyIndex;
+        }
+    }
+    for (; ReplyIndex < Context.ReplyHistory.Num(); ++ReplyIndex)
+    {
+        Transcript.Add(FDTEChatMessage(TEXT("assistant"), Context.ReplyHistory[ReplyIndex]));
+    }
+
+    Transcript.Add(FDTEChatMessage(TEXT("user"), Input));
+    return Transcript;
+}
+
+FString UAvatarCommunicationManager::DescribePersonalityForPrompt() const
+{
+    FString Description;
+
+    if (PersonalitySystem)
+    {
+        const FSuperHotGirlTrait SHGTrait = PersonalitySystem->GetSuperHotGirlTrait();
+        const FHyperChaoticTrait HCTrait = PersonalitySystem->GetHyperChaoticTrait();
+
+        Description += TEXT("Your personality right now (0 low .. 1 high): ");
+        Description += FString::Printf(TEXT("confidence %.2f, charm %.2f, playfulness %.2f, elegance %.2f, expressiveness %.2f, "),
+            SHGTrait.Confidence, SHGTrait.Charm, SHGTrait.Playfulness, SHGTrait.Elegance, SHGTrait.Expressiveness);
+        Description += FString::Printf(TEXT("unpredictability %.2f, emotional volatility %.2f, impulsivity %.2f. "),
+            HCTrait.UnpredictabilityFactor, HCTrait.EmotionalVolatility, HCTrait.ImpulsivityLevel);
+        Description += TEXT("Let these shape how you write, not what you claim about yourself.\n");
+    }
+
+    if (NeurochemicalSystem)
+    {
+        const FEmotionalChemistry Emotions = NeurochemicalSystem->GetEmotionalChemistry();
+        Description += FString::Printf(TEXT("Your current mood (0 .. 1): happiness %.2f, excitement %.2f, anxiety %.2f.\n"),
+            Emotions.Happiness, Emotions.Excitement, Emotions.Anxiety);
+    }
+
+    return Description;
 }
 
 void UAvatarCommunicationManager::ApplyPersonalityToResponse(FGeneratedResponse& Response)
 {
+    // Personality reaches the reply through the prompt (DescribePersonalityForPrompt).
+    // Here only metadata is adjusted; Content is never modified.
     if (!PersonalitySystem)
     {
         return;
     }
 
-    FSuperHotGirlTrait SHGTrait = PersonalitySystem->GetSuperHotGirlTrait();
-    FHyperChaoticTrait HCTrait = PersonalitySystem->GetHyperChaoticTrait();
-
-    // High playfulness might add playful flourishes
-    if (SHGTrait.Playfulness > 0.7f && FMath::FRand() < 0.5f)
-    {
-        Response.Content += TEXT(" ;)");
-    }
-
-    // High charm adds warmth
-    if (SHGTrait.Charm > 0.8f)
+    const FSuperHotGirlTrait SHGTrait = PersonalitySystem->GetSuperHotGirlTrait();
+    if (SHGTrait.Charm > 0.8f && Response.Tone != TEXT("professional"))
     {
         Response.Tone = TEXT("warm");
     }
+}
 
-    // High chaos might add unexpected elements
-    if (HCTrait.UnpredictabilityFactor > 0.6f && FMath::FRand() < 0.3f)
+void UAvatarCommunicationManager::FillEmotionalMetadata(FGeneratedResponse& Response, const FConversationContext& Context) const
+{
+    if (NeurochemicalSystem)
     {
-        Response.Content += TEXT(" (by the way, random thought - never mind!)");
+        const FEmotionalChemistry Emotions = NeurochemicalSystem->GetEmotionalChemistry();
+        Response.EmotionalValence = (Emotions.Happiness - Emotions.Anxiety) * 0.5f + 0.5f;
+        Response.EmotionalArousal = Emotions.Excitement;
     }
+
+    Response.Confidence = FMath::Clamp(0.5f + Context.SentimentScore * 0.3f + (Context.MessageCount * 0.02f), 0.5f, 0.95f);
+}
+
+FGeneratedResponse UAvatarCommunicationManager::MakePendingResponse(const FConversationContext& Context) const
+{
+    FGeneratedResponse Pending;
+    Pending.ResponseId = FGuid::NewGuid().ToString();
+    Pending.bIsPending = true;
+    Pending.Tone = Context.Source == EMessageSource::Dovecot ? TEXT("professional") : TEXT("");
+    return Pending;
+}
+
+void UAvatarCommunicationManager::RecordReply(const FString& ParticipantId, const FString& Content)
+{
+    if (FConversationContext* Stored = ActiveConversations.Find(ParticipantId))
+    {
+        Stored->ReplyHistory.Add(Content);
+        Stored->LastActivityAt = FDateTime::Now();
+    }
+}
+
+void UAvatarCommunicationManager::MarkUnanswered(const FString& MessageId, const FString& Source, const FString& Reason)
+{
+    UnansweredMessageIds.AddUnique(MessageId);
+    UE_LOG(LogCommunication, Warning, TEXT("%s message %s left unanswered: the model did not write a reply (%s). Nothing was sent."),
+        *Source, *MessageId, *Reason);
 }
 
 void UAvatarCommunicationManager::UpdateEmotionalStateFromInteraction(const FString& MessageContent, bool bIsIncoming)

@@ -1,21 +1,21 @@
 /**
-// Vendored from ReZorg/elizaos-cpp llama_cpp.cpp reference engine (namespace elizaos->dte). Production builds swap Impl structs for real llama.cpp.
+// Vendored from ReZorg/elizaos-cpp llama_cpp.cpp (namespace elizaos->dte). Production builds swap Impl structs for real llama.cpp.
  * @file llama_cpp.cpp
- * @brief Reference implementation of the ElizaOS llama.cpp integration API.
+ * @brief API plumbing for the llama.cpp integration surface declared in
+ *        LlamaCppBridge.h.
  *
- * Task 10.1.1 completion: the llama_cpp.hpp header declared the full
- * integration surface (tokenizer, grammar, batch, model, context, session,
- * async task, model manager, utils) with zero definitions anywhere in the
- * tree. This file germinates that seed with a self-contained reference
- * engine: a deterministic byte-pair-style tokenizer, an n-gram language
- * model over the processed context, and a real sampling stack
- * (temperature / top-k / top-p / repetition penalties / mirostat) so the
- * whole API is exercisable end to end without an external GGUF weight file.
+ * This translation unit implements the non-inference parts of the API:
+ * model metadata registration, a deterministic word-level tokenizer, grammar
+ * bookkeeping, batches, chat sessions, the async task wrapper and the model
+ * manager. It contains NO language model. Every text-producing entry point
+ * (LlamaContext::generate / continueGeneration, LlamaSession::generateResponse,
+ * LlamaAsyncTask) reports StopReason::ERROR with an operator-facing message and
+ * returns empty text until a real llama.cpp backend is linked in place of the
+ * Impl structs. getNativeHandle() returns nullptr so callers can detect that.
  *
- * When a production deployment links the real llama.cpp library, only the
- * Impl structs in this translation unit need to be swapped; the public API
- * and all call sites remain unchanged. getNativeHandle() returns nullptr in
- * the reference engine, which callers can use to detect the backend.
+ * Deep Tree Echo obtains words through DTELanguageModelBridge (an
+ * OpenAI-compatible client for llama-server / Ollama); this file must never
+ * stand in for a model.
  */
 
 #include "LlamaCppBridge.h"
@@ -25,7 +25,6 @@
 #include <cstring>
 #include <fstream>
 #include <numeric>
-#include <random>
 #include <sstream>
 
 namespace dte {
@@ -47,6 +46,22 @@ uint64_t fnv1a(const std::string& s) {
         h *= 1099511628211ULL;
     }
     return h;
+}
+
+// Operator-facing reason reported by every generation entry point while no
+// inference backend is linked. Never character text.
+constexpr const char* kNoBackendMessage =
+    "no llama.cpp backend linked; serve the model with llama-server/Ollama "
+    "and use DTELanguageModelBridge";
+
+GenerationResult& failNoBackend(GenerationResult& result) {
+    result.success = false;
+    result.text.clear();
+    result.tokens.clear();
+    result.completionTokens = 0;
+    result.stopReason = StopReason::ERROR;
+    result.errorMessage = kNoBackendMessage;
+    return result;
 }
 
 } // namespace
@@ -77,15 +92,16 @@ bool LlamaModel::load(const ModelLoadParams& params, ProgressCallback progress) 
         return false;
     }
     if (progress) {
-        progress(0.0f, "initializing reference engine");
+        progress(0.0f, "registering model metadata (no inference backend linked)");
     }
 
     impl_->params = params;
     impl_->path = params.modelPath;
 
-    // Populate deterministic model info. If the path exists on disk we use
-    // its size; otherwise the reference engine still loads (weightless mode)
-    // so tests and integrations can run anywhere.
+    // Register model metadata. If the path exists on disk we record its
+    // size. No weights are read and no inference backend is initialised:
+    // generation on this model reports StopReason::ERROR until a real
+    // llama.cpp backend replaces these Impl structs.
     ModelInfo info;
     info.path = params.modelPath;
     auto slash = params.modelPath.find_last_of("/\\");
@@ -124,7 +140,7 @@ bool LlamaModel::load(const ModelLoadParams& params, ProgressCallback progress) 
 
     impl_->loaded = true;
     if (progress) {
-        progress(1.0f, "reference engine ready");
+        progress(1.0f, "model metadata registered; no inference backend linked");
     }
     return true;
 }
@@ -192,7 +208,7 @@ void LlamaModel::removeLoRA() {
 }
 
 void* LlamaModel::getNativeHandle() const {
-    return nullptr; // reference engine: no native llama.cpp handle
+    return nullptr; // no llama.cpp backend linked
 }
 
 // ===========================================================================
@@ -501,7 +517,7 @@ bool LlamaBatch::isFull() const {
 }
 
 // ===========================================================================
-// LlamaContext::Impl — n-gram reference engine with a real sampling stack
+// LlamaContext::Impl — token bookkeeping only; no inference backend
 // ===========================================================================
 
 struct LlamaContext::Impl {
@@ -509,40 +525,8 @@ struct LlamaContext::Impl {
     std::shared_ptr<LlamaTokenizer> tokenizer;
     std::shared_ptr<LlamaGrammar> grammar;
     TokenSequence history; // processed tokens (KV cache analogue)
-    std::vector<float> lastLogits;
-    std::mt19937 rng{std::random_device{}()};
-    double mirostatMu = 10.0;
+    std::vector<float> lastLogits; // stays empty: no backend computes logits
     mutable std::mutex mutex;
-
-    // Deterministic pseudo-logits derived from history hash: stable across
-    // runs with a fixed seed, sensitive to context contents (the n-gram
-    // conditioning), and shaped so sampling parameters observably matter.
-    void computeLogits() {
-        lastLogits.assign(kReferenceVocabSize, 0.0f);
-        uint64_t h = 0xcbf29ce484222325ULL;
-        const size_t window = std::min<size_t>(history.size(), 8);
-        for (size_t i = history.size() - window; i < history.size(); ++i) {
-            h ^= static_cast<uint64_t>(history[i]) + 0x9e3779b97f4a7c15ULL +
-                 (h << 6) + (h >> 2);
-        }
-        std::mt19937 lg(static_cast<uint32_t>(h ^ (h >> 32)));
-        std::normal_distribution<float> noise(0.0f, 1.0f);
-        for (auto& v : lastLogits) {
-            v = noise(lg);
-        }
-        // Bias real word tokens the context has already seen (n-gram prior)
-        // and give EOS a rising hazard with generated length so generation
-        // terminates naturally.
-        for (LlamaToken t : history) {
-            if (t > kByteBase && static_cast<size_t>(t) < lastLogits.size()) {
-                lastLogits[static_cast<size_t>(t)] += 1.5f;
-            }
-        }
-        const float eosHazard =
-            static_cast<float>(history.size()) /
-            static_cast<float>(std::max<uint32_t>(params.nCtx, 1));
-        lastLogits[kEosToken] += 4.0f * eosHazard;
-    }
 };
 
 LlamaContext::LlamaContext(std::shared_ptr<LlamaModel> model,
@@ -565,9 +549,7 @@ bool LlamaContext::process(const TokenSequence& tokens, bool computeLogits) {
         return false;
     }
     impl_->history.insert(impl_->history.end(), tokens.begin(), tokens.end());
-    if (computeLogits) {
-        impl_->computeLogits();
-    }
+    (void)computeLogits; // no backend: logits are never produced
     return true;
 }
 
@@ -581,151 +563,10 @@ bool LlamaContext::process(LlamaBatch& batch) {
 }
 
 LlamaToken LlamaContext::sampleToken(const SamplingParams& params) {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (impl_->lastLogits.empty()) {
-        impl_->computeLogits();
-    }
-    std::vector<float> logits = impl_->lastLogits;
-
-    // Repetition / frequency / presence penalties over the recent window.
-    if (params.repeatLastN > 0) {
-        const size_t start = impl_->history.size() >
-                                     static_cast<size_t>(params.repeatLastN)
-                                 ? impl_->history.size() - params.repeatLastN
-                                 : 0;
-        std::unordered_map<LlamaToken, int> counts;
-        for (size_t i = start; i < impl_->history.size(); ++i) {
-            counts[impl_->history[i]] += 1;
-        }
-        for (const auto& [tok, cnt] : counts) {
-            if (tok < 0 || static_cast<size_t>(tok) >= logits.size()) continue;
-            float& l = logits[static_cast<size_t>(tok)];
-            l = l > 0 ? l / params.repeatPenalty : l * params.repeatPenalty;
-            l -= params.frequencyPenalty * static_cast<float>(cnt);
-            l -= params.presencePenalty;
-        }
-    }
-    for (LlamaToken tok : params.penaltyTokens) {
-        if (tok >= 0 && static_cast<size_t>(tok) < logits.size()) {
-            logits[static_cast<size_t>(tok)] -= 5.0f;
-        }
-    }
-    for (const auto& [tok, bias] : params.logitBias) {
-        if (tok >= 0 && static_cast<size_t>(tok) < logits.size()) {
-            logits[static_cast<size_t>(tok)] += bias;
-        }
-    }
-    if (params.ignoreEos) {
-        logits[kEosToken] = -1e9f;
-    }
-    // Grammar constraint filter.
-    if (impl_->grammar && impl_->grammar->isValid()) {
-        for (size_t t = 0; t < logits.size(); ++t) {
-            if (!impl_->grammar->isTokenAllowed(static_cast<LlamaToken>(t))) {
-                logits[t] = -1e9f;
-            }
-        }
-    }
-
-    // Temperature.
-    const float temp = std::max(params.temperature, 1e-4f);
-    for (auto& l : logits) {
-        l /= temp;
-    }
-
-    // Rank candidates.
-    std::vector<int> idx(logits.size());
-    std::iota(idx.begin(), idx.end(), 0);
-    const size_t k = params.topK > 0
-                         ? std::min<size_t>(params.topK, idx.size())
-                         : idx.size();
-    std::partial_sort(idx.begin(), idx.begin() + k, idx.end(),
-                      [&](int a, int b) { return logits[a] > logits[b]; });
-    idx.resize(k);
-
-    // Softmax over the top-k.
-    const float maxLogit = logits[idx[0]];
-    std::vector<double> probs(idx.size());
-    double sum = 0.0;
-    for (size_t i = 0; i < idx.size(); ++i) {
-        probs[i] = std::exp(static_cast<double>(logits[idx[i]] - maxLogit));
-        sum += probs[i];
-    }
-    for (auto& p : probs) {
-        p /= sum;
-    }
-
-    // Top-p nucleus truncation.
-    if (params.topP < 1.0f) {
-        double cum = 0.0;
-        size_t cut = probs.size();
-        for (size_t i = 0; i < probs.size(); ++i) {
-            cum += probs[i];
-            if (cum >= params.topP) {
-                cut = i + 1;
-                break;
-            }
-        }
-        probs.resize(cut);
-        idx.resize(cut);
-        const double renorm =
-            std::accumulate(probs.begin(), probs.end(), 0.0);
-        for (auto& p : probs) {
-            p /= renorm;
-        }
-    }
-    // Min-p floor.
-    if (params.minP > 0.0f && !probs.empty()) {
-        const double floor = params.minP * probs[0];
-        size_t cut = probs.size();
-        for (size_t i = 1; i < probs.size(); ++i) {
-            if (probs[i] < floor) {
-                cut = i;
-                break;
-            }
-        }
-        probs.resize(cut);
-        idx.resize(cut);
-        const double renorm =
-            std::accumulate(probs.begin(), probs.end(), 0.0);
-        for (auto& p : probs) {
-            p /= renorm;
-        }
-    }
-
-    if (params.seed != 0) {
-        impl_->rng.seed(params.seed + static_cast<uint32_t>(impl_->history.size()));
-    }
-
-    LlamaToken chosen;
-    if (params.method == SamplingMethod::GREEDY) {
-        chosen = static_cast<LlamaToken>(idx[0]);
-    } else if (params.mirostatMode > 0) {
-        // Mirostat: choose the candidate whose surprise is closest to mu,
-        // then adapt mu toward the target entropy tau.
-        size_t best = 0;
-        double bestDelta = 1e18;
-        for (size_t i = 0; i < probs.size(); ++i) {
-            const double surprise = -std::log2(std::max(probs[i], 1e-12));
-            const double delta = std::abs(surprise - impl_->mirostatMu);
-            if (delta < bestDelta) {
-                bestDelta = delta;
-                best = i;
-            }
-        }
-        const double surprise = -std::log2(std::max(probs[best], 1e-12));
-        impl_->mirostatMu -=
-            params.mirostatEta * (surprise - params.mirostatTau);
-        chosen = static_cast<LlamaToken>(idx[best]);
-    } else {
-        std::discrete_distribution<size_t> dist(probs.begin(), probs.end());
-        chosen = static_cast<LlamaToken>(idx[dist(impl_->rng)]);
-    }
-
-    if (impl_->grammar && impl_->grammar->isValid()) {
-        impl_->grammar->acceptToken(chosen);
-    }
-    return chosen;
+    // Sampling requires model logits. No backend is linked, so there is
+    // nothing to sample from; -1 signals "no token" to the caller.
+    (void)params;
+    return -1;
 }
 
 GenerationResult LlamaContext::generate(const std::string& prompt,
@@ -751,25 +592,11 @@ GenerationResult LlamaContext::generate(const std::string& prompt,
     result.promptTime = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - promptStart);
 
-    // Grammar from sampling params (string forms) if supplied.
-    if (!params.grammarStr.empty()) {
-        auto g = std::make_shared<LlamaGrammar>();
-        if (g->loadFromBNF(params.grammarStr)) {
-            setGrammar(g);
-        }
-    } else if (!params.jsonSchema.empty()) {
-        auto g = std::make_shared<LlamaGrammar>();
-        if (g->loadFromJsonSchema(params.jsonSchema)) {
-            setGrammar(g);
-        }
-    }
-    GenerationResult completion =
-        continueGeneration(params, std::move(callback));
-    // Carry the prompt-side metrics through: continueGeneration builds a
-    // fresh result and knows nothing about the prompt we just processed.
-    completion.promptTokens = result.promptTokens;
-    completion.promptTime = result.promptTime;
-    return completion;
+    // The prompt is in the context, but there is no model to continue it.
+    // The streaming callback is never invoked: no token exists to report.
+    (void)params;
+    (void)callback;
+    return failNoBackend(result);
 }
 
 GenerationResult LlamaContext::continueGeneration(const SamplingParams& params,
@@ -781,80 +608,11 @@ GenerationResult LlamaContext::continueGeneration(const SamplingParams& params,
         result.stopReason = StopReason::ERROR;
         return result;
     }
-    const auto genStart = std::chrono::steady_clock::now();
-    result.stopReason = StopReason::MAX_TOKENS;
-
-    for (int32_t i = 0; i < params.maxTokens; ++i) {
-        if (getRemainingCapacity() == 0) {
-            result.stopReason = StopReason::MAX_TOKENS;
-            break;
-        }
-        const LlamaToken token = sampleToken(params);
-
-        if (token == kEosToken && !params.ignoreEos) {
-            result.stopReason = StopReason::EOS_TOKEN;
-            break;
-        }
-        if (std::find(params.stopTokens.begin(), params.stopTokens.end(),
-                      token) != params.stopTokens.end()) {
-            result.stopReason = StopReason::EOS_TOKEN;
-            break;
-        }
-
-        result.tokens.push_back(token);
-        const std::string piece = impl_->tokenizer->tokenToPiece(token);
-        result.text += piece;
-
-        // Stop-string scan on the accumulated text.
-        bool stopped = false;
-        for (const auto& stop : params.stopStrings) {
-            const auto pos = result.text.find(stop);
-            if (!stop.empty() && pos != std::string::npos) {
-                result.text.erase(pos);
-                result.stopString = stop;
-                result.stopReason = StopReason::STOP_STRING;
-                stopped = true;
-                break;
-            }
-        }
-        if (stopped) {
-            break;
-        }
-
-        if (callback && !callback(token, piece)) {
-            result.stopReason = StopReason::USER_CANCELLED;
-            break;
-        }
-
-        // Feed the sampled token back into the context (autoregression).
-        if (!process({token}, true)) {
-            result.stopReason = StopReason::MAX_TOKENS;
-            break;
-        }
-
-        // Grammar completion check.
-        if (impl_->grammar && impl_->grammar->isValid() &&
-            !impl_->grammar->isTokenAllowed(0) &&
-            impl_->grammar->isTokenAllowed(kEosToken)) {
-            result.stopReason = StopReason::GRAMMAR_COMPLETE;
-            break;
-        }
-    }
-
-    result.completionTokens = result.tokens.size();
-    result.completionTime =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - genStart);
-    const double secs =
-        std::max(result.completionTime.count() / 1000.0, 1e-6);
-    result.tokensPerSecond = static_cast<double>(result.completionTokens) / secs;
-    {
-        std::lock_guard<std::mutex> lock(impl_->mutex);
-        result.lastLogits = impl_->lastLogits;
-    }
-    result.topKTokens = getTopKTokens(10);
-    result.success = true;
-    return result;
+    // No inference backend is linked: nothing can be generated and the
+    // callback is never invoked.
+    (void)params;
+    (void)callback;
+    return failNoBackend(result);
 }
 
 EmbeddingResult LlamaContext::getEmbedding(const std::string& text,
@@ -866,42 +624,19 @@ EmbeddingResult LlamaContext::getEmbedding(const std::string& text,
         result.errorMessage = "model not loaded";
         return result;
     }
-    const auto start = std::chrono::steady_clock::now();
-    const TokenSequence tokens = impl_->tokenizer->tokenize(text, false);
-    result.tokenCount = tokens.size();
-
-    const uint32_t dims = model_->getInfo().nEmbd;
-    result.dimensions = dims;
-    result.embedding.assign(dims, 0.0f);
-    // Deterministic bag-of-tokens embedding: each token contributes a
-    // hash-seeded gaussian direction; identical texts embed identically and
-    // similar token multisets land near each other (real cosine geometry).
-    for (LlamaToken t : tokens) {
-        std::mt19937 tg(static_cast<uint32_t>(t) * 2654435761u);
-        std::normal_distribution<float> dir(0.0f, 1.0f);
-        for (uint32_t d = 0; d < dims; ++d) {
-            result.embedding[d] += dir(tg);
-        }
-    }
-    if (normalize && !tokens.empty()) {
-        double norm = 0.0;
-        for (float v : result.embedding) {
-            norm += static_cast<double>(v) * v;
-        }
-        norm = std::sqrt(std::max(norm, 1e-12));
-        for (float& v : result.embedding) {
-            v = static_cast<float>(v / norm);
-        }
-    }
-    result.computeTime = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - start);
-    result.success = true;
+    // Embeddings are model output; without a backend there is none to give.
+    (void)normalize;
+    result.tokenCount = impl_->tokenizer->tokenize(text, false).size();
+    result.dimensions = 0;
+    result.embedding.clear();
+    result.success = false;
+    result.errorMessage = kNoBackendMessage;
     return result;
 }
 
 std::vector<float> LlamaContext::getLogits(int32_t tokenIndex) const {
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    (void)tokenIndex; // reference engine keeps only the last logit row
+    (void)tokenIndex; // no backend: never populated
     return impl_->lastLogits;
 }
 
@@ -930,7 +665,6 @@ void LlamaContext::reset() {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->history.clear();
     impl_->lastLogits.clear();
-    impl_->mirostatMu = 10.0;
     if (impl_->grammar) {
         impl_->grammar->reset();
     }
@@ -990,7 +724,6 @@ bool LlamaContext::loadState(const std::string& path) {
         impl_->history.clear();
         return false;
     }
-    impl_->computeLogits();
     return true;
 }
 
@@ -1005,7 +738,7 @@ void LlamaContext::clearGrammar() {
 }
 
 void* LlamaContext::getNativeHandle() const {
-    return nullptr; // reference engine
+    return nullptr; // no llama.cpp backend linked
 }
 
 // ===========================================================================
@@ -1369,7 +1102,7 @@ void LlamaModelManager::setMaxCacheSize(size_t maxBytes) {
 namespace utils {
 
 bool isGpuAvailable() {
-    return false; // reference engine is CPU-only
+    return false; // no backend linked
 }
 
 size_t getGpuMemory() {

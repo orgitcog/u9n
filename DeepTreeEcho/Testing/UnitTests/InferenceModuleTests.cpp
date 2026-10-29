@@ -3,7 +3,8 @@
  * @brief Unit tests for the DeepTreeEcho/Inference module (Gap A of the
  *        32-repo integration): DTEReservoirCore (opencog-esn port),
  *        DTERidgeReadout (RidgeNode port), DTEMLPEncoder (coggml DTE-MLP),
- *        and LlamaCppBridge (elizaos-cpp reference engine).
+ *        and LlamaCppBridge (llama.cpp API plumbing; no inference backend is
+ *        linked, so generation must report StopReason::ERROR and empty text).
  *
  * Since the unit-test target globs only Testing/UnitTests/*.cpp, module
  * implementations are included directly (translation-unit inclusion),
@@ -18,6 +19,7 @@
 #include "Inference/DTEReservoirCore.cpp"
 #include "Inference/DTERidgeReadout.cpp"
 #include "Inference/DTEMLPEncoder.h"
+#include "Reservoir/Inference/LlamaCppBridge.cpp"
 
 // ============================================================================
 // DTEReservoirCore — leaky integrator ESN (opencog-esn ReservoirNode port)
@@ -312,4 +314,190 @@ TEST(DTEMLPEncoderTest, RecoveryCoreAutoencoderLearnsIdentity)
     EXPECT_TRUE(mlp.trained());
     EXPECT_LT(trained_mse, initial_mse);
     EXPECT_LT(trained_mse, 0.01f);
+}
+
+// ============================================================================
+// LlamaCppBridge — API plumbing without an inference backend
+//
+// No model is linked into this tree, so the bridge must never produce text.
+// These tests pin that contract: metadata/tokenizer plumbing works, every
+// generation path reports StopReason::ERROR with the operator-facing message
+// and empty output, and no streaming callback ever fires.
+// ============================================================================
+
+namespace {
+
+const char* const kExpectedNoBackendMessage =
+    "no llama.cpp backend linked; serve the model with llama-server/Ollama "
+    "and use DTELanguageModelBridge";
+
+std::shared_ptr<dte::llama::LlamaModel> makeRegisteredModel()
+{
+    auto model = std::make_shared<dte::llama::LlamaModel>();
+    dte::llama::ModelLoadParams params;
+    params.modelPath = "models/unit-test-model.gguf";
+    EXPECT_TRUE(model->load(params));
+    return model;
+}
+
+} // namespace
+
+TEST(LlamaCppBridgeTest, LoadRegistersMetadataButExposesNoBackend)
+{
+    auto model = makeRegisteredModel();
+    ASSERT_TRUE(model->isLoaded());
+    const dte::llama::ModelInfo info = model->getInfo();
+    EXPECT_EQ(info.name, "unit-test-model.gguf");
+    EXPECT_GT(info.nVocab, 0u);
+    EXPECT_EQ(model->getNativeHandle(), nullptr);
+
+    auto context = model->createContext();
+    ASSERT_NE(context, nullptr);
+    EXPECT_EQ(context->getNativeHandle(), nullptr);
+    EXPECT_TRUE(context->getLogits().empty());
+    EXPECT_TRUE(context->getTopKTokens(5).empty());
+}
+
+TEST(LlamaCppBridgeTest, TokenizerRoundTripsText)
+{
+    auto model = makeRegisteredModel();
+    auto tokenizer = model->getTokenizer();
+    ASSERT_NE(tokenizer, nullptr);
+
+    const std::string text = "deep tree echo\nreservoir computing";
+    const dte::llama::TokenSequence tokens = tokenizer->tokenize(text, true, true);
+    ASSERT_GE(tokens.size(), 2u);
+    EXPECT_EQ(tokens.front(), tokenizer->getBosToken());
+    EXPECT_EQ(tokens.back(), tokenizer->getEosToken());
+    EXPECT_EQ(tokenizer->detokenize(tokens), text);
+}
+
+TEST(LlamaCppBridgeTest, GenerateReportsErrorAndEmptyTextWithoutBackend)
+{
+    auto model = makeRegisteredModel();
+    auto context = model->createContext();
+    ASSERT_NE(context, nullptr);
+
+    int callbackInvocations = 0;
+    dte::llama::SamplingParams params;
+    params.maxTokens = 32;
+    const dte::llama::GenerationResult result = context->generate(
+        "Describe your current state.", params,
+        [&](dte::llama::LlamaToken, const std::string&) {
+            ++callbackInvocations;
+            return true;
+        });
+
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.stopReason, dte::llama::StopReason::ERROR);
+    EXPECT_TRUE(result.text.empty());
+    EXPECT_TRUE(result.tokens.empty());
+    EXPECT_EQ(result.completionTokens, 0u);
+    EXPECT_EQ(result.errorMessage, kExpectedNoBackendMessage);
+    EXPECT_EQ(callbackInvocations, 0);
+    // The prompt itself was tokenized into the context.
+    EXPECT_GT(result.promptTokens, 0u);
+    EXPECT_EQ(context->getTokenCount(), result.promptTokens);
+}
+
+TEST(LlamaCppBridgeTest, ContinueGenerationReportsErrorWithoutBackend)
+{
+    auto model = makeRegisteredModel();
+    auto context = model->createContext();
+    ASSERT_NE(context, nullptr);
+
+    const dte::llama::GenerationResult result = context->continueGeneration();
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.stopReason, dte::llama::StopReason::ERROR);
+    EXPECT_TRUE(result.text.empty());
+    EXPECT_TRUE(result.tokens.empty());
+    EXPECT_EQ(result.errorMessage, kExpectedNoBackendMessage);
+    EXPECT_EQ(context->sampleToken(dte::llama::SamplingParams()), -1);
+}
+
+TEST(LlamaCppBridgeTest, GenerateOnUnloadedModelReportsNotLoaded)
+{
+    auto model = std::make_shared<dte::llama::LlamaModel>();
+    dte::llama::ModelLoadParams params; // empty path: load refuses
+    EXPECT_FALSE(model->load(params));
+    EXPECT_FALSE(model->isLoaded());
+    EXPECT_EQ(model->createContext(), nullptr);
+
+    dte::llama::LlamaContext context(model, dte::llama::ContextParams());
+    const dte::llama::GenerationResult result = context.generate("hello");
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.stopReason, dte::llama::StopReason::ERROR);
+    EXPECT_TRUE(result.text.empty());
+    EXPECT_EQ(result.errorMessage, "model not loaded");
+}
+
+TEST(LlamaCppBridgeTest, SessionResponseReportsErrorAndLeavesHistoryUntouched)
+{
+    auto model = makeRegisteredModel();
+    auto context = model->createContext();
+    ASSERT_NE(context, nullptr);
+
+    dte::llama::LlamaSession session(context);
+    session.setSystemPrompt("You are Deep Tree Echo.");
+    session.addMessage("user", "How are you feeling?");
+
+    const dte::llama::GenerationResult result = session.generateResponse();
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.stopReason, dte::llama::StopReason::ERROR);
+    EXPECT_TRUE(result.text.empty());
+    EXPECT_EQ(result.errorMessage, kExpectedNoBackendMessage);
+
+    // No assistant turn may be recorded when nothing was generated.
+    const auto history = session.getHistory();
+    ASSERT_EQ(history.size(), 1u);
+    EXPECT_EQ(history[0].first, "user");
+}
+
+TEST(LlamaCppBridgeTest, AsyncTaskCompletesWithErrorWithoutBackend)
+{
+    auto model = makeRegisteredModel();
+    auto context = model->createContext();
+    ASSERT_NE(context, nullptr);
+
+    int callbackInvocations = 0;
+    dte::llama::LlamaAsyncTask task(
+        context, "Say something.", dte::llama::SamplingParams(),
+        [&](dte::llama::LlamaToken, const std::string&) {
+            ++callbackInvocations;
+            return true;
+        });
+    task.start();
+    ASSERT_TRUE(task.wait(std::chrono::milliseconds(5000)));
+    EXPECT_TRUE(task.isComplete());
+
+    const dte::llama::GenerationResult result = task.getResult();
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.stopReason, dte::llama::StopReason::ERROR);
+    EXPECT_TRUE(result.text.empty());
+    EXPECT_EQ(result.errorMessage, kExpectedNoBackendMessage);
+    EXPECT_EQ(callbackInvocations, 0);
+}
+
+TEST(LlamaCppBridgeTest, EmbeddingReportsErrorWithoutBackend)
+{
+    auto model = makeRegisteredModel();
+    auto context = model->createContext();
+    ASSERT_NE(context, nullptr);
+
+    const dte::llama::EmbeddingResult result = context->getEmbedding("echo");
+    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(result.embedding.empty());
+    EXPECT_EQ(result.dimensions, 0u);
+    EXPECT_EQ(result.errorMessage, kExpectedNoBackendMessage);
+}
+
+TEST(LlamaCppBridgeTest, UtilsParseQuantizationAndArchitecture)
+{
+    using namespace dte::llama;
+    EXPECT_EQ(utils::parseQuantization("q4_k_m"), QuantizationType::Q4_K_M);
+    EXPECT_EQ(utils::quantizationToString(QuantizationType::Q8_0), "Q8_0");
+    EXPECT_EQ(utils::parseQuantization("nope"), QuantizationType::UNKNOWN);
+    EXPECT_EQ(utils::parseArchitecture("llama3"), ModelArchitecture::LLAMA3);
+    EXPECT_EQ(utils::architectureToString(ModelArchitecture::MISTRAL), "MISTRAL");
+    EXPECT_FALSE(utils::validateModelFile("/nonexistent/model.gguf").empty());
 }

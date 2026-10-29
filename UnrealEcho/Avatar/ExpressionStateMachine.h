@@ -192,7 +192,12 @@ public:
 
     // ========== Sequences ==========
 
-    /** Play a predefined expression sequence */
+    /**
+     * Play a sequence registered at runtime with RegisterSequence. No
+     * sequence is built in: a fixed choreography presented as the character's
+     * reaction would be canned; drivers derive sequences from the model's output
+     * or from real affect state.
+     */
     UFUNCTION(BlueprintCallable, Category = "Sequence")
     void PlaySequence(const FName& SequenceName);
 
@@ -203,20 +208,6 @@ public:
     /** Register a custom sequence */
     UFUNCTION(BlueprintCallable, Category = "Sequence")
     void RegisterSequence(const FExpressionSequence& Sequence);
-
-    // ========== Special Transitions ==========
-
-    /** Play the Wonder-to-Joy "aha" transition */
-    UFUNCTION(BlueprintCallable, Category = "Special")
-    void PlayWonderToJoy(float Duration = 1.5f);
-
-    /** Play a thinking sequence (contemplative with occasional curious glances) */
-    UFUNCTION(BlueprintCallable, Category = "Special")
-    void PlayThinkingSequence();
-
-    /** Play an engagement greeting */
-    UFUNCTION(BlueprintCallable, Category = "Special")
-    void PlayGreeting();
 
     // ========== Query ==========
 

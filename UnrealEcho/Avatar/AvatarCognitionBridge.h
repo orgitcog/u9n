@@ -2,17 +2,22 @@
 
 /**
  * Avatar Cognition Bridge
- * 
+ *
  * Bridges the Deep Tree Echo cognitive framework with the avatar expression system.
  * Implements 4E embodied cognition principles by coupling cognitive states with
  * physical avatar manifestations.
- * 
+ *
  * Architecture:
  * - Connects EchobeatsCognitiveInterface with DeepTreeEchoExpressionSystem
- * - Maps reservoir states to expression parameters
+ * - Maps reservoir states to attention, emissive and posture parameters
  * - Implements relevance realization through visual salience
  * - Provides embodied grounding for cognitive processes
- * 
+ *
+ * The face itself is never set from a schedule here. Cognitive states and echobeat steps only
+ * modulate autonomic rates and the tech glow and decide when the expression system re-reads
+ * the character's real affect; insight events move the affect source and let the model choose
+ * the reaction. See UDeepTreeEchoExpressionSystem.
+ *
  * 4E Cognition Integration:
  * - Embodied: Avatar body schema influences cognitive processing
  * - Embedded: Environmental context modulates expression
@@ -29,6 +34,8 @@
 #include "../../DeepTreeEcho/4ECognition/EmbodiedCognitionComponent.h"
 #include "AvatarCognitionBridge.generated.h"
 
+class UNeurochemicalSimulationComponent;
+
 /**
  * Embodiment State - Physical manifestation of cognitive state
  */
@@ -37,7 +44,7 @@ struct FEmbodimentState
 {
     GENERATED_BODY()
 
-    /** Current expression state */
+    /** Expression currently shown (mirrored from the expression system, which derives it from affect or the model) */
     UPROPERTY(BlueprintReadWrite)
     EExpressionState Expression = EExpressionState::Neutral;
 
@@ -75,7 +82,8 @@ struct FEmbodimentState
 };
 
 /**
- * Cognitive-Expression Mapping - Maps cognitive states to expressions
+ * Cognitive-Expression Mapping - How a cognitive state modulates autonomic rates and the tech glow.
+ * It names no expression: the face follows affect and the model.
  */
 USTRUCT(BlueprintType)
 struct FCognitiveExpressionMapping
@@ -85,18 +93,6 @@ struct FCognitiveExpressionMapping
     /** Cognitive state name */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     ECognitiveState CognitiveState = ECognitiveState::Idle;
-
-    /** Primary expression */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    EExpressionState PrimaryExpression = EExpressionState::Neutral;
-
-    /** Secondary expression (blended) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    EExpressionState SecondaryExpression = EExpressionState::Neutral;
-
-    /** Blend weight for secondary (0-1) */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    float SecondaryBlendWeight = 0.0f;
 
     /** Emissive intensity modifier */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
@@ -141,7 +137,8 @@ struct FReservoirExpressionMapping
 };
 
 /**
- * Echobeats Expression Profile - Expression settings for each echobeat step
+ * Echobeats Expression Profile - Per-step timing for the affect re-evaluation and the cycle's glow.
+ * It names no expression or microexpression.
  */
 USTRUCT(BlueprintType)
 struct FEchobeatsExpressionProfile
@@ -152,26 +149,18 @@ struct FEchobeatsExpressionProfile
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     int32 StepNumber = 1;
 
-    /** Target expression */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    EExpressionState TargetExpression = EExpressionState::Neutral;
-
-    /** Transition duration */
+    /** Transition duration used when affect is re-evaluated on this step */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     float TransitionDuration = 0.5f;
 
-    /** Emissive pulse on step entry */
+    /** Emissive pulse on step entry (cycle visualization) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite)
     bool bPulseOnEntry = false;
-
-    /** Microexpression to trigger */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite)
-    EMicroExpression MicroExpression = EMicroExpression::None;
 };
 
 /**
  * Avatar Cognition Bridge Component
- * 
+ *
  * Central integration point between cognitive systems and avatar expression.
  * Implements embodied cognition by grounding abstract cognitive states in
  * physical avatar manifestations.
@@ -242,6 +231,10 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Bridge|Components")
     UEmbodiedCognitionComponent* EmbodiedCognition;
 
+    /** Real affect source; insight events move it so the face can follow */
+    UPROPERTY(BlueprintReadOnly, Category = "Bridge|Components")
+    UNeurochemicalSimulationComponent* Neurochemistry;
+
     // ========================================
     // STATE
     // ========================================
@@ -270,7 +263,7 @@ public:
     // PUBLIC API - COGNITIVE COUPLING
     // ========================================
 
-    /** Update embodiment from cognitive state */
+    /** Update embodiment from cognitive state (autonomic/emissive modulation; the face re-reads affect) */
     UFUNCTION(BlueprintCallable, Category = "Bridge|Cognitive")
     void UpdateFromCognitiveState(ECognitiveState NewState);
 
@@ -290,7 +283,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Bridge|Reservoir")
     void UpdateFromReservoirState();
 
-    /** Map salience landscape to expression */
+    /** Feed the salience landscape to the expression system as attention */
     UFUNCTION(BlueprintCallable, Category = "Bridge|Reservoir")
     void MapSalienceToExpression(const TMap<FString, float>& SalienceMap);
 
@@ -302,7 +295,7 @@ public:
     // PUBLIC API - ECHOBEATS COUPLING
     // ========================================
 
-    /** Handle echobeat step change */
+    /** Handle echobeat step change: re-evaluate affect, pulse the glow on marked steps */
     UFUNCTION(BlueprintCallable, Category = "Bridge|Echobeats")
     void OnEchobeatStepChanged(int32 NewStep, const FString& PhaseName);
 
@@ -310,7 +303,7 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Bridge|Echobeats")
     void OnCognitiveCycleComplete(int32 CycleCount);
 
-    /** Handle insight event */
+    /** Handle insight event: reward the affect source, ask the model for the face, pulse the glow */
     UFUNCTION(BlueprintCallable, Category = "Bridge|Echobeats")
     void OnInsightTriggered(float Intensity);
 
@@ -373,13 +366,13 @@ private:
     /** Bind to cognitive events */
     void BindCognitiveEvents();
 
-    /** Apply embodiment state to expression system */
+    /** Apply embodiment state to expression system (emissive); mirror the expression it shows */
     void ApplyEmbodimentToExpression();
 
     /** Smooth transition between embodiment states */
     void SmoothEmbodimentTransition(float DeltaTime);
 
-    /** Get expression for cognitive state */
+    /** Get modulation for cognitive state */
     FCognitiveExpressionMapping GetMappingForCognitiveState(ECognitiveState State) const;
 
     /** Get echobeats profile for step */

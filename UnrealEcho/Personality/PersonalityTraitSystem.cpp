@@ -1,11 +1,86 @@
 #include "PersonalityTraitSystem.h"
+#include "Avatar/Avatar3DComponentEnhanced.h"
+#include "Neurochemical/NeurochemicalSimulationComponent.h"
+#include "DTELanguageModelBridge.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "GameFramework/Actor.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+
+namespace
+{
+    // The chaotic event menu. This is capability data the chooser picks from,
+    // not a list of canned reactions.
+    const FName ChaoticEventEmotionalSpike(TEXT("emotional_spike"));
+    const FName ChaoticEventPatternBreak(TEXT("pattern_break"));
+    const FName ChaoticEventMicroExpressionBurst(TEXT("micro_expression_burst"));
+    const FName ChaoticEventGlitchEffect(TEXT("glitch_effect"));
+    const FName ChaoticEventUnpredictableGesture(TEXT("unpredictable_gesture"));
+
+    const FName* const ChaoticEventMenu[] = {
+        &ChaoticEventEmotionalSpike,
+        &ChaoticEventPatternBreak,
+        &ChaoticEventMicroExpressionBurst,
+        &ChaoticEventGlitchEffect,
+        &ChaoticEventUnpredictableGesture,
+    };
+
+    FString ChaoticEventMenuText()
+    {
+        FString Menu;
+        for (const FName* Event : ChaoticEventMenu)
+        {
+            if (!Menu.IsEmpty())
+            {
+                Menu += TEXT(", ");
+            }
+            Menu += Event->ToString();
+        }
+        return Menu;
+    }
+
+    bool IsOnChaoticEventMenu(FName Event)
+    {
+        for (const FName* Candidate : ChaoticEventMenu)
+        {
+            if (*Candidate == Event)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    TSharedPtr<FJsonObject> ParseModelJson(const FString& ModelText)
+    {
+        int32 Open = INDEX_NONE;
+        int32 Close = INDEX_NONE;
+        ModelText.FindChar(TEXT('{'), Open);
+        ModelText.FindLastChar(TEXT('}'), Close);
+        if (Open == INDEX_NONE || Close == INDEX_NONE || Close <= Open)
+        {
+            return nullptr;
+        }
+
+        TSharedPtr<FJsonObject> Object;
+        TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ModelText.Mid(Open, Close - Open + 1));
+        if (!FJsonSerializer::Deserialize(Reader, Object) || !Object.IsValid())
+        {
+            return nullptr;
+        }
+        return Object;
+    }
+}
 
 UPersonalityTraitSystem::UPersonalityTraitSystem()
 {
     PrimaryComponentTick.bCanEverTick = true;
     PrimaryComponentTick.TickGroup = TG_PrePhysics;
-    
+
+    ModelBridge = nullptr;
+    bChaoticEventPending = false;
+
     // Initialize configuration
     TraitDevelopmentSpeed = 0.1f;
     TraitInteractionStrength = 0.5f;
@@ -43,9 +118,11 @@ UPersonalityTraitSystem::UPersonalityTraitSystem()
 void UPersonalityTraitSystem::BeginPlay()
 {
     Super::BeginPlay();
-    
-    UE_LOG(LogTemp, Log, TEXT("PersonalityTraitSystem initialized for %s"), 
-           *GetOwner()->GetName());
+
+    ModelBridge = UDTELanguageModelBridge::FindOrAdd(GetOwner());
+
+    UE_LOG(LogTemp, Log, TEXT("PersonalityTraitSystem initialized for %s"),
+           *GetNameSafe(GetOwner()));
 }
 
 void UPersonalityTraitSystem::TickComponent(float DeltaTime, ELevelTick TickType, 
@@ -210,31 +287,172 @@ void UPersonalityTraitSystem::SetHyperChaoticParameters(float Unpredictability, 
 
 void UPersonalityTraitSystem::TriggerChaoticEvent()
 {
-    int32 EventType = FMath::RandRange(0, 4);
-    
-    switch (EventType)
+    if (bChaoticEventPending)
     {
-        case 0:
-            // Sudden emotional shift
-            TriggerEmotionalSpike(FMath::FRandRange(0.5f, 1.0f));
-            break;
-        case 1:
-            // Pattern break
-            TriggerPatternBreak();
-            break;
-        case 2:
-            // Micro-expression burst
-            UE_LOG(LogTemp, Log, TEXT("Chaotic micro-expression burst"));
-            break;
-        case 3:
-            // Glitch effect
-            UE_LOG(LogTemp, Log, TEXT("Chaotic glitch effect"));
-            break;
-        case 4:
-            // Unpredictable gesture
-            UE_LOG(LogTemp, Log, TEXT("Chaotic unpredictable gesture"));
-            break;
+        return;
     }
+
+    if (!ModelBridge && GetOwner())
+    {
+        ModelBridge = UDTELanguageModelBridge::FindOrAdd(GetOwner());
+    }
+
+    if (!ModelBridge || !ModelBridge->IsModelAvailable())
+    {
+        // No model: the event follows from the state alone.
+        float Intensity = 0.0f;
+        const FName Event = ChooseChaoticEventFromState(Intensity);
+        DispatchChaoticEvent(Event, Intensity);
+        return;
+    }
+
+    const FString Instruction =
+        TEXT("A moment of chaotic behaviour is due for this character. Choose which event fits the ")
+        TEXT("current state and how strong it should be. Reply with one JSON object: ")
+        TEXT("{\"event\": <exactly one name from the event menu>, \"intensity\": <number between 0 and 1>}. ")
+        TEXT("The event must suit the state described, not be arbitrary.");
+
+    const FString Context = FString::Printf(TEXT("%s\nevent menu: %s"), *DescribeStateForModel(), *ChaoticEventMenuText());
+
+    bChaoticEventPending = true;
+
+    TWeakObjectPtr<UPersonalityTraitSystem> WeakThis(this);
+    ModelBridge->RequestJson(Instruction, Context,
+        [WeakThis](bool bSuccess, const FString& TextOrError)
+        {
+            if (!WeakThis.IsValid())
+            {
+                return;
+            }
+            UPersonalityTraitSystem* Self = WeakThis.Get();
+            Self->bChaoticEventPending = false;
+
+            if (!bSuccess)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("PersonalityTraitSystem: chaotic event skipped, model unavailable: %s"), *TextOrError);
+                return;
+            }
+
+            TSharedPtr<FJsonObject> Object = ParseModelJson(TextOrError);
+            FString EventText;
+            if (!Object.IsValid() || !Object->TryGetStringField(TEXT("event"), EventText))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("PersonalityTraitSystem: chaotic event skipped, model reply was not the requested JSON object"));
+                return;
+            }
+
+            EventText.TrimStartAndEndInline();
+            const FName Event(*EventText.ToLower());
+            if (!IsOnChaoticEventMenu(Event))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("PersonalityTraitSystem: chaotic event skipped, \"%s\" is not on the event menu"), *EventText);
+                return;
+            }
+
+            double Intensity = Self->HyperChaoticTrait.SuddenShiftIntensity;
+            Object->TryGetNumberField(TEXT("intensity"), Intensity);
+
+            Self->DispatchChaoticEvent(Event, FMath::Clamp((float)Intensity, 0.0f, 1.0f));
+        });
+}
+
+FName UPersonalityTraitSystem::ChooseChaoticEventFromState(float& OutIntensity) const
+{
+    // Each event is governed by one chaos parameter; the largest one wins.
+    const TPair<FName, float> Candidates[] = {
+        { ChaoticEventEmotionalSpike,        HyperChaoticTrait.EmotionalVolatility },
+        { ChaoticEventPatternBreak,          HyperChaoticTrait.PatternBreaking },
+        { ChaoticEventMicroExpressionBurst,  HyperChaoticTrait.MicroExpressionFrequency },
+        { ChaoticEventGlitchEffect,          HyperChaoticTrait.GlitchEffectProbability },
+        { ChaoticEventUnpredictableGesture,  HyperChaoticTrait.ImpulsivityLevel },
+    };
+
+    FName Chosen = ChaoticEventEmotionalSpike;
+    float Best = -1.0f;
+    for (const auto& Candidate : Candidates)
+    {
+        if (Candidate.Value > Best)
+        {
+            Best = Candidate.Value;
+            Chosen = Candidate.Key;
+        }
+    }
+
+    OutIntensity = FMath::Clamp(FMath::Max(Best, 0.0f) * FMath::Max(HyperChaoticTrait.SuddenShiftIntensity, 0.1f) * 2.0f, 0.0f, 1.0f);
+    return Chosen;
+}
+
+FString UPersonalityTraitSystem::DescribeStateForModel() const
+{
+    FString Out = TEXT("trait intensities:");
+    for (const auto& TraitPair : PersonalityTraits)
+    {
+        Out += FString::Printf(TEXT(" %s=%.2f"),
+            *StaticEnum<EPersonalityTraitType>()->GetNameStringByValue((int64)TraitPair.Key), TraitPair.Value.Intensity);
+    }
+
+    Out += FString::Printf(
+        TEXT("\nchaos parameters: unpredictability=%.2f emotional_volatility=%.2f impulsivity=%.2f pattern_breaking=%.2f ")
+        TEXT("cognitive_fluctuation=%.2f micro_expression_frequency=%.2f glitch_probability=%.2f sudden_shift_intensity=%.2f"),
+        HyperChaoticTrait.UnpredictabilityFactor, HyperChaoticTrait.EmotionalVolatility, HyperChaoticTrait.ImpulsivityLevel,
+        HyperChaoticTrait.PatternBreaking, HyperChaoticTrait.CognitiveFluctuation, HyperChaoticTrait.MicroExpressionFrequency,
+        HyperChaoticTrait.GlitchEffectProbability, HyperChaoticTrait.SuddenShiftIntensity);
+
+    const FVector2D Tendency = GetEmotionalTendency();
+    Out += FString::Printf(TEXT("\nemotional tendency: valence=%.2f arousal=%.2f predictability=%.2f social_engagement=%.2f"),
+        Tendency.X, Tendency.Y, GetBehavioralPredictability(), GetSocialEngagementLevel());
+
+    if (const AActor* Owner = GetOwner())
+    {
+        if (const UNeurochemicalSimulationComponent* Neuro = Owner->FindComponentByClass<UNeurochemicalSimulationComponent>())
+        {
+            const FEmotionalChemistry Chemistry = Neuro->GetEmotionalChemistry();
+            Out += FString::Printf(
+                TEXT("\nneurochemical affect: happiness=%.2f excitement=%.2f calmness=%.2f anxiety=%.2f affection=%.2f focus=%.2f ")
+                TEXT("energy=%.2f stability=%.2f"),
+                Chemistry.Happiness, Chemistry.Excitement, Chemistry.Calmness, Chemistry.Anxiety, Chemistry.Affection, Chemistry.Focus,
+                Neuro->GetEnergyLevel(), Neuro->GetEmotionalStability());
+        }
+    }
+    return Out;
+}
+
+void UPersonalityTraitSystem::DispatchChaoticEvent(FName EventName, float Intensity)
+{
+    UAvatar3DComponentEnhanced* Avatar = GetOwner() ? GetOwner()->FindComponentByClass<UAvatar3DComponentEnhanced>() : nullptr;
+
+    if (EventName == ChaoticEventEmotionalSpike)
+    {
+        TriggerEmotionalSpike(Intensity);
+    }
+    else if (EventName == ChaoticEventPatternBreak)
+    {
+        TriggerPatternBreak();
+    }
+    else if (EventName == ChaoticEventMicroExpressionBurst)
+    {
+        // The avatar derives the micro-expression from its own affect dimensions.
+        if (Avatar)
+        {
+            Avatar->TriggerChaoticMicroExpression();
+        }
+        UE_LOG(LogTemp, Log, TEXT("Chaotic micro-expression burst (intensity: %.2f)"), Intensity);
+    }
+    else if (EventName == ChaoticEventGlitchEffect)
+    {
+        if (Avatar)
+        {
+            Avatar->TriggerGlitchEffect(Intensity * HyperChaoticTrait.GlitchEffectProbability);
+        }
+        UE_LOG(LogTemp, Log, TEXT("Chaotic glitch effect (intensity: %.2f)"), Intensity);
+    }
+    else if (EventName == ChaoticEventUnpredictableGesture)
+    {
+        // No gesture library is attached to this component; the event is published for listeners.
+        UE_LOG(LogTemp, Log, TEXT("Chaotic unpredictable gesture (intensity: %.2f)"), Intensity);
+    }
+
+    OnChaoticEventChosen.Broadcast(EventName, Intensity);
 }
 
 void UPersonalityTraitSystem::TriggerEmotionalSpike(float Intensity)

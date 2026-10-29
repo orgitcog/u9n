@@ -72,6 +72,8 @@ public class UnrealEcho : ModuleRules
 				"RHI",
 				"Renderer",
 				"Live2DCubismFramework",  // Cubism SDK dependency
+				"HTTP",                   // Model-backed communication/narrative components
+				"Json",
 			}
 		);
 
